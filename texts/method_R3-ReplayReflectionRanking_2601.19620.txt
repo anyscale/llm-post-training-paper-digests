@@ -1,0 +1,1401 @@
+R³: Replay, Reflection, and Ranking Rewards for LLM Reinforcement Learning
+Zhizheng Jiang1,∗ , Kang Zhao2,∗ , Weikai Xu1 , Xinkui Lin3 , Wei Liu2 , Jian Luan2 , Shuo
+Shang1,† , Peng Han1,†
+1
+University of Electronic Science and Technology of China
+2
+Unaffiliated
+3
+Institute of Information Engineering, Chinese Academy of Sciences
+{gezelligheid314, zhaokang7878}@gmail.com,
+
+arXiv:2601.19620v2 [cs.LG] 28 Jan 2026
+
+Abstract
+Large reasoning models (LRMs) aim to solve diverse and complex problems through structured
+reasoning. Recent advances in group-based policy
+optimization methods have shown promise in enabling stable advantage estimation without reliance
+on process-level annotations. However, these methods rely on advantage gaps induced by high-quality
+samples within the same batch, which makes the
+training process fragile and inefficient when intragroup advantages collapse under challenging tasks.
+To address these problems, we propose a reinforcement learning mechanism named R³ that along
+three directions: (1) a cross-context Replay strategy
+that maintains the intra-group advantage by recalling valuable examples from historical trajectories
+of the same query, (2) an in-context self-Reflection
+mechanism enabling models to refine outputs by
+leveraging past failures, and (3) a structural entropy Ranking reward, which assigns relative rewards to truncated or failed samples by ranking
+responses based on token-level entropy patterns,
+capturing both local exploration and global stability. We implement our method on Deepseek-R1Distill-Qwen-1.5B and train it on the DeepscaleR40k in the math domain. Experiments demonstrate
+our method achieves SoTA performance on several math benchmarks, representing significant improvements and fewer reasoning tokens over the
+base models. Code and model will be released.
+
+1
+
+Introduction
+
+Recent progress in large language models (LLMs) has led
+to remarkable advances in solving complex reasoning problems, with models such as OpenAI’s O1 OpenAI [2024] and
+DeepSeek’s R1 Guo et al. [2025] demonstrating strong stepby-step reasoning capabilities. These models often adopt
+the chain-of-thought (CoT) prompting paradigm Wei et al.
+[2022] to encourage explicit reasoning traces. To further align
+∗
+†
+
+Equal contribution
+Corresponding author
+
+Figure 1: Multiple responses within the same group may exhibit little to no reward variation, leading to inefficient training or premature
+stagnation (left). Maintaining meaningful differences among intragroup samples helps preserve advantage gaps and alleviates this problem (right).
+
+LLMs with high-quality reasoning behavior, numerous opensource efforts have focused on fine-tuning models via reinforcement learning (RL). A number of recent approaches,
+including VAPO Yuan et al. [2025a] and VC-PPO Yuan et
+al. [2025b] extend the Proximal Policy Optimization (PPO)
+framework Schulman et al. [2017]. In parallel, methods such
+as DAPO Yu et al. [2025], Open RS Dang and Ngo [2025],
+and Oat-Zero Liu et al. [2025c], propose enhancements to the
+GRPO algorithm Shao et al. [2024].
+Although GRPO eliminates the reliance on unstable value
+models through intra-group advantage estimation, its use of
+outcome-based reward weighting further enables stable optimization of reasoning processes without requiring process
+reward models. However, under complex tasks, reward differences among rollout responses become inherently uncontrollable. Ideally, a more balanced reward distribution with
+clear relative differences within a group facilitates more accurate advantage estimation and accelerates the convergence
+of the policy model. In contrast, responses that are entirely
+incorrect, overly similar, or truncated often yield advantage
+collapse and provide minimal effective learning signals for
+training. Because a single reward cannot further differentiate
+these cases.
+As illustrated in the left part of Figure 1, existing methods typically update the policy model directly using the responses of a single rollout. For example, DeepscaleR Luo et
+
+al. [2025b] builds upon GRPO and length-scaled reinforcement learning, a training strategy that progressively increases
+the response length. While DeepscaleR effectively enhances
+reasoning capabilities through GRPO, it heavily relies on
+the base competence of the policy model and lacks mechanisms to handle intra-group advantage collapse. In particular,
+groups dominated by low-quality responses are incorporated
+into training without filtering or refinement, resulting in zero
+or negligible positive returns on overly difficult cases. This
+training paradigm compromises the effectiveness of policy
+updates and limits further improvements.
+To address these problems, we propose a reinforcement
+learning algorithm named R³ (Replay, self-Reflection, and
+Ranking reward), as illustrated in the right part of Figure 1.
+R³ is designed to explicitly alleviate intra-group advantage
+collapse through a combination of external intervention and
+internal self-optimization mechanisms: (1) External intervention via cross-context replay (CCR). To mitigate the
+prevalence of low-signal groups during training, we introduce an external sample buffer strategy that stores generated samples and their associated feedback over the entire
+training process. This buffer supports the cross-context replay mechanism, which reuses historical trajectories corresponding to the same prompt and combines them with current on-policy samples to construct mixed-policy batches. By
+externally injecting diverse samples, CCR ensures that each
+training batch maintains sufficient diversity and stable learning signals, thereby mitigating the loss of intra-group advantages and improving training stability and sample efficiency.
+(2) Internal self-optimization via in-context self-reflection
+(ISR). To reduce repetitive trial-and-error on hard queries, we
+introduce in-context self-reflection, which targets response
+batches with low reward returns. For each such sample, the
+buffer retrieves its prior failed attempts and integrates them
+with the original prompt to form a revised prompt. This design encourages the policy model to revisit its previous mistakes and refine its responses through introspective reasoning.
+(3) Structural entropy ranking reward for failed trajectories (SERR). To encourage effective exploration of the failure path by the policy model and further differentiate failure
+cases, we propose the structural entropy ranking reward. By
+providing relatively dense rewards, SERR distinguishes finegrained differences among bad samples. Specifically, SERR
+evaluates failed trajectories based on their token-level entropy
+distributions, capturing the trade-off between the exploratory
+behavior of locally high-entropy responses and the stability of
+globally low-entropy ones. Crucially, by ranking these samples, SERR assigns relative rewards even to unsuccessful attempts, enabling effective learning from outputs that would
+otherwise be discarded.
+The contributions are summarized as follows:
+• We propose an external replay-based intervention that
+preserves intra-group advantages by maintaining batch
+diversity.
+• We design an internal mechanism that leverages failed
+samples via self-reflection and entropy-based ranking
+rewards, enabling stable advantages without process supervision.
+
+• Experiments demonstrate R³ achieves SoTA performance on several math benchmarks, representing significant improvements and fewer reasoning tokens over the
+base models.
+
+2
+
+Related Work
+
+2.1
+
+Reinforcement Learning for Reasoning
+
+Recent studies aim to reproduce the reasoning capabilities of
+models such as OpenAI O1, whose key characteristic is explicit Chain-of-Thought (CoT) reasoning Wei et al. [2022].
+However, these approaches rely on extremely large models
+and large-scale RL settings. To address this limitation, recent work explores inducing reasoning capabilities in smaller
+models under limited data regimes. SimpleRL Zeng et al.
+[2025] demonstrates long CoT reasoning using a small number of high-quality examples and rule-based rewards. By
+adopting GRPO Shao et al. [2024], DeepScaleR shows that
+RL scaling effects can emerge even in small models and
+that iterative lengthening effectively increases reasoning trace
+length. Further, ProRL Liu et al. [2025b] shows that prolonged RL with KL-divergence control Kullback and Leibler
+[1951] and reference policy resetting can uncover new reasoning behaviors beyond those of the base model.
+
+2.2
+
+Experience Replay in Reinforcement Learning
+
+With the emergence of LRMs, experience replay (ER) Mnih
+et al. [2015]; Schaul et al. [2015]; Andrychowicz et al. [2017]
+has been revisited as a mechanism to improve sample efficiency and stabilize long-horizon reasoning. Recent works
+extend ER from low-level transitions to high-level reasoning
+trajectories. For instance, RLEP Zhang et al. [2025] replays
+verified high-quality reasoning paths to accelerate convergence and mitigate policy drift. EFrame Wang et al. [2025a]
+further introduces an exploration–filter–replay loop to enable
+stable GRPO training. Several methods leverage selective replay to overcome vanishing advantages and on-policy limitations. LUFFY Yan et al. [2025] combines replayed demonstrations with on-policy rollouts to improve weak models. In
+multimodal and slow-thinking settings, VL-Rethinker Wang
+et al. [2025b] and Skywork R1V2 Wang et al. [2025c] adopt
+selective replay buffers to prioritize informative trajectories.
+
+2.3
+
+Entropy-Driven Exploration in Reinforcement
+Learning
+
+Entropy is a central driver of exploration in RL Haarnoja et
+al. [2018]; Schulman et al. [2017]. In LLM training, policy
+entropy is observed to collapse early, limiting exploration and
+causing premature performance saturation Cui et al. [2025].
+Token-level analyses reveal that a small set of high-entropy
+“forking tokens” disproportionately influences reasoning diversity, and selectively updating these tokens improves efficiency and generalization Wang et al. [2025d]. High-entropy
+regions are also linked to key reasoning behaviors such as logical pivots and self-verification Cheng et al. [2025]. To mitigate entropy collapse, several entropy-aware training frameworks have been proposed Zheng et al. [2025]; Voelcker et al.
+[2025]. Most existing approaches, however, rely on dense supervision or discard incomplete reasoning traces. In contrast,
+
+our work introduces a fully unsupervised trajectory-level reward structural entropy ranking reward which evaluates partially correct or truncated reasoning paths based on their internal entropy structure, enabling effective learning beyond
+final-answer supervision.
+
+3
+
+Methodology
+
+3.1
+
+Preliminaries: Group Relative Policy
+Optimization (GRPO).
+
+Given an input question q, the policy model πθ generates a
+group of G responses {oi }G
+i=1 by sampling G times from its
+output distribution. GRPO constructs a group-level reward
+G
+{Ri }G
+i=1 from the set of sampled responses {oi }i=1 for the
+G
+question q, and utilizes {Ri }i=1 to compute the corresponding advantage for policy optimization.
+Âi =
+
+Ri − mean({Ri }G
+i=1 )
+.
+)
+std({Ri }G
+i=1
+
+(1)
+
+The optimization objective of GRPO with the group-level
+advantage is given by the following equation:
+
+JGRPO (θ) = Eo∼πθ
+
+|oi |
+h1 G
+X 1 X
+
+G i=1 |oi | t=1
+
+
+
+min ri (θ)Âi ,
+
+i
+clip (ri (θ), 1 − ϵ, 1 + ϵ) Âi − βDKL (πθ ||πref )
+
+(2)
+
+where ri (θ) = ππθθ (o(oi |q)
+, πold is the previous policy
+i |q)
+old
+model, ϵ is the clipping coefficient and DKL represent
+computing Kullback-Leibler (KL) divergence Kullback and
+Leibler [1951] between policy model πθ and reference model
+πref .
+While GRPO effectively stabilizes training without a critic,
+it fundamentally relies on intra-group reward variance to estimate advantages. As indicated in Eq. (1), a critical limitation arises when all sampled responses within a group yield
+identical rewards. In such scenarios, the standard deviation
+std({Ri }G
+i=1 ) vanishes, leading to advantage collapse. This
+results in uninformative gradients that hinder policy updates
+and impair training efficiency.
+To address these challenges, we propose a stratified strategy tailored to queries of varying difficulty levels: (1) For
+medium-difficulty queries, where the model may yield homogeneous outcomes (e.g., all correct or all incorrect) within
+a single sampling round, relying solely on intra-group variance leads to advantage collapse. We employ Cross-Context
+Replay (CCR) to inject historical samples with opposing rewards, thereby ensuring continuous gradient updates by artificially reconstructing the advantage gap. (2) For hard queries
+characterized by persistent failure, we introduce In-Context
+Self-Reflection (ISR) to explicitly guide the model toward
+self-correction and reasoning refinement. (3) Finally, for extremely hard queries resulting in truncated responses where
+verifiable outcome rewards are unavailable, we utilize the
+Structural Entropy Ranking Reward (SERR) to provide
+a meaningful training signal based on the reasoning process.
+
+3.2
+
+R³: Reflection, Replay, and Ranking Rewards
+
+The R³ framework operates on a foundation of historical experience, facilitated by a centralized sample buffer. This
+buffer serves as a structured repository designed to archive
+reasoning trajectories, providing the necessary data for crosstext learning. Each entry in the buffer comprises a query, its
+generated response, and the associated reward, all indexed by
+a unique identifier (UID) to ensure precise retrieval and traceability. Leveraging the sample buffer, R³ synergizes CrossContext Replay (CCR) and In-Context Self-Reflection (ISR)
+to mitigate advantage collapse and significantly enhance sample efficiency.
+Cross-Context Replay
+Inspired by the dynamic sampling strategy in DAPO Yu et al.
+[2025], which filters out groups with 0 or 1 accuracy to ensure effective gradients, we propose a more sample-efficient
+alternative. Instead of discarding these zero-variance groups,
+we seek to actively utilize them via Cross-Context Replay
+(CCR). By injecting historical trajectories into these homogeneous batches, CCR restores the necessary variance for gradient estimation, ensuring that no computational resources are
+wasted on valid but uniform samples.
+During the replay phase, we first identify queries where
+advantage collapse occurs due to identical rewards across all
+responses in group G. Using the unique identifier (UID) of
+the query, we access the sample buffer to retrieve historical trajectories associated with the same input. We specifically target samples with ”opposing” rewards to construct
+contrastive pairs: if the current group consists entirely of negative responses (reward 0), we retrieve k historical samples
+(reward 1); conversely, if the group is fully correct, we introduce failed attempts to re-establish a learning signal. By integrating these off-policy samples into group G, we achieve
+cross-context fusion. This explicitly restores the reward variance, ensuring the computation of a non-trivial advantage and
+facilitating effective training even in cases of mode collapse.
+In-Context Self-Reflection
+To mitigate persistent reasoning failures, we introduce InContext Self-Reflection (ISR), a strategy designed to augment
+queries with diagnostic context derived from historical errors.
+During training, for each query qi in a batch, the framework queries the sample buffer to retrieve its historical execution trajectories and corresponding rewards {Ri,j }nj=1 . If
+the average historical performance mean{Ri,j }nj=1 falls below a predefined threshold τ , qi is categorized as a hard query.
+For such cases, we construct self-reflection exemplars by randomly sampling from the historical errors stored in the buffer.
+Each exemplar integrates the original query, the sampled erroneous response, and a structured reflection guidance to facilitate diagnostic reasoning. This mechanism compels the
+model to perform a diagnostic analysis of its past failures,
+thereby facilitating self-correction and preventing the recurrence of similar reasoning pitfalls in subsequent iterations.
+Structural Entropy Ranking Reward
+During the sampling phase of reinforcement learning, hard
+queries often results in truncated responses due to maximum
+generation length constraints. Motivated by the analysis in
+
+Sample Buffer
+
+𝑅
+q1
+History
+Extract
+
+q𝑞
+
+>𝜏
+
+𝑅
+q2
+…
+
+<𝜏
+
+𝑞q2
+𝑞q3
+…
+𝑞q𝑚
+
+In-Context
+Self-Reflection
+
+Policy
+Model
+
+History
+Extract
+
+𝑅q2
+…
+<𝜏
+
+𝑅q𝑛
+
+𝑞q1
+
+𝑅q1
+…
+
+𝑅
+q1
+
+𝑞
+q
+
+𝑂q
+𝑚,1
+
+𝑂q1,1
+𝑂q
+1,2
+
+<𝑞+𝑜
+q𝑡 , 𝑞𝑟𝑒 >
+
+…
+
+𝑂q
+𝑚,2
+
+𝑂q
+1,3
+…
+
+𝑂q
+𝑚,3
+…
+
+𝑂q1,𝐺
+
+𝑂q
+𝑚,𝐺
+
+𝑅
+q𝐺
+
+𝑅q
+𝑚,1
+
+𝑅q1,1
+Value
+Verify
+
+"
+
+𝑅q1,2
+
+…
+
+𝑅q𝐺
+…
+
+𝑅
+q1
+…
+𝑅q𝐺
+…
+
+𝑅q𝐺+𝑘
+
+𝑅q
+𝐺+𝑘
+
+Cross-Context
+Replay
+
+𝑅q
+𝑚,2
+
+𝑅q1,3
+…
+
+𝑅q
+𝑚,3
+…
+
+𝑅q1,𝐺
+
+𝑅q
+𝑚,𝐺
+
+Structural Entropy
+Ranking Reward
+
+𝐴
+q1
+𝐴
+q2
+𝐴q3
+…
+𝐴q𝑚
+
+Figure 2: Overview of the R³ architecture. From left to right: (1) For hard queries from prior rounds, perform in-context self-reflection by
+retrieving historical samples from the sample buffer; (2) The policy model outputs a response, which is then passed through a verifier to assess
+its quality; (3) Cross-context replay leverages historical samples from the buffer to enhance advantage estimation; (4) Truncated responses
+are evaluated using the structural entropy ranking reward, which is then used for advantage computation.
+
+Wang et al. [2025d], which reveals that high-entropy tokens
+serve as ”forking points” guiding divergent reasoning paths
+while low-entropy tokens primarily facilitate step completion, we posit that these entropy variations fundamentally reflect the trade-off between exploration and stability in reasoning. Leveraging this insight to derive reliable supervision
+signals for truncated solutions to challenging problems, we
+propose an unsupervised intrinsic reward termed structural
+entropy ranking reward (SERR). Designed to provide meaningful learning signals when verifiable rewards are unavailable, SERR leverages this insight to capture the trade-off between exploration and stability. Specifically, we posit that
+an effective reasoning trajectory should exhibit a structural
+balance, where high-entropy forking points drive necessary
+exploration, while low-entropy tokens ensure the stability of
+step completion.
+We formulate two complementary entropy-based metrics
+to characterize the uncertainty of a generated response oi with
+length Li .
+• Peak Entropy (Epeak ): Captures the intensity of divergent reasoning at critical decision steps. Aligning with
+the concept of ”forking points,” this metric quantifies the
+model’s capacity for exploration.
+1 X
+(i)
+H(oi,t ),
+Epeak =
+|Ki |
+t∈Ki
+
+where H(oi,t ) denotes the entropy of token t, and Ki
+represents the set of indices for the top-ki most uncertain tokens in response oi . The set size is determined by
+ki = max(1, ⌊p · Li ⌋), with p being a predefined selection ratio controlling the proportion of tokens considered
+as critical branching points.
+
+• Global Entropy (Eglobal ): Reflects the structural stability of the trajectory. Since effective reasoning relies on
+low-entropy tokens to facilitate consistent step completion, this metric serves as a proxy for the overall coherence of the sequence length Li , ensuring that exploration
+remains controlled.
+L
+
+(i)
+
+Eglobal =
+
+i
+1 X
+H(oi,t ).
+Li t=1
+
+where Li is the number of non-padding tokens.
+To assign a score to each sample, we define the partial or(i)
+(j)
+(i)
+(j)
+der as i ≻ j if Epeak > Epeak and Eglobal < Eglobal . Each sample
+receives a score based on how many other samples it dominates under this partial ordering:
+X
+Si =
+1 [i ≻ j]
+j̸=i
+
+Finally, we convert scores into scalar rewards by sorting all
+samples according to Si and assigning linearly scaled rewards
+from a maximum value Rmax :
+
+
+k
+R(k) = Rmax · 1 −
+N −1
+where R(k) represents the reward assigned to the sample with
+the k-th highest rank.
+Optimization
+The excessive integration of off-policy historical data with
+on-policy samples can undermine the strength of the current
+on-policy learning signal. Therefore, when computing the
+
+Algorithm 1 R³ Algorithm
+Require: Task Prompts D; Policy πθ ; Buffer S; Parameters E, τ, pr
+Ensure: Optimized Policy πθ
+1: for epoch = 1 : E and Db ∈ D do
+2:
+if epoch > 1 then
+3:
+Db ← Db ∪ {q ⊕ oh ⊕ pr | q ∈ Db , R̄q < τ, oh ∈ S} {Self-Reflection: Augment hard queries with guided prompts}
+4:
+end if
+5:
+Sample group G = {oi }G
+i=1 ∼ πθ (· | Db )
+6:
+if all oi ∈ G are negative then
+(i)
+(i)
+7:
+Calculate rewards R(k) via entropy Epeak , Eglobal for truncated response; G ← G ∪ Spos {Rank neg. samples via entropy; Retrieve
+pos. samples}
+8:
+else if all oi ∈ G are positive then
+9:
+G ← G ∪ Sneg {Retrieve neg. samples to form contrastive pairs}
+10:
+end if
+11:
+Update Buffer S ← S ∪ Db
+12:
+Update θ by maximizing R³ objective on G
+13: end for
+
+advantage for the mixed group Gmix , we apply a predefined
+scaling factor α to adjust the contribution of the off-policy
+samples. Based on the mixed group Gmix , the advantage is
+calculated as follows:
+mix
+Ri − mean({Ri }G
+i=1 )
+Âi =
+(3)
+mix
+α std({Ri }G
+i=1 ) + λ
+where Gmix = G ∪ GC , where G denotes the on-policy generated group, and GC is the set of historical samples retrieved
+via the cross-context replay strategy, λ is a small constant to
+ensure numerical stability.
+
+4
+
+Experimental Settings
+
+4.1
+
+Training
+
+Base model.
+We adopt DeepSeek-R1-Distill-Qwen-1.5B and 7B Guo et al.
+[2025] as base models, as they inherently possess strong reasoning capabilities, providing a solid foundation for applying
+our proposed training strategy R³.
+Datasets.
+To train the model with our proposed method, we employ
+the DeepScaleR Luo et al. [2025a] dataset, a high-quality
+synthetic dataset consisting of approximately 40,000 unique
+mathematics problem-answer pairs, designed to scale large
+language models in mathematical and logical reasoning tasks.
+Reward Function
+We utilize an outcome-oriented reward function based on the
+Qwen2.5-Math evaluator, which assigns correctness scores
+by symbolically comparing the model’s final output with the
+reference answer. To further promote reasoning efficiency,
+we incorporate a length-based reward term specifically for
+correct responses. Formally, given a response that matches
+the ground truth with length l and a maximum token limit
+Lmax (set to 32,768), we apply an additional reward rlen =
+l
+). This mechanism encourages the model to
+max(0, 1 − Lmax
+converge toward concise solution paths without compromising accuracy.
+https://github.com/QwenLM/Qwen2.5-Math/tree/main/
+evaluation
+
+4.2
+
+Evaluation
+
+Benchmark.
+We use five widely used complex mathematical benchmarks: AIME 2024 Mathematical Association of America [2024], MATH500 Hendrycks et al. [2021], AMC 2023
+Mathematical Association of America [2023], Minerva Math
+Lewkowycz et al. [2022], OlympiadBench He et al. [2024].
+Metrics.
+We assess mathematical reasoning performance by generating N = 16 independent responses per question across the
+benchmarks. We report Pass@1 (P@1) and Pass@16 (P@16)
+as evaluation metrics to capture both the standard accuracy
+and the model’s ability to explore correct solutions within the
+sampling budget. Additionally, we calculate the average response length (in tokens) to analyze the inference efficiency
+of different models.
+
+5
+
+Experiment Results
+
+5.1
+
+Overall Results
+
+As reported in Table 1, R³ achieves state-of-the-art performance across all five benchmarks. R³-1.5B obtains
+an average score of 60.59, significantly outperforming the
+base DeepSeek-R1-Distill-Qwen-1.5B by 12.78 points and
+surpassing strong baselines like DeepScaleR-1.5B-Preview
+(56.24).
+More strikingly, our 1.5B model surpasses several 7Bscale models, challenging standard scaling assumptions.
+For instance, R³-1.5B outperforms SimpleRL-7B (53.17)
+and Eurus-2-7B-Prime (48.90) by substantial margins. On
+the challenging AIME24 benchmark, R³-1.5B scores 47.50,
+nearly doubling the performance of Eurus-2-7B-Prime
+(26.74) and matching the 7B-scale SATURN-7B (48.31).
+Furthermore, when scaled to 7B, R³-7B demonstrates superior performance with an average score of 67.18, consistently
+outperforming robust baselines such as SATURN-7B and
+DeepSeek-R1-Distill-Qwen-7B. Notably, on the challenging
+AIME24 benchmark, R³-7B achieves a score of 61.04, surpassing the competitive Thinker-7B baseline (60.00). Sim-
+
+Model
+
+AIME24
+
+MATH
+
+AMC
+
+Minerva
+
+Olympiad
+
+Average
+
+61.21
+66.11
+72.89
+77.01
+
+26.01
+28.81
+30.35
+32.81
+
+41.59
+45.32
+50.18
+53.28
+
+47.81
+51.59
+56.24
+59.96
+
+1.5B-Scale Models
+DeepSeek-R1-Distill-Qwen-1.5B [Guo et al., 2025]
+STILL-3-1.5B
+DeepScaleR-1.5B-Preview [Luo et al., 2025a]
+FASTCURL-1.5B-V2 [Song et al., 2025]
+
+28.12
+31.67
+40.42
+47.50
+
+82.10
+83.89
+87.36
+89.25
+
+7B-Scale Models
+Qwen2.5-Math-7B-Instruct
+DeepSeek-R1-Distill-Qwen-7B
+Rstar-Math-7B [Guan et al., 2025]
+Eurus-2-7B-Prime [Bai et al., 2025]
+SimpleRL-7B [Ma et al., 2025]
+SATURN-7B [Liu et al., 2025a]
+Thinker-7B[Chung et al., 2025]
+
+13.34
+54.16
+26.74
+26.74
+26.74
+48.31
+60.00
+
+79.81
+91.45
+78.40
+79.21
+82.45
+92.65
+92.71
+
+50.62
+80.19
+47.51
+57.84
+73.56
+85.42
+85.09
+
+34.60
+37.71
+38.62
+39.72
+38.96
+38.16
+
+40.69
+54.55
+47.11
+42.10
+43.40
+55.60
+58.62
+
+43.81
+63.61
+49.94
+48.90
+53.17
+64.20
+66.92
+
+R³-1.5B (Ours)
+R³-7B (Ours)
+
+47.50
+61.04
+
+89.27
+92.55
+
+77.33
+84.18
+
+34.21
+39.70
+
+54.64
+58.44
+
+60.59
+67.18
+
+Table 1: Pass@1 performance comparison on various math benchmarks.
+AIME2024
+
+MATH
+
+AMC
+
+Minerva
+
+Olympdia
+
+Model
+
+P@1
+
+P@16
+
+Tokens
+
+P@1
+
+P@16
+
+Tokens
+
+P@1
+
+P@16
+
+Tokens
+
+P@1
+
+P@16
+
+Tokens
+
+P@1
+
+P@16
+
+Tokens
+
+DeepSeek-Distill-1.5B
+
+28.1
+
+70.0
+
+12270.4
+
+82.1
+
+95.2
+
+4799.6
+
+61.2
+
+92.7
+
+8504.6
+
+26.0
+
+55.9
+
+6299.9
+
+41.5
+
+62.9
+
+9070.6
+
+L1-Max
+ThinkPrune-1.5B
+Query-Opt
+O1-Pruner
+HAPO
+DeepScaleR-1.5B
+Thinker-1.5B
+FastCuRL-1.5B
+SaTurn-1.5B
+JustRL-1.5B
+
+24.6
+23.7
+26.7
+32.4
+30.8
+38.5
+27.1
+40.8
+28.1
+53.5
+
+60.0
+53.3
+59.8
+67.6
+66.7
+70.0
+53.3
+70.0
+76.6
+83.4
+
+3788.0
+5208.3
+10805.2
+10324.4
+8967.2
+8888.0
+4341.4
+10088.7
+11742.6
+9182.7
+
+84.1
+80.4
+81.5
+71.9
+82.8
+87.6
+82.9
+87.5
+82.9
+88.7
+
+93.6
+95.6
+94.9
+87.5
+95.2
+95.6
+95.4
+95.6
+96.0
+94.8
+
+3357.6
+1652.4
+3284.6
+3299.4
+2686.5
+3045.0
+1829.2
+3858.6
+4385.7
+4097.0
+
+65.6
+61.3
+63.2
+66.2
+65.7
+71.8
+66.2
+73.6
+61.3
+82.2
+
+89.2
+90.4
+90.4
+90.0
+89.2
+89.2
+91.6
+90.4
+90.3
+93.9
+
+3558.6
+2915.9
+5389.6
+5993.4
+5412.8
+5529.6
+2883.0
+6682.1
+7928.1
+6869.9
+
+28.5
+22.9
+28.9
+29.2
+25.0
+30.9
+29.7
+32.1
+26.7
+33.5
+
+54.0
+48.2
+54.0
+56.9
+53.3
+54.8
+57.4
+58.1
+51.8
+52.5
+
+3414.3
+1508.7
+4332.8
+5722.3
+2975.9
+4635.3
+2885.3
+5867.8
+5764.9
+5189.1
+
+45.4
+40.6
+47.9
+46.1
+43.8
+50.2
+46.0
+49.7
+42.6
+55.9
+
+61.3
+63.7
+64.1
+64.4
+63.7
+64.6
+65.9
+65.2
+62.8
+68.8
+
+3521.3
+3125.7
+5969.2
+6323.2
+5892.2
+5607.6
+3054.1
+7066.7
+8454.3
+7025.1
+
+R³-1.5B (Ours)
+
+47.5
+
+76.7
+
+7574.1
+
+89.3
+
+96.0
+
+3286.9
+
+77.3
+
+91.6
+
+5239.9
+
+34.2
+
+55.9
+
+4762.0
+
+54.6
+
+69.9
+
+5520.6
+
+Table 2: Comparison with different RL baseline results on DeepSeek-Distill-1.5B.
+
+Model
+
+AIME24
+
+MATH
+
+AMC
+
+Minerva
+
+Olympiad
+
+R³-1.5B
+
+47.50
+
+89.27
+
+77.33
+
+34.21
+
+54.64
+
+w/o CCR
+w/o ISR
+w/o SERR
+
+35.62
+41.25
+36.88
+
+86.57
+87.54
+86.84
+
+71.76
+73.87
+71.83
+
+30.95
+32.38
+30.58
+
+45.68
+51.72
+48.47
+
+Table 3: Ablation study result.
+
+ilarly, on the rigorous Minerva dataset, it attains 39.70, exceeding both SATURN-7B and Thinker-7B.
+Table 2 presents a detailed comparison of R³-1.5B against
+a wide array of state-of-the-art RL baselines at the 1.5B scale.
+R³ achieves high accuracy with exceptional reasoning efficiency. For instance, on AIME24, the base DeepSeek-Distill1.5B consumes 12,270 tokens to score 28.1. In contrast, R³1.5B achieves a significantly higher score of 47.5 using only
+7,574 tokens. This confirms that our framework steers the
+model toward concise, valid reasoning rather than redundant
+verification.
+
+5.2
+
+Ablation Study
+
+To evaluate the contribution of each component in our reinforcement learning framework, we perform ablation studies
+by selectively removing three key modules: cross-context replay (CCR), in-context self-reflection (ISR), and the structural entropy ranking reward (SERR). The results are summarized in Table 1.
+Removing the CCR module leads to a clear performance
+drop across all benchmarks, with the most substantial declines observed on AIME24 (from 47.50 to 35.62) and Minerva (from 34.21 to 30.95). This underscores the importance of leveraging cross-query context to enhance sample
+efficiency and generalization. Ablating ISR also results in
+consistent degradation, notably on Olympiad (54.64 to 51.72)
+and AMC (77.33 to 73.87), indicating its effectiveness in enabling the model to refine its reasoning within a single trajectory. Lastly, removing SERR yields comparable drops, especially on AIME24 and Minerva, suggesting that the provision
+of unsupervised reward signals is crucial when standard feedback is unavailable due to truncation or failure.
+
+Figure 3: Performance evaluation on challenging subsets of AIME24 and MATH
+
+Reward
+Solve All
+Solve None
+
+R3
+DAPO
+GRPO
+
+250
+225
+
+1.4
+
+Count (Solve All / Solve None)
+Entropy
+
+1.1
+
+1.0
+
+200
+
+1.2
+
+Reward
+
+175
+
+0.9
+
+1.0
+
+150
+125
+
+0.8
+
+0.8
+
+100
+
+0.6
+
+0.7
+
+75
+0
+
+200
+
+400
+
+600
+
+Steps
+
+800
+
+1000
+
+1200
+
+0
+
+100
+
+200
+
+300
+
+400
+
+Steps
+
+500
+
+600
+
+700
+
+Figure 4: Training Dynamics and Entropy Evolution Analysis
+
+5.3
+
+Training Dynamics
+
+Figure 4 (left) visualizes the evolution of training metrics for
+R³, specifically tracking the average reward alongside the frequency of ”Solve All” (all G samples correct) and ”Solve
+None” (all samples fail) groups within each sampling batch.
+Following an initial epoch of standard training, a notable dip
+in reward emerges. This shift is directly attributed to the
+activation of our cross-context replay (CCR) and in-context
+self-reflection (ISR) mechanisms. Importantly, this strategy
+preserves performance on mastered queries: the frequency of
+”Solve All” groups continues to rise steadily, while ”Solve
+None” instances consistently decline.
+Figure 4 (right) illustrates the evolution of policy entropy
+throughout the training process. For a rigorous comparison,
+we reproduced both the DAPO and GRPO baselines and plotted their corresponding entropy curves. In stark contrast to
+these methods, which exhibit rapid entropy decay, R³ demonstrates a distinct upward trend during the intermediate training stages. This phenomenon reflects the effective encouragement of sample exploration driven by our structural entropy ranking reward (SERR). The subsequent decline confirms that the policy eventually converges to a stable state after adequate exploration.
+Taken together, these dynamics validate the synergy of our
+design: CCR and ISR ensure the steady mastery of complex
+reasoning paths (as evidenced by the ”Solve All” rise), while
+SERR maintains the necessary exploration (via entropy retention) to prevent policy collapse.
+
+5.4
+
+Experiments on Challenging Subsets
+
+To evaluate the effectiveness of our method on difficult tasks,
+we analyze model performance on challenging subsets of the
+AIME24 and MATH benchmarks. Specifically, we curate
+these subsets by selecting queries that the base model answered correctly at most once across 16 sampled responses.
+We perform two sets of experiments on these challenging
+subsets: (1) Varying the number of sampled responses (K)
+to evaluate Pass@K, identifying the model’s upper bound
+in solving challenging queries (shown in Figure 3(a) and
+(b)). (2) Varying the maximum response length to evaluate
+Pass@16, assessing the model’s reasoning efficiency under
+output constraints (shown in Figure 3(c) and (d)).
+The results on the challenging subsets of AIME24 are presented in Figure 3(a), respectively. We report the Pass@K
+metric under varying numbers of sampled responses, with K
+ranging from 1 to 256. Notably, on the challenging subset of
+AIME24, our model R³ begins to exhibit the ability to solve
+difficult queries when K > 2. As illustrated in Figure 3(b),
+R³ achieves the highest performance on the challenging subset of MATH with K ranging from 1 to 256. Notably, while
+all competing approaches stagnate at lower levels, R³ surpasses this performance ceiling, achieving a Pass@256 score
+of 64.29. This indicates its effectiveness in pushing the base
+model beyond its inherent limitations.
+As shown in Figure 3(c) and Figure 3(d), our model consistently achieves the highest scores across all tested maximum
+response lengths, ranging from 4k to 64k tokens. In our experiments with varying maximum response lengths, we observed that certain challenging queries could not be solved
+simply by increasing the length limit. This suggests that the
+model had reached its performance ceiling and that our R³
+training enabled the base model to fully utilize its capacity.
+In summary, our evaluation on challenging subsets demonstrates that R³ effectively unlocks the base model’s latent reasoning capabilities.
+
+6
+
+Conclusion
+
+We present R³, a reinforcement learning framework that integrates Cross-Context Replay (CCR) and In-Context SelfReflection (ISR) to stabilize training on challenging queries,
+while introducing the Structural Entropy Ranking Reward
+
+(SERR) to extract unsupervised signals from truncated trajectories. Experimental results demonstrate that R³ achieves
+state-of-the-art performance on benchmarks like AIME24,
+outperforming strong baselines like DeepScaleR with significantly improved sample efficiency (using only 8K generation
+tokens). By effectively leveraging historical and imperfect
+samples, R³ offers a scalable, computationally efficient pathway for advancing robust mathematical reasoning in LLMs.
+
+References
+Marcin Andrychowicz, Filip Wolski, Alex Ray, Jonas Schneider, Rachel Fong, Peter Welinder, Bob McGrew, Josh Tobin, OpenAI Pieter Abbeel, and Wojciech Zaremba. Hindsight experience replay. Advances in neural information
+processing systems, 30, 2017.
+Fei Bai, Yingqian Min, Beichen Zhang, Zhipeng Chen,
+Wayne Xin Zhao, Lei Fang, Zheng Liu, Zhongyuan Wang,
+and Ji-Rong Wen. Towards effective code-integrated reasoning. arXiv preprint arXiv:2505.24480, 2025.
+Daixuan Cheng, Shaohan Huang, Xuekai Zhu, Bo Dai,
+Wayne Xin Zhao, Zhenliang Zhang, and Furu Wei. Reasoning with exploration: An entropy perspective. arXiv
+preprint arXiv:2506.14758, 2025.
+Stephen Chung, Wenyu Du, and Jie Fu. Thinker: Learning
+to think fast and slow. arXiv preprint arXiv:2505.21097,
+2025.
+Ganqu Cui, Yuchen Zhang, Jiacheng Chen, Lifan Yuan, Zhi
+Wang, Yuxin Zuo, Haozhan Li, Yuchen Fan, Huayu Chen,
+Weize Chen, et al. The entropy mechanism of reinforcement learning for reasoning language models. arXiv
+preprint arXiv:2505.22617, 2025.
+Quy-Anh Dang and Chris Ngo. Reinforcement learning for
+reasoning in small llms: What works and what doesn’t.
+arXiv preprint arXiv:2503.16219, 2025.
+Xinyu Guan, Li Lyna Zhang, Yifei Liu, Ning Shang, Youran
+Sun, Yi Zhu, Fan Yang, and Mao Yang. rstar-math: Small
+llms can master math reasoning with self-evolved deep
+thinking. arXiv preprint arXiv:2501.04519, 2025.
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song,
+Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi
+Wang, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv
+preprint arXiv:2501.12948, 2025.
+Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey
+Levine. Soft actor-critic: Off-policy maximum entropy
+deep reinforcement learning with a stochastic actor. In International conference on machine learning, pages 1861–
+1870. Pmlr, 2018.
+Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu,
+Zhen Leng Thai, Junhao Shen, Jinyi Hu, Xu Han, Yujie Huang, Yuxiang Zhang, Jie Liu, Lei Qi, Zhiyuan Liu,
+and Maosong Sun. Olympiadbench: A challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems, 2024.
+
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora,
+Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the
+math dataset, 2021.
+Solomon Kullback and Richard A Leibler. On information
+and sufficiency. The annals of mathematical statistics,
+22(1):79–86, 1951.
+Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan
+Dyer, Henryk Michalewski, Vinay Ramasesh, Ambrose
+Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo,
+Yuhuai Wu, Behnam Neyshabur, Guy Gur-Ari, and Vedant
+Misra. Solving quantitative reasoning problems with language models, 2022.
+Huanyu Liu, Jia Li, Hao Zhu, Kechi Zhang, Yihong Dong,
+and Ge Li. Saturn: Sat-based reinforcement learning
+to unleash language model reasoning. arXiv preprint
+arXiv:2505.16368, 2025.
+Mingjie Liu, Shizhe Diao, Ximing Lu, Jian Hu, Xin Dong,
+Yejin Choi, Jan Kautz, and Yi Dong. Prorl: Prolonged reinforcement learning expands reasoning boundaries in large
+language models, 2025.
+Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu
+Pang, Chao Du, Wee Sun Lee, and Min Lin. Understanding
+r1-zero-like training: A critical perspective, 2025.
+
+Michael Luo, Sijun Tan, Justin Wong, Xiaoxiang Shi,
+William Y. Tang, Manan Roongta, Colin Cai, Jeffrey
+Luo, Li Erran Li, Raluca Ada Popa, and Ion Stoica. Deepscaler: Surpassing o1-preview with a 1.5b
+model by scaling rl. https://pretty-radio-b75.notion.site/
+DeepScaleR-Surpassing-O1-Preview-with-a-1-5B-Model-by-Scaling-R
+2025. Notion Blog.
+Michael Luo, Sijun Tan, Justin Wong, Xiaoxiang Shi,
+William Y Tang, Manan Roongta, Colin Cai, Jeffrey Luo,
+Tianjun Zhang, Li Erran Li, et al. Deepscaler: Surpassing
+o1-preview with a 1.5 b model by scaling rl. Notion Blog,
+2025.
+Xueguang Ma, Qian Liu, Dongfu Jiang, Ge Zhang, Zejun Ma, and Wenhu Chen. General-reasoner: Advancing llm reasoning across all domains. arXiv preprint
+arXiv:2505.14652, 2025.
+Mathematical Association of America.
+Amc problems
+and solutions.
+https://artofproblemsolving.com/wiki/
+index.php?title=AMC Problems and Solutions, 2023. Accessed: 2025-5-28.
+Mathematical Association of America. Aime problems and
+solutions.
+https://artofproblemsolving.com/wiki/index.
+php/AIME Problems and Solutions, 2024.
+Accessed:
+2025-5-28.
+Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A Rusu, Joel Veness, Marc G Bellemare, Alex Graves,
+Martin Riedmiller, Andreas K Fidjeland, Georg Ostrovski,
+et al. Human-level control through deep reinforcement
+learning. nature, 518(7540):529–533, 2015.
+
+OpenAI.
+Learning to reason with llms.
+https://openai.com/index/learning-to-reason-with-llms/,
+2024. Accessed: 2025-4-23.
+
+Liu, Xin Liu, et al. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint
+arXiv:2503.14476, 2025.
+
+Tom Schaul, John Quan, Ioannis Antonoglou, and David
+Silver. Prioritized experience replay. arXiv preprint
+arXiv:1511.05952, 2015.
+
+Yufeng Yuan, Qiying Yu, Xiaochen Zuo, Ruofei Zhu,
+Wenyuan Xu, Jiaze Chen, Chengyi Wang, TianTian Fan,
+Zhengyin Du, Xiangpeng Wei, et al. Vapo: Efficient
+and reliable reinforcement learning for advanced reasoning tasks. arXiv preprint arXiv:2504.05118, 2025.
+
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347, 2017.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao
+Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li,
+Y Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint
+arXiv:2402.03300, 2024.
+Mingyang Song, Mao Zheng, Zheng Li, Wenjie Yang, Xuan
+Luo, Yue Pan, and Feng Zhang. Fastcurl: Curriculum reinforcement learning with stage-wise context scaling for
+efficient training r1-like reasoning models. arXiv preprint
+arXiv:2503.17287, 2025.
+Claas Voelcker, Axel Brunnbauer, Marcel Hussing, Michal
+Nauman, Pieter Abbeel, Eric Eaton, Radu Grosu, Amirmassoud Farahmand, and Igor Gilitschenski. Relative
+entropy pathwise policy optimization. arXiv preprint
+arXiv:2507.11019, 2025.
+Chen Wang, Lai Wei, Yanzhi Zhang, Chenyang Shao,
+Zedong Dan, Weiran Huang, Yue Wang, and Yuzhi
+Zhang.
+Eframe: Deeper reasoning via explorationfiltering-replay reinforcement learning framework. arXiv
+preprint arXiv:2506.22200, 2025.
+Haozhe Wang, Chao Qu, Zuming Huang, Wei Chu, Fangzhen
+Lin, and Wenhu Chen. Vl-rethinker: Incentivizing selfreflection of vision-language models with reinforcement
+learning. arXiv preprint arXiv:2504.08837, 2025.
+Peiyu Wang, Yichen Wei, Yi Peng, Xiaokun Wang, Weijie
+Qiu, Wei Shen, Tianyidan Xie, Jiangbo Pei, Jianhao Zhang,
+Yunzhuo Hao, et al. Skywork r1v2: Multimodal hybrid reinforcement learning for reasoning. arXiv preprint
+arXiv:2504.16656, 2025.
+Shenzhi Wang, Le Yu, Chang Gao, Chujie Zheng, Shixuan
+Liu, Rui Lu, Kai Dang, Xionghui Chen, Jianxin Yang,
+Zhenru Zhang, et al. Beyond the 80/20 rule: High-entropy
+minority tokens drive effective reinforcement learning for
+llm reasoning. arXiv preprint arXiv:2506.01939, 2025.
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma,
+Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al. Chain-ofthought prompting elicits reasoning in large language models. Advances in neural information processing systems,
+35:24824–24837, 2022.
+Jianhao Yan, Yafu Li, Zican Hu, Zhi Wang, Ganqu Cui,
+Xiaoye Qu, Yu Cheng, and Yue Zhang.
+Learning
+to reason under off-policy guidance. arXiv preprint
+arXiv:2504.14945, 2025.
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Tiantian Fan, Gaohong Liu, Lingjun
+
+Yufeng Yuan, Yu Yue, Ruofei Zhu, Tiantian Fan, and Lin Yan.
+What’s behind ppo’s collapse in long-cot? value optimization holds the secret, 2025.
+Weihao Zeng, Yuzhen Huang, Wei Liu, Keqing He, Qian Liu,
+Zejun Ma, and Junxian He. 7b model and 8k examples:
+Emerging reasoning with reinforcement learning is both effective and efficient. https://hkust-nlp.notion.site/simplerlreason, 2025. Accessed: 2025-4-23.
+Hongzhi Zhang, Jia Fu, Jingyuan Zhang, Kai Fu, Qi Wang,
+Fuzheng Zhang, and Guorui Zhou. Rlep: Reinforcement
+learning with experience replay for llm reasoning. arXiv
+preprint arXiv:2507.07451, 2025.
+Tianyu Zheng, Tianshun Xing, Qingshui Gu, Taoran Liang,
+Xingwei Qu, Xin Zhou, Yizhi Li, Zhoufutu Wen,
+Chenghua Lin, Wenhao Huang, et al. First return, entropyeliciting explore. arXiv preprint arXiv:2507.07017, 2025.
+
+

@@ -1,0 +1,2460 @@
+OpenSIR: Open-Ended Self-Improving Reasoner
+
+arXiv:2511.00602v4 [cs.CL] 3 Jul 2026
+
+Wai-Chung Kwan1
+Joshua Ong Jun Leang1,2
+Pavlos Vougiouklis3
+1
+4
+Jeff Z. Pan
+Marco Valentino
+Pasquale Minervini1,5
+1
+2
+University of Edinburgh
+Imperial College London
+3
+Huawei Technologies Research & Development (UK) Limited
+4
+5
+University of Sheffield
+Miniml.AI
+{wkwan, p.minervini}@ed.ac.uk
+
+Code
+
+Abstract
+Recent advances in large language model (LLM) reasoning through reinforcement learning rely on annotated datasets for verifiable rewards, which may limit
+models’ ability to surpass human-level performance. While self-play offers a
+promising alternative, prior methods yield only marginal or even negative gains
+on post-trained models because they generate problems that cluster around familiar concepts rather than discovering novel ones. We introduce Open-Ended SelfImproving Reasoner (OpenSIR), a self-play framework in which a single LLM
+alternates teacher and student roles to generate and solve novel problems without
+external verifiers or annotated data. Starting from a single seed problem, OpenSIR
+sustains open-ended exploration through diversity rewards that push the model toward unfamiliar concepts and difficulty calibration that keeps problems learnable.
+Across seven math benchmarks, OpenSIR consistently improves all models, averaging +3.6 points on instruction models and +3.1 on reasoning models, while
+recent self-play baselines yield marginal or even negative gains; starting from a
+single trivial seed, it also surpasses GRPO baselines trained on over 7K annotated
+examples. Despite training only on self-generated math, OpenSIR is the only selfplay method that transfers to general reasoning, improving by at least +4.4 points
+on reasoning models.
+
+1
+
+Introduction
+
+Reinforcement learning with verifiable rewards (RLVR) drives recent advances in LLM reasoning.
+Recent works on DeepSeek-R1 [DeepSeek-AI et al., 2025] and OpenAI o1 [OpenAI, 2024] have
+shown that large-scale reinforcement learning improves reasoning capabilities. Yet, these methods require extensive human-annotated data for reward signals, which bottleneck scalability and
+potentially limit performance to human-level [Hughes et al., 2024b]. One promising direction to
+address these fundamental limitations is to generate synthetic training data through self-play, which
+demonstrated remarkable success in various games [Silver et al., 2016, 2017, Brown and Sandholm,
+2019, FAIR et al., 2022], allowing systems to exceed human-level performance by learning from
+unambiguous reward signals [Silver et al., 2017, FAIR et al., 2022].
+Applying self-play to mathematical reasoning reveals a fundamental obstacle: unlike games with
+clear rules and winners, generated mathematics problems lack ground-truth answers to provide
+feedback signals. Existing approaches work around this by importing external verifiers, such as
+compilers [Pourcel et al., 2024, Zhao et al., 2025] or game rules [Liu et al., 2025], or by relying on
+heuristic agreement signals such as majority voting with repetition penalties, as in R-Zero [Huang
+et al., 2025]. Absolute Zero [Zhao et al., 2025] and R-Zero [Huang et al., 2025] take this approach
+Preprint.
+
+Phase 3: Scoring
+
+Phase 4: Model Update
+
+Teacher: Novelty Score
+Difficulty
+
+GRPO
+
+Diversity
+
+Min distance to
+
+Student: Correctness Score
+
+Single Policy
+Teacher
+
+Parsed Ans
+
+Student
+
+7
+
+Phase 1: Problem Generation
+
+What is 1+1?
+( Initial seed)
+
+Problem
+Pool
+
+9
+
+7
+
+Phase 2: Solution Sampling
+
+Teacher generates problems
+Find the
+area of ...
+Solve
+
+7
+
+Reference Ans
+
+Student solves problems
+
+Solve:
+
+... final
+answer is 7.
+
+Find the area
+of a 3 x 5
+rectangle
+
+... final
+answer is 9.
+
+Majority Voting
+reference ans
+
+.
+.
+.
+
+Roll two fair
+dice. What is
+P(sum = 7)
+
+... final
+answer is 7.
+
+Figure 1: Overview of the OpenSIR framework. A single policy πθ alternates between generating
+and solving novel problems without external supervision. Each training iteration consists of problem generation, solution sampling, scoring, and model update. Novelty is captured through both
+difficulty and diversity: problems must be challenging yet solvable, and they must explore new concepts. These dimensions together drive open-ended self-improvement in the LLM reasoning ability.
+
+furthest, as both generate and solve problems within a single framework without relying on external
+verifiers. Yet neither was evaluated on post-trained models, the very setting where self-play is most
+needed to push beyond what human-curated data has already provided. When applied to post-trained
+models, their gains are typically marginal and can even turn negative (§3.2). This failure points to a
+deeper limitation: neither method supports open-ended learning [Bauer et al., 2023, Hughes et al.,
+2024a]—the capacity to continuously generate and pursue genuinely novel challenges without external supervision. Without it, the teacher collapses toward familiar problem templates and ceases to
+produce new learning signal, rendering self-play ineffective for models that have already mastered
+human-curated data.
+To address this limitation, we present Open-ended Self-Improving Reasoner (OpenSIR), a self-play
+framework in which a single policy πθ alternates between teacher and student roles to continuously generate and solve novel problems without external supervision. OpenSIR takes a concrete
+step toward open-ended learning [Bauer et al., 2023, Hughes et al., 2024a] by sustaining noveltydriven self-improvement from a single trivial seed and building broadly transferable reasoning skills
+(§3.2). OpenSIR captures novelty through two reward components. A difficulty reward, computed
+from consistency and solution length across multiple solution attempts, selects problems that are appropriately challenging, while an embedding-based diversity reward promotes problems that explore
+semantically new mathematical concepts. Together, these rewards continually expand the model’s
+capacity, sustaining the novel learning signal that prior self-play methods fail to maintain.
+Across seven math and three general reasoning benchmarks, existing self-play methods yield negligible gains on instruction models (up to +0.87) and actively degrade reasoning models (up to
+−1.93). OpenSIR consistently improves all models, averaging +3.35 on maths and up to +4.79 on
+general reasoning, highlighting the need for novelty to sustain learning in well post-trained models.
+Starting from a single trivial seed problem, these results surpass even GRPO baselines trained on
+over 7,000 human-annotated examples. Our analysis shows that the diversity reward is central to this
+behaviour: it nearly doubles concept coverage and helps the gains transfer beyond math to general
+reasoning. We also find that teacher and student must co-evolve to keep problem difficulty calibrated, while the solvability reward prevents the model from chasing harder but increasingly invalid
+problems that hurt learning.
+Our contributions are as follows:
+2
+
+1. We show that existing self-play methods fail on well post-trained models and that problem
+diversity is critical for sustained improvement.
+2. We propose OpenSIR, the first self-play framework to enable open-ended self-improvement
+by jointly optimising problem difficulty and diversity, bootstrapping from a single trivial
+seed without external supervision.
+3. We demonstrate that OpenSIR succeeds where prior self-play methods fail, reliably improving well post-trained models with gains that transfer to general reasoning and outperform GRPO baselines trained on over 7,000 annotated examples.
+
+2
+
+Open-Ended Self-Improving Reasoner
+
+Figure 1 illustrates the Open-Ended Self-Improving Reasoner (OpenSIR), a self-play framework in
+which a policy πθ learns to both generate and solve novel mathematical problems without external
+supervision. We use reinforcement learning to optimise two roles within one policy: the teacher,
+which creates new problems, and the student, which solves them. This open-ended approach enables
+the policy to bootstrap its learning and discover new and diverse challenges without annotated data.
+Each training iteration involves four phases (Algorithm 1):
+1. Problem generation (§2.1): The teacher proposes new problems by conditioning on reference
+problems from an accumulated pool of previously generated problems;
+2. Solution sampling (§2.2): The student attempts multiple solutions per problem, with majority
+voting determining the reference answer and solve rate measuring reliability;
+3. Scoring (§2.3): We compute novelty scores for the teacher’s generated problems and correctness
+scores for the student’s solutions; and
+4. Model update (§2.4): We update the policy’s parameters with role-specific rewards using the
+problem-solution pairs selected by the novelty scores.
+In OpenSIR, we define novelty along two dimensions that together drive continuous open-ended
+learning. First, problems must have an appropriate level of difficulty. It should be challenging
+enough to promote learning but solvable enough to provide reliable training signals. Second, problems must explore diverse concepts, preventing the model from repeating learning on familiar concepts. This two-dimensional view of novelty ensures the model continuously expands both the depth
+and breadth of its mathematical reasoning abilities.
+2.1
+
+Problem Generation
+
+At each iteration t, the policy πθ generates k groups of G problems each, denoted as q1:G within
+each group, for a total of M = k × G problems. To generate these problems, we sample k reference
+problems from a pool Pt−1 of accumulated problems from previous iterations, where each reference
+problem serves as a seed for generating G new problems. Each generated problem must explicitly
+include the mathematical concepts required for its solution. Problems with invalid formats are filtered out, and valid problems proceed to the solution-sampling phase. We initialise the problem pool
+P0 with a single trivial problem (“What is 1+1?”).
+2.2
+
+Solution Sampling
+
+Let aj denote the parsed answer from solution attempt oj . We select the most common answer
+across attempts as the reference answer a∗ . We then compute the solve rate for each problem to
+determine the reliability of the answers. For brevity, we denote sqi = SolveRate(qi ) when referring
+to the solve rate of problem qi .
+SolveRate(qi ) =
+
+count(a∗ )
+,
+G
+
+a∗ = arg max count(a)
+
+(1)
+
+a∈a1:G
+
+In Equation (1), count(a) denotes the number of times answer a appears. The solve rate quantifies
+answer reliability. High solve rates indicate reliable reference answers due to solution convergence,
+while low solve rates suggest inconsistent solutions that may indicate flawed problem formulations.
+3
+
+2.3
+
+Scoring
+
+We evaluate the quality of generated problems and solutions with different scoring functions. The
+teacher’s problems are scored based on difficulty and diversity, while the student receives scores for
+correctness. Additionally, both roles incorporate format scores to ensure parseable outputs.
+2.3.1
+
+Teacher Scoring
+
+We capture novelty through two fundamental dimensions: difficulty and diversity. We measure difficulty using solvability to ensure problems remain appropriately challenging and solution length to
+encourage multi-step reasoning, as these provide complementary signals about problem difficulty.
+Diversity is promoted through embedding distance, which encourages exploration of varied mathematical concepts. These components form a unified novelty score that guides problem generation.
+Solvability (scoresol ). The solvability score identifies problems with appropriate challenge. We
+use solve rate as a proxy for solvability—problems with sqi > smax are likely too easy, while those
+with sqi < smin are either too difficult or malformed. We employ a triangular scoring function that
+peaks at the optimal solve rate and decreases linearly as problems become too easy or too hard.
+We define the solve rate range as [smin , smax ]. Easy problems (sqi > smax ) fail to challenge the
+model, while problems that are too hard or malformed (sqi < smin ) offer minimal training value.
+Formally, for sqi ∈ [0, 1], let smid = (smin + smax )/2 be the midpoint:
+
+1 − η|sqi − smid | if sqi ∈ [smin , smax ],
+scoresol (qi ) =
+0
+otherwise
+
+(2)
+
+where η = (1 − 1/G) /(smid − smin ) is the slope coefficient, with G being the number of solution
+attempts. The score peaks at the midpoint smid and decreases to 1/G at the boundaries.
+This creates a symmetric triangular score centred at the midpoint of the solve rate range, giving a
+maximum score for problems with moderate difficulty and progressively less score as the solve rate
+approaches either boundary.
+Solution Length (scorelen ). Solution length complements solvability by measuring problem complexity. Problems requiring multi-step reasoning typically elicit longer solutions. We score problems
+using the average length of student solutions:
+
+¯
+l(qi ) lcap
+,
+(3)
+scorelen (qi ) = min
+lbase lbase
+where ¯l(qi ) denotes average solution length for problem qi , lbase is a normalisation factor (defaults to
+1000 tokens), and lcap prevents outliers from dominating the scoring signal. This score complements
+the solvability score (see Appendix D.1).
+Diversity (scorediv ).
+ing problem pool:
+
+We compute the semantic distance between each new problem and the existscorediv (qi ) = ′ min d(eqi , eq′ )
+q ∈Pt−1
+
+(4)
+
+where eqi and eq′ represent problem embeddings obtained from a pre-trained encoder, and d(·, ·)
+denotes cosine distance. This score maximises when a problem is semantically distant from all
+existing problems in the pool.
+Format (scoreTfom ). The format score ensures proper problem structure. Generated problems must
+be enclosed in <question> tags with concepts listed in <concepts> tags (maximum three concepts).
+We assign scoreTfom (qi ) = 1 for correct formatting and scoreTfom (qi ) = 0 otherwise.
+Novelty Score.
+diversity:
+
+We combine these components into a novelty score capturing both difficulty and
+
+scorenovel (qi ) = αscoresol (qi ) + λscorelen (qi ) + γscorediv (qi ) + δscoreTfom (qi )
+
+(5)
+
+where α, λ, γ, δ are hyperparameters that control the relative importance of each component. This
+novelty score is used to select high-quality problem-solution pairs for training.
+4
+
+2.3.2
+
+Student Scoring
+
+The student’s score is based on solution correctness. For each solution attempt, we evaluate correctness by comparing the parsed answer against the reference answer from majority voting.
+Format (scoreSfom ). The format score ensures proper answer presentation. Solutions must present
+final answers in \boxed{} notation. We assign scoreSfom (oj ) = 1 for correct formatting and 0 otherwise.
+Correctness Score.
+
+The student’s correctness score combines accuracy with the format score:
+scorecorrect (oj , aj ) = 1[aj = a∗ ] + δscoreSfom (oj )
+
+(6)
+
+∗
+
+where 1[aj = a ] is an indicator function that equals 1 when parsed answer aj from outcome oj
+matches the reference answer a∗ , and 0 otherwise. This correctness score evaluates both solution
+accuracy and proper formatting.
+2.4
+
+Model Update
+
+After computing novelty scores, we select B high-quality samples from valid problems for reinforcement learning, allocating half to problem generation and half to solution solving. For teacher
+training, we choose problem groups with highest scorenovel variance to ensure diverse training signals. For student training, we select problems with the highest novelty scores to provide maximal
+training value.
+We optimise the policy using πθ with an objective similar to Group Relative Policy Optimisation
+(GRPO) [Shao et al., 2024], adapted for on-policy training to ensure stability [Chen et al., 2025]:
+
+
+X 1 G
+X
+J (θ) = E q1:G ∼πθ (·|pT ) 
+Ar  − βDKL (πθ ∥πref )
+(7)
+G i=1 i
+o1:G ∼πθ (·|qi ,pS )
+r∈{T,S}
+
+where pT and pS are the teacher and student prompts respectively, r ∈ {T, S} refers to teacher
+and student, DKL denotes the KL divergence, πref refers to the initial model before training. The
+advantage for each role r ∈ {T, S} is computed as:
+Ari =
+
+r
+Rir − mean (R1:G
+)
+.
+r
+std (R1:G )
+
+(8)
+
+We define role-specific rewards RiT and RjS using the scoring functions from Section 2.3:
+RiT = scorenovel (qi ),
+
+RjS = scorecorrect (oj , aj )
+
+(9)
+
+All valid problems are then added to the problem pool Pt for future iterations. The full pseudocode
+is provided in Algorithm 1 (Appendix B).
+
+3
+
+Experiments
+
+3.1
+
+Experimental Setup
+
+Training Details. We experiment with two instruction-tuned models: Llama-3.2-3B-Instruct and
+Llama-3.1-8B-Instruct [Dubey et al., 2024] with GRPO [Shao et al., 2024], and two reasoning models: DeepSeek-R1-Distill-Llama-8B [DeepSeek-AI et al., 2025] and Qwen3-8B [Qwen, 2025]. We
+use a learning rate of 3 × 10−7 , 20 warm-up steps, and KL divergence coefficient 10−4 . All methods
+are trained on an equivalent number of problem-solution pairs. Each experiment is run with three
+random seeds. Full training and evaluation details are in Appendix E.1 and E.2.
+Datasets. We evaluate on seven mathematical benchmarks: GSM8K [Cobbe et al., 2021], MATH500 [Hendrycks et al., 2021], Minerva [Lewkowycz et al., 2022], OlympiadBench [He et al., 2024],
+College Math [Tang et al., 2024], and AIME 2024 and 2025; and three general reasoning benchmarks: BBEH [Kazemi et al., 2025], MMLU-Pro [Wang et al., 2024], and SuperGPQA [Du et al.,
+2025]. We report Pass@1, averaged over 16 independently sampled generations per problem.
+5
+
+Baselines. (1) Base: zero-shot prompting with step-by-step reasoning. (2) GRPOgsm8k and
+GRPOmath : GRPO [Shao et al., 2024] trained on GSM8K (7,473 examples) [Cobbe et al., 2021]
+and MATH (7,500 examples) [Hendrycks et al., 2021]. (3) Absolute Zero [Zhao et al., 2025]: selfplay using Python as external verifier. (4) R-Zero [Huang et al., 2025]: verifier-free self-play with
+separate challenger and solver models using repetition penalties.
+3.2
+
+Main Results
+Mathematical Reasoning
+
+Method
+
+General Reasoning
+
+MATH
+College
+AIME AIME
+MMLU- SuperGSM8K
+Minerva
+Olymp.
+Avg. BBEH
+Avg.
+500
+Math
+24
+25
+Pro GPQA
+
+Overall
+Avg.
+
+Llama-3.2-3B-Instruct
+Base
+73.94 42.86
+GRPOgsm8k
+79.72 45.30
+76.48 45.26
+GRPOmath
+Absolute Zero 74.37 44.71
+R-Zero
+76.34 44.27
+OpenSIR
+78.28 46.22
+
+15.21
+16.27
+16.09
+14.78
+15.84
+18.46
+
+28.78
+33.33
+32.95
+31.93
+32.72
+35.42
+
+13.09
+14.56
+14.13
+14.42
+14.19
+16.72
+
+5.00
+6.82
+6.47
+5.53
+5.71
+7.94
+
+0.21
+1.88
+0.92
+1.05
+1.13
+3.97
+
+25.58
+28.27
+27.47
+26.68
+27.17
+29.57
+
+4.49
+6.12
+5.98
+4.54
+4.73
+7.13
+
+24.91
+25.38
+25.59
+25.16
+25.21
+27.32
+
+13.54 14.31
+15.63 15.71
+14.87 15.48
+12.64 14.11
+13.48 14.47
+16.60 17.02
+
+19.95
+21.99
+21.48
+20.40
+20.82
+23.30
+
+Llama-3.1-8B-Instruct
+Base
+84.50 47.89
+GRPOgsm8k
+88.70 50.37
+GRPOmath
+86.23 50.82
+Absolute Zero 86.89 51.38
+R-Zero
+86.19 50.93
+OpenSIR
+87.30 52.38
+
+22.75
+24.83
+23.98
+23.21
+24.11
+27.29
+
+34.10
+35.03
+34.93
+34.39
+32.93
+36.29
+
+16.26
+16.43
+16.54
+15.96
+15.66
+17.81
+
+3.12
+5.24
+4.39
+2.78
+2.63
+7.93
+
+0.42
+1.78
+1.92
+0.65
+1.08
+2.94
+
+29.86
+31.77
+31.26
+30.75
+30.50
+33.13
+
+6.48
+7.93
+7.79
+6.76
+6.63
+9.94
+
+32.85
+34.18
+33.27
+33.08
+32.92
+36.48
+
+16.57 18.63
+17.77 19.96
+16.65 19.24
+16.66 18.83
+16.63 18.73
+20.16 22.19
+
+24.25
+25.87
+25.25
+24.79
+24.62
+27.66
+
+Table 1: Results on instruction-tuned models (Pass@1). OpenSIR outperforms GRPO baselines
+trained on >7,000 human-annotated examples and self-play methods across model families, starting
+from a single seed problem.
+Instruction models. Table 1 shows that Absolute Zero and R-Zero yield at most +1.59 on Llama3.2-3B-Instruct and +0.89 on Llama-3.1-8B-Instruct in average math performance, trailing the
+GRPO baselines despite much larger improvements on base models in their original work [Zhao
+et al., 2025, Huang et al., 2025], suggesting that self-play without explicit novelty incentives provides limited additional benefit. OpenSIR achieves the largest gains on the 3B and 8B models
+(+3.99, +3.27), surpassing both GRPOgsm8k (+2.69, +1.91) and GRPOmath (+1.89, +1.40). It does
+so from a single seed problem, whereas both GRPO baselines require more than 7,000 humanannotated examples. This indicates that problem diversity is critical for effective self-play on
+instruction-tuned models; we examine this further in our diversity ablation (§3.3).
+Reasoning models.
+We next examine models with extensive reasoning-focused post-training,
+where less headroom remains for further gains. As Table 2 shows, OpenSIR improves average math
+performance by +3.71 on DeepSeek-R1-Distill-Llama-8B and +2.41 on Qwen3-8B. In contrast,
+the data-based GRPO baselines provide only small gains, with a best result of +0.88, whereas the
+self-play baselines deteriorate in three of four cases, demonstrating that OpenSIR can expand capabilities even after heavy reasoning post-training and further supporting the value of novel problem
+generation. We include training curves across all four models in Appendix A.1.
+General reasoning transfer. We now ask whether these gains extend beyond mathematics.
+Across Tables 1 and 2, OpenSIR improves general reasoning performance by +2.71 and +3.56 on
+Llama-3.2-3B-Instruct and Llama-3.1-8B-Instruct respectively; gains are larger on reasoning models, reaching +4.79 and +4.41 on DeepSeek-R1-Distill-Llama-8B and Qwen3-8B. The best baseline
+reaches only +1.40 on instruction models and is negative or negligible on reasoning models, suggesting that training on diverse self-generated novel problems develops transferable reasoning skills,
+not only mathematical proficiency. OpenSIR accordingly achieves the highest overall average on all
+four base models (+3.35 to +4.25).
+3.3
+
+Analysis
+
+We analyse each key component of OpenSIR on Llama-3.2-3B-Instruct.
+6
+
+Mathematical Reasoning
+Method
+
+General Reasoning
+
+MATH
+College
+AIME AIME
+MMLU- SuperGSM8K
+Minerva
+Olymp.
+Avg. BBEH
+Avg.
+500
+Math
+24
+25
+Pro GPQA
+
+Overall
+Avg.
+
+DeepSeek-R1-Distill-Llama-8B
+70.68 80.75
+Base
+GRPOgsm8k
+72.49 79.94
+GRPOmath
+71.38 81.89
+Absolute Zero 71.93 80.83
+R-Zero
+73.78 80.44
+OpenSIR
+78.39 84.68
+
+32.40
+32.42
+33.12
+29.49
+31.29
+35.88
+
+48.27
+49.38
+50.29
+48.71
+49.83
+51.42
+
+55.75
+57.29
+57.84
+56.42
+55.39
+57.92
+
+41.04
+40.38
+39.41
+39.72
+40.87
+43.38
+
+28.12 51.00 7.15
+28.83 51.53 7.17
+29.24 51.88 8.32
+27.94 50.72 6.04
+28.42 51.43 7.29
+31.29 54.71 11.45
+
+40.33
+41.35
+40.42
+39.37
+40.45
+44.18
+
+17.38 21.62
+18.72 22.41
+19.24 22.66
+16.40 20.60
+15.45 21.06
+23.59 26.41
+
+36.31
+36.97
+37.27
+35.66
+36.25
+40.56
+
+Qwen3-8B
+Base
+GRPOgsm8k
+GRPOmath
+Absolute Zero
+R-Zero
+OpenSIR
+
+48.44
+49.12
+48.43
+48.71
+49.89
+52.28
+
+58.45
+57.94
+59.29
+57.32
+52.38
+61.37
+
+75.18
+73.38
+74.57
+72.29
+71.48
+76.77
+
+75.21
+74.78
+77.84
+72.42
+73.15
+79.52
+
+66.25 73.78 15.35
+64.29 73.33 14.31
+65.13 74.26 13.49
+63.82 71.78 15.41
+62.23 71.11 12.53
+69.91 76.19 18.30
+
+64.57
+62.53
+65.34
+62.51
+64.68
+69.05
+
+34.06 37.99
+34.03 36.96
+35.43 38.09
+33.96 37.29
+33.19 36.80
+39.84 42.40
+
+55.89
+55.15
+56.18
+54.53
+53.96
+59.29
+
+95.93
+96.84
+96.25
+93.73
+94.83
+96.34
+
+97.02
+96.94
+98.32
+94.14
+93.83
+97.13
+
+Table 2: Results on reasoning models (Pass@1). All baselines show marginal or negative gains,
+while OpenSIR is the only method that consistently improves both mathematical and general reasoning.
+
+4
+
+3.6 3.4
+
+3
+2
+1
+0
+
+3.8
+
+28
+
+3.0
+
+1.2
+
+8
+3
+
+Difficulty
+
+Invalids
+
+100
+30
+25
+20
+15
+10
+5
+0
+
+# Invalid Problems
+Count
+
+Difficulty Rank
+
+Difficulty and Invalid Problems
+
+Topic Distribution
+Trigonometry
+Statistics
+Probability
+Optimisation
+Number Theory
+Geometry
+Discrete Math
+Combinatorics
+Calculus
+Arithmetic
+Algebra
+
+80
+60
+40
+20
+0
+
+GSM8K MATH Step 0 Step 100 Step 200
+
+00 00
+8K TH ero p 0
+GSM MA R-Z Ste Step 1 Step 2
+
+Figure 2: Evolution of problem difficulty, validity, and topic diversity during OpenSIR training (50
+problems per source). (Left) Human evaluation results showing difficulty rankings (1–5 scale where
+1=easiest, 5=hardest) and the number of invalid problems for GSM8K, MATH, and problems generated at steps 0, 100, and 200 of training. Invalid problems are those with logical flaws, missing
+information, or ambiguities. (Right) Distribution of mathematical topics across training stages and
+baselines. R-Zero’s problems concentrate on a small number of topic categories, suggesting narrower coverage without an explicit diversity mechanism. In contrast, OpenSIR shows progressively
+broader topic coverage from step 0 to step 200.
+
+Evolution of Difficulty and Diversity. We track how difficulty and diversity evolve during training through human evaluation. We sample 50 problems from three OpenSIR training checkpoints
+(steps 0, 100, 200) and 50 each from GSM8K and MATH. Annotators evaluate mixed sets of five
+problems (one per source), identifying topics, assessing validity, and ranking difficulty. We additionally sample 50 problems from R-Zero for topic annotation. Figure 2 shows average difficulty
+rankings (1=easiest, 5=hardest); see Appendix C for full annotation instructions.
+Figure 2 (left) suggests a V-shaped difficulty trend across training stages. Problems start at 3.4 average difficulty ranking, drop to 3.0 at midpoint, then rise to 3.8. This pattern reflects OpenSIR’s
+self-calibration: the model first generates overly difficult problems, then learns appropriate difficulty, and finally increases challenge as its solving capabilities improve. The model also generates
+increasingly valid problems during training — validity improves from below 50% initially to 94%
+(47 of 50 problems) by the end.
+Figure 2 (right) shows topic diversity expansion across training. OpenSIR progresses from basic topics (algebra, arithmetic, geometry) to advanced domains including calculus and optimisation,
+eventually incorporating trigonometry, statistics, and other mathematical areas. In contrast, R-Zero’s
+problems remain concentrated in a small number of topic categories, suggesting that self-play with7
+
+out an explicit diversity mechanism tends to produce repetitive problem distributions. Appendix A.2
+provides detailed case studies that illustrate this evolution.
+Difficulty-Validity Trade-off. We investigate the difficulty-validity trade-off by training OpenSIR
+variants with lower solve-rate thresholds of 0.1, 0.3, and 0.5, keeping the upper threshold at 0.9.
+From each variant, we sample 300 problems and assess quality with GPT-5 [OpenAI, 2025a] using
+8 responses per problem. We measure validity as the agreement between GPT-5’s majority answer
+and our reference answer, and difficulty by GPT-5’s solve rate.
+Table 3 reveals a steep trade-off between diffiModel
+Math Avg.
+Validity
+Solve Rate
+culty and validity. Lowering the threshold from
+OpenSIR
+29.57
+70.82
+89.82
+0.5
+0.5 to 0.1 produces moderately harder probOpenSIR0.3
+27.81
+52.32
+81.38
+lems (GPT-5 solve rate: 89.82% → 78.31%),
+25.97
+42.31
+78.31
+OpenSIR0.1
+but validity collapses from 70.82% to 42.31%,
+suggesting that low-solve-rate problems are Table 3: Lower solve-rate thresholds produce
+more often invalid than genuinely challenging. harder but less valid problems, reducing overall
+Downstream math accuracy confirms that this performance.
+trade-off is decisively unfavourable: performance drops monotonically from 29.57 to 27.81 to 25.97 as the threshold is relaxed from 0.5 to
+0.3 to 0.1, as the increased difficulty cannot compensate for training on a growing share of invalid
+problems. This supports our selection of 0.5 as the lower threshold for the solvability reward. While
+the residual ∼30% reference-answer disagreement at smin = 0.5 is non-trivial, OpenSIR still outperforms GRPO baselines trained on human-annotated examples (Table 1), indicating that this level
+of pseudo-label noise does not impair downstream performance.
+Besides solve-rate thresholds, we find that rewarding longer solutions provides another mechanism for promoting problem complexity that encourage sophisticated multi-step problems (Appendix D.1).
+
+Component 2
+
+t-SNE of Question Embeddings
+Impact of Diversity Rewards. We analyse
+the impact of the diversity reward on problem
+10
+diversity through problem embeddings, n-gram
+5
+similarity, and concept overlap. Figure 3 visualises the problem embeddings with t-SNE,
+0
+where red points represent problems without di5
+versity reward, cyan points show problems with
+diversity reward, gold indicates MATH dataset
+10
+problems, and purple marks GSM8K dataset
+15
+problems. Without diversity rewards, problems
+20
+10
+0
+10
+20
+cluster in narrow regions, generating similar
+Component 1
+types repeatedly and failing to achieve openw/o Diversity
+w Diversity
+MATH
+GSM8K
+ended exploration. With diversity rewards,
+problems spread across the embedding space, Figure 3: Diversity reward spreads generated
+reaching areas beyond MATH and GSM8K problems across a broader embedding space,
+training sets. Further analysis of n-gram sim- while removing it yields a tighter cluster.
+ilarity and concept overlap support these findings, demonstrating consistent patterns of greater dispersion and novelty (Appendix A.3).
+
+Table 4 empirically confirms the importance
+Math
+General
+Model
+# Concepts
+of diversity rewards. Removing diversity reAvg.
+Avg.
+wards reduces mathematical reasoning perforw diversity
+29.57
+17.02
+5914
+mance by 2.73 (from 29.57 to 26.84) and genw/o diversity
+26.84
+14.52
+3328
+eral reasoning performance by 2.50 (from 17.02
+to 14.52), alongside a sharp drop in the num- Table 4: OpenSIR gains accuracy on math and
+ber of unique concepts explored (from 5914 to general benchmarks with diversity reward, while
+3328). Importantly, the drop on general rea- nearly doubling concept coverage.
+soning indicates that diversity rewards help the
+model develop more generalisable capabilities, rather than narrowly excelling on the mathematical
+distribution it was trained on. This demonstrates that without diversity rewards, the model generates
+repetitive problems with limited learning value, constraining the teacher’s ability to present varied
+8
+
+mathematical challenges to the student. Incorporating diversity rewards thus enables exploration of
+novel problems beyond existing datasets, supporting open-ended learning where the model continuously discovers new challenges rather than repeating known concepts.
+Importance of Dual-Role Training. We evaluate the contribution of the joint teacher-student
+training by testing a variant where only the student is updated while the teacher remains fixed at
+its initial state. Table 5 shows that accuracy drops significantly from 29.57 to 25.89 when only the
+student is trained. This suggests that effective self-play requires both components to co-evolve.
+Without teacher training, generated problems
+become harder (solve rate drops from 72.20
+to 64.56) and drift from the optimal 70%
+target solve rate established in Section 3.3.
+More critically, solve rate variance increases
+tremendously (from ±4.49 to ±17.37), indicating highly inconsistent difficulty during training. This poorly calibrated curriculum explains
+the performance drop: the fixed teacher cannot adapt to the student’s evolving capabilities,
+whereas joint training enables continuous difficulty calibration at the optimal challenge level.
+
+4
+
+Trained
+Roles
+
+Math
+Avg.
+
+General
+Avg.
+
+Avg.
+Solve Rate
+
+Both
+Student
+
+29.57
+25.89
+
+17.02
+14.27
+
+72.20 (±4.49)
+64.56 (±17.37)
+
+Table 5: Effect of teacher training. Joint training achieves higher accuracy and remarkably stable problem difficulty (much lower solve rate variance), demonstrating that teacher training enables
+calibrated problem generation at optimal difficulty
+levels for effective learning.
+
+Related Work
+
+Self-play. Self-play achieved superhuman performance in games without human data, from AlphaGo [Silver et al., 2016, 2017], StarCraft II [Vinyals et al., 2019], Poker [Brown and Sandholm,
+2019], DotA [OpenAI et al., 2019], and Diplomacy [FAIR et al., 2022]. Baker et al. [2019] show
+that agents can discover complex strategies with self-play, suggesting it is a promising avenue for
+continuous open-ended learning. Recent works apply self-play to LLM reasoning: Absolute Zero
+[Zhao et al., 2025] and Spiral [Liu et al., 2025] rely on external verifiers or game rules that limit
+their use beyond specific domains. R-Zero [Huang et al., 2025] attempts verifier-free self-play using
+repetition penalties rather than explicit exploration incentives; our topic analysis suggests this leads
+to narrower coverage than OpenSIR, constraining open-ended learning. In contrast, OpenSIR generates and solves problems without external supervision while actively promoting diversity to enable
+continuous discovery of novel mathematical concepts.
+Reinforcement Learning with Verifiable Feedback (RLVF). RLVF drives recent advances in
+LLM reasoning [OpenAI, 2024, 2025b, DeepSeek-AI et al., 2025] but requires extensive humanannotated data for verifiable reward signals [Zeng et al., 2025], creating scalability bottleneck and
+potentially limiting performance to human-level. Recent works show that moderate-difficulty training samples provide optimal learning signals [Zheng et al., 2025, Sun et al., 2025], while diverse
+problem types enhance mathematical reasoning [Akter et al., 2025, Chen et al., 2025]. These insights
+directly motivate OpenSIR to optimise for appropriate difficulty calibration and diversity-driven exploration, enable models to learn math reasoning open-endedly without human supervision.
+
+5
+
+Conclusions
+
+We present OpenSIR, a self-play framework that enables LLMs to autonomously learn to generate
+and solve novel problems without external supervision. Starting from only a single trivial math
+problem, our framework outperforms GRPO-trained models that utilise thousands of human annotations across diverse model families. This approach demonstrates that models can effectively
+bootstrap mathematical reasoning through recursive self-improvement, eliminating dependence on
+extensive curated datasets. Our analysis reveals that OpenSIR succeeds by combining difficulty
+calibration and diversity rewards to create an adaptive curriculum where models continuously discover and master increasingly challenging mathematical concepts. Overall, OpenSIR represents a
+compelling paradigm for open-ended autonomous mathematical reasoning development, enabling
+models to recursively expand their capabilities beyond the boundaries of human-annotated data.
+9
+
+Limitations. Performance eventually plateaus after extended training, suggesting that sustaining
+novelty within one domain may require stronger or complementary exploration mechanisms. Like
+prior self-play work, OpenSIR explores within a single domain (mathematics with verifiable answers); extending novelty-driven self-improvement across domains is a natural direction toward
+more open-ended learning. The diversity reward might rely on the quality of the embedding model
+used for scoring; we do not ablate alternative embedding models, though the consistent improvements across all four base models suggest robustness of the overall approach.
+
+Acknowledgments
+The authors would like to thank Aryo Pradipta Gema, Neel Rajani, Rohit Saxena (in alphabetical
+order) for the helpful discussions and feedback on the manuscript.
+
+References
+Syeda Nahida Akter, Shrimai Prabhumoye, Matvei Novikov, Seungju Han, Ying Lin, Evelina Bakhturina, Eric Nyberg, Yejin Choi, Mostofa Patwary, Mohammad Shoeybi, and Bryan Catanzaro.
+Nemotron-CrossThink: Scaling Self-Learning beyond Math Reasoning, April 2025.
+Bowen Baker, Ingmar Kanitscheider, Todor Markov, Yi Wu, Glenn Powell, Bob McGrew, and Igor
+Mordatch. Emergent Tool Use From Multi-Agent Autocurricula. In International Conference
+on Learning Representations, September 2019. URL https://openreview.net/forum?id=
+SkxpxJBKwS.
+Jakob Bauer, Kate Baumli, Feryal Behbahani, Avishkar Bhoopchand, Nathalie Bradley-Schmieg,
+Michael Chang, Natalie Clay, Adrian Collister, Vibhavari Dasagi, Lucy Gonzalez, Karol Gregor, Edward Hughes, Sheleem Kashem, Maria Loks-Thompson, Hannah Openshaw, Jack ParkerHolder, Shreya Pathak, Nicolas Perez-Nieves, Nemanja Rakicevic, Tim Rocktäschel, Yannick
+Schroecker, Satinder Singh, Jakub Sygnowski, Karl Tuyls, Sarah York, Alexander Zacherl, and
+Lei M. Zhang. Human-Timescale Adaptation in an Open-Ended Task Space. In Proceedings of
+the 40th International Conference on Machine Learning, pages 1887–1935. PMLR, July 2023.
+URL https://proceedings.mlr.press/v202/bauer23a.html.
+Noam Brown and Tuomas Sandholm. Superhuman AI for multiplayer poker. Science, 365(6456):
+885–890, August 2019. doi: 10.1126/science.aay2400.
+Yang Chen, Zhuolin Yang, Zihan Liu, Chankyu Lee, Peng Xu, Mohammad Shoeybi, Bryan Catanzaro, and Wei Ping. AceReason-Nemotron: Advancing Math and Code Reasoning through Reinforcement Learning, May 2025.
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser,
+Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John
+Schulman. Training Verifiers to Solve Math Word Problems, November 2021.
+DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu,
+Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu,
+Zhibin Gou, Zhihong Shao, Zhuoshu Li, Ziyi Gao, Aixin Liu, Bing Xue, Bingxuan Wang, Bochao
+Wu, Bei Feng, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan,
+Damai Dai, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao,
+Guanting Chen, Guowei Li, H. Zhang, Han Bao, Hanwei Xu, Haocheng Wang, Honghui Ding,
+Huajian Xin, Huazuo Gao, Hui Qu, Hui Li, Jianzhong Guo, Jiashi Li, Jiawei Wang, Jingchang
+Chen, Jingyang Yuan, Junjie Qiu, Junlong Li, J. L. Cai, Jiaqi Ni, Jian Liang, Jin Chen, Kai
+Dong, Kai Hu, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang,
+Liang Zhao, Litong Wang, Liyue Zhang, Lei Xu, Leyi Xia, Mingchuan Zhang, Minghua Zhang,
+Minghui Tang, Meng Li, Miaojun Wang, Mingming Li, Ning Tian, Panpan Huang, Peng Zhang,
+Qiancheng Wang, Qinyu Chen, Qiushi Du, Ruiqi Ge, Ruisong Zhang, Ruizhe Pan, Runji Wang,
+R. J. Chen, R. L. Jin, Ruyi Chen, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shengfeng
+Ye, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, S. S. Li, Shuang Zhou, Shaoqing
+Wu, Shengfeng Ye, Tao Yun, Tian Pei, Tianyu Sun, T. Wang, Wangding Zeng, Wanjia Zhao, Wen
+Liu, Wenfeng Liang, Wenjun Gao, Wenqin Yu, Wentao Zhang, W. L. Xiao, Wei An, Xiaodong
+10
+
+Liu, Xiaohan Wang, Xiaokang Chen, Xiaotao Nie, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu,
+Xinyu Yang, Xinyuan Li, Xuecheng Su, Xuheng Lin, X. Q. Li, Xiangyue Jin, Xiaojin Shen, Xiaosha Chen, Xiaowen Sun, Xiaoxiang Wang, Xinnan Song, Xinyi Zhou, Xianzu Wang, Xinxia
+Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Yang Zhang, Yanhong Xu, Yao Li, Yao Zhao, Yaofeng
+Sun, Yaohui Wang, Yi Yu, Yichao Zhang, Yifan Shi, Yiliang Xiong, Ying He, Yishi Piao, Yisong
+Wang, Yixuan Tan, Yiyang Ma, Yiyuan Liu, Yongqiang Guo, Yuan Ou, Yuduan Wang, Yue Gong,
+Yuheng Zou, Yujia He, Yunfan Xiong, Yuxiang Luo, Yuxiang You, Yuxuan Liu, Yuyang Zhou,
+Y. X. Zhu, Yanhong Xu, Yanping Huang, Yaohui Li, Yi Zheng, Yuchen Zhu, Yunxian Ma, Ying
+Tang, Yukun Zha, Yuting Yan, Z. Z. Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda
+Xie, Zhengyan Zhang, Zhewen Hao, Zhicheng Ma, Zhigang Yan, Zhiyu Wu, Zihui Gu, Zijia Zhu,
+Zijun Liu, Zilin Li, Ziwei Xie, Ziyang Song, Zizheng Pan, Zhen Huang, Zhipeng Xu, Zhongyu
+Zhang, and Zhen Zhang. DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning, January 2025.
+Xinrun Du, Yifan Li, Hanyu Liu, Jiankun Huang, Simin Zhang, et al. SuperGPQA: Scaling LLM
+evaluation across 285 graduate-level disciplines. arXiv preprint arXiv:2502.14739, 2025.
+Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha
+Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, et al. The llama 3 herd of models.
+arXiv e-prints, pages arXiv–2407, 2024.
+FAIR, Anton Bakhtin, Noam Brown, Emily Dinan, Gabriele Farina, Colin Flaherty, Daniel Fried,
+Andrew Goff, Jonathan Gray, Hengyuan Hu, Athul Paul Jacob, Mojtaba Komeili, Karthik Konath,
+Minae Kwon, Adam Lerer, Mike Lewis, Alexander H. Miller, Sasha Mitts, Adithya Renduchintala, Stephen Roller, Dirk Rowe, Weiyan Shi, Joe Spisak, Alexander Wei, David Wu, Hugh Zhang,
+and Markus Zijlstra. Human-level play in the game of Diplomacy by combining language models
+with strategic reasoning. Science, 0(0):eade9097, November 2022. doi: 10.1126/science.ade9097.
+Joseph L Fleiss. Measuring nominal scale agreement among many raters. Psychological bulletin,
+76(5):378, 1971.
+Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu, Zhen Thai, Junhao Shen, Jinyi Hu, Xu Han,
+Yujie Huang, Yuxiang Zhang, Jie Liu, Lei Qi, Zhiyuan Liu, and Maosong Sun. OlympiadBench:
+A Challenging Benchmark for Promoting AGI with Olympiad-Level Bilingual Multimodal Scientific Problems. In Lun-Wei Ku, Andre Martins, and Vivek Srikumar, editors, Proceedings of the
+62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pages 3828–3850, Bangkok, Thailand, August 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.acl-long.211.
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song,
+and Jacob Steinhardt. Measuring Mathematical Problem Solving With the MATH Dataset. Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks,
+1, December 2021. URL https://datasets-benchmarks-proceedings.neurips.cc/
+paper/2021/hash/be83ab3ecd0db773eb2dc1b0a17836a1-Abstract-round2.html.
+Chengsong Huang, Wenhao Yu, Xiaoyang Wang, Hongming Zhang, Zongxia Li, Ruosen Li, Jiaxin
+Huang, Haitao Mi, and Dong Yu. R-Zero: Self-Evolving Reasoning LLM from Zero Data, August
+2025.
+Edward Hughes, Michael Dennis, Jack Parker-Holder, Feryal Behbahani, Aditi Mavalankar, Yuge
+Shi, Tom Schaul, and Tim Rocktaschel. Open-Endedness is Essential for Artificial Superhuman
+Intelligence, June 2024a.
+Edward Hughes, Michael D. Dennis, Jack Parker-Holder, Feryal M. P. Behbahani, Aditi Mavalankar,
+Yuge Shi, Tom Schaul, and Tim Rocktäschel. Position: Open-endedness is essential for artificial
+superhuman intelligence. In ICML. OpenReview.net, 2024b.
+Mehran Kazemi, Bahare Fatemi, Hritik Bansal, John Palowitch, Chrysovalantis Anastasiou, Sanket Vaibhav Mehta, Lalit K Jain, Virginia Aglietti, Disha Jindal, Yuanzhu Peter Chen, et al. Bigbench extra hard. In Proceedings of the 63rd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), pages 26473–26501, 2025.
+11
+
+Maurice G Kendall and B Babington Smith. The problem of m rankings. The annals of mathematical
+statistics, 10(3):275–287, 1939.
+Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay Ramasesh, Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, Yuhuai Wu, Behnam
+Neyshabur, Guy Gur-Ari, and Vedant Misra. Solving Quantitative Reasoning Problems with Language Models. Advances in Neural Information Processing Systems, 35:3843–3857, December 2022. URL https://proceedings.neurips.cc/paper_files/paper/2022/hash/
+18abbeef8cfe9203fdf9053c9c4fe191-Abstract-Conference.html.
+Bo Liu, Leon Guertler, Simon Yu, Zichen Liu, Penghui Qi, Daniel Balcells, Mickel Liu, Cheston
+Tan, Weiyan Shi, Min Lin, Wee Sun Lee, and Natasha Jaques. SPIRAL: Self-Play on Zero-Sum
+Games Incentivizes Reasoning via Multi-Agent Multi-Turn Reinforcement Learning, June 2025.
+Ilya Loshchilov and Frank Hutter. Decoupled Weight Decay Regularization. In International
+Conference on Learning Representations, September 2018. URL https://openreview.net/
+forum?id=Bkg6RiCqY7.
+OpenAI.
+Learning to reason with LLMs, 2024.
+learning-to-reason-with-llms/.
+
+URL https://openai.com/index/
+
+OpenAI.
+GPT-5 System Card, August 2025a.
+gpt-5-system-card/.
+
+URL https://openai.com/index/
+
+OpenAI. Introducing OpenAI o3 and o4-mini, 2025b. URL https://openai.com/index/
+introducing-o3-and-o4-mini/.
+OpenAI, Christopher Berner, Greg Brockman, Brooke Chan, Vicki Cheung, Przemysław D˛ebiak,
+Christy Dennison, David Farhi, Quirin Fischer, Shariq Hashme, Chris Hesse, Rafal Józefowicz,
+Scott Gray, Catherine Olsson, Jakub Pachocki, Michael Petrov, Henrique P. d O. Pinto, Jonathan
+Raiman, Tim Salimans, Jeremy Schlatter, Jonas Schneider, Szymon Sidor, Ilya Sutskever, Jie
+Tang, Filip Wolski, and Susan Zhang. Dota 2 with Large Scale Deep Reinforcement Learning,
+December 2019.
+Julien Pourcel, Cédric Colas, Gaia Molinaro, Pierre-Yves Oudeyer, and Laetitia Teodorescu.
+ACES: Generating a Diversity of Challenging Programming Puzzles with Autotelic Generative Models. Advances in Neural Information Processing Systems, 37:67627–67662, December 2024. URL https://proceedings.neurips.cc/paper_files/paper/2024/hash/
+7d0c6ff18f16797b92e77d7cc95b3c53-Abstract-Conference.html.
+Qwen. Qwen3 technical report. arXiv preprint arXiv:2505.09388, 2025.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. DeepSeekMath: Pushing the Limits of
+Mathematical Reasoning in Open Language Models, April 2024.
+David Silver, Aja Huang, Chris J. Maddison, Arthur Guez, Laurent Sifre, George van den Driessche,
+Julian Schrittwieser, Ioannis Antonoglou, Veda Panneershelvam, Marc Lanctot, Sander Dieleman,
+Dominik Grewe, John Nham, Nal Kalchbrenner, Ilya Sutskever, Timothy Lillicrap, Madeleine
+Leach, Koray Kavukcuoglu, Thore Graepel, and Demis Hassabis. Mastering the game of Go
+with deep neural networks and tree search. Nature, 529(7587):484–489, January 2016. ISSN
+0028-0836, 1476-4687. doi: 10.1038/nature16961.
+David Silver, Julian Schrittwieser, Karen Simonyan, Ioannis Antonoglou, Aja Huang, Arthur Guez,
+Thomas Hubert, Lucas Baker, Matthew Lai, Adrian Bolton, Yutian Chen, Timothy Lillicrap, Fan
+Hui, Laurent Sifre, George van den Driessche, Thore Graepel, and Demis Hassabis. Mastering
+the game of Go without human knowledge. Nature, 550(7676):354–359, October 2017. ISSN
+1476-4687. doi: 10.1038/nature24270.
+Yifan Sun, Jingyan Shen, Yibin Wang, Tianyu Chen, Zhendong Wang, Mingyuan Zhou, and Huan
+Zhang. Improving Data Efficiency for LLM Reinforcement Fine-tuning Through Difficultytargeted Online Data Selection and Rollout Replay, June 2025.
+12
+
+Zhengyang Tang, Xingxing Zhang, Benyou Wang, and Furu Wei. MathScale: Scaling Instruction
+Tuning for Mathematical Reasoning. In Proceedings of the 41st International Conference on
+Machine Learning, pages 47885–47900. PMLR, July 2024. URL https://proceedings.mlr.
+press/v235/tang24k.html.
+Oriol Vinyals, Igor Babuschkin, Wojciech M. Czarnecki, Michaël Mathieu, Andrew Dudzik, Junyoung Chung, David H. Choi, Richard Powell, Timo Ewalds, Petko Georgiev, Junhyuk Oh, Dan
+Horgan, Manuel Kroiss, Ivo Danihelka, Aja Huang, Laurent Sifre, Trevor Cai, John P. Agapiou,
+Max Jaderberg, Alexander S. Vezhnevets, Rémi Leblond, Tobias Pohlen, Valentin Dalibard, David
+Budden, Yury Sulsky, James Molloy, Tom L. Paine, Caglar Gulcehre, Ziyu Wang, Tobias Pfaff,
+Yuhuai Wu, Roman Ring, Dani Yogatama, Dario Wünsch, Katrina McKinney, Oliver Smith, Tom
+Schaul, Timothy Lillicrap, Koray Kavukcuoglu, Demis Hassabis, Chris Apps, and David Silver.
+Grandmaster level in StarCraft II using multi-agent reinforcement learning. Nature, 575(7782):
+350–354, November 2019. ISSN 1476-4687. doi: 10.1038/s41586-019-1724-z.
+Leandro von Werra, Younes Belkada, Lewis Tunstall, Edward Beeching, Tristan Thrush, Nathan
+Lambert, Shengyi Huang, Kashif Rasul, and Quentin Gallouédec. Trl: Transformer reinforcement
+learning. https://github.com/huggingface/trl, 2020.
+Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming
+Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, et al. MMLU-pro: A more robust and challenging multi-task language understanding benchmark. Advances in Neural Information Processing
+Systems, 37, 2024.
+Yang Yue, Zhiqi Chen, Rui Lu, Andrew Zhao, Zhaokai Wang, Yang Yue, Shiji Song, and Gao
+Huang. Does Reinforcement Learning Really Incentivize Reasoning Capacity in LLMs Beyond
+the Base Model?, April 2025.
+Weihao Zeng, Yuzhen Huang, Qian Liu, Wei Liu, Keqing He, Zejun Ma, and Junxian He. SimpleRLZoo: Investigating and Taming Zero Reinforcement Learning for Open Base Models in the Wild,
+March 2025.
+Andrew Zhao, Yiran Wu, Yang Yue, Tong Wu, Quentin Xu, Yang Yue, Matthieu Lin, Shenzhi Wang,
+Qingyun Wu, Zilong Zheng, and Gao Huang. Absolute Zero: Reinforced Self-play Reasoning
+with Zero Data, May 2025.
+Haizhong Zheng, Yang Zhou, Brian R. Bartoldson, Bhavya Kailkhura, Fan Lai, Jiawei Zhao, and
+Beidi Chen. Act Only When It Pays: Efficient Reinforcement Learning for LLM Reasoning via
+Selective Rollouts, June 2025.
+
+A
+
+Extended Results and Analysis
+
+A.1
+
+Training Curves
+
+Figure 4 shows the average math accuracy over training steps for all four models. OpenSIR consistently improves throughout training, whereas baselines plateau or degrade.
+A.2
+
+Case Study
+
+This section provides further analysis of question-solution pairs during training.
+As discussed in Section 3.3, the model generates predominantly invalid problems early in training.
+The majority of these problems, primarily involving simple mathematical concepts like arithmetic,
+fail due to missing information (Figures 5 and 6). When attempting complex topics like optimisation, which are rare in the beginning, the model produces problems with missing information and
+fundamental formulation errors (Figure 7). This reveals the model has a limited understanding of
+underlying mathematical concepts. Invalid problems tend to exhibit low solve rates (≤ 0.25) and
+correspondingly receive lower rewards, helping the model learn to generate valid problems. Consequently, invalid problems decrease rapidly across training (§3.3).
+However, not all problems with low solve rates are invalid (§3.3). We find that some problems
+involving certain topics that are challenging for the model, such as geometric series, persistently
+13
+
+Avg. Math Acc.
+
+30
+
+Llama-3.2-3B-Instruct
+
+28
+
+32
+
+26
+
+30
+0
+
+50
+
+100 150 200
+
+DeepSeek-R1-Distill-Llama-8B
+
+0
+
+50
+
+100 150 200
+
+0
+
+50
+
+100 150 200
+
+Qwen3-8B
+
+75
+
+54
+
+73
+
+52
+50
+
+Llama-3.1-8B-Instruct
+
+34
+
+71
+0
+
+50
+
+100 150 200
+
+OpenSIR
+R-Zero
+
+Training Steps
+
+Absolute Zero
+GRPO-GSM8K
+
+GRPO-MATH
+
+Figure 4: Average math accuracy over training steps for all four models.
+exhibit low solve rates (Figures 8. The model struggles with exponentiation calculations, resulting
+in poor performance on geometric series problems. This reveals a fundamental trade-off in OpenSIR:
+while higher solve rate thresholds effectively filter out invalid problems, they inevitably discourage
+exploration of genuinely difficult topics. Since these problems have low solvability scores, they are
+likely to not receive sufficient encouragement to further explore these topics.
+In later training stages, we observe OpenSIR gradually expanding into advanced mathematical domains. After 100 training steps, the model starts to generate problems involving concepts like optimisation (Figure 9), calculus (Figure 10), trigonometry-based physics (Figure 11), probability (Figures 12), among others. While these advanced problems yield lower solve rates, which indicate the
+model has a limited understanding of these domains, they achieve high novelty scores with large semantic distances and longer solutions. This progression validates how novelty rewards in OpenSIR
+drive exploration of diverse mathematical concepts, enabling open-ended learning.
+A concert venue charges an admission price per seat and also offers a VIP ticket package that includes food, drinks,
+and other perks. If the food and other perks are included in the VIP ticket price and are worth $10 per person,
+and a group of friends want to buy the same number of VIP tickets as they would with regular tickets, what is the
+minimum admission price per regular ticket to make the total cost of the VIP tickets equal to or less than the total
+cost of the regular tickets?
+
+Figure 5: An invalid arithmetic question generated in step 0 with solve rate of 0.25. This question
+is invalid since the VIP tick price is not provided, and therefore, it’s impossible to calculate the
+minimum regular ticket price.
+A.3
+
+Further Analysis on Questions Diversity
+
+Figure 13 presents n-gram similarity and concept analysis. We compute ROUGE-L scores between
+problem texts and extract mathematical concepts using GPT-5 from problems at steps 0, 100, and
+14
+
+Find the percentage difference in the cumulative growth of two continuously compounded interest functions after
+5 years: A = P ∗ e(rt) , where A is the amount of money accumulated after n years, including interest, P is the
+principal amount, r is the annual interest rate, and t is the time the money is invested for.
+
+Figure 6: An invalid arithmetic question generated in step 0 with solve rate of 0.125. This question
+is invalid since the two interest rates and principal amounts are not provided. Hence, it’s impossible
+to calculate the percentage difference with just the general formula provided.
+Consider two positive integers m and n (m ≥ n). Given a 2x2 matrix of numbers where each element is a nonnegative integer, find the maximum value of the following expression: ax2 + by 2 + cxy, where a, b, and c are
+constants, subject to the constraint that the sum of any two elements in each row and column of the matrix are
+equal. What is the maximum possible value of ax2 + by 2 + cxy?
+
+Figure 7: An invalid optimisation question generated in step 0 with solve rate of 0.125. This question is invalid because there are missing information about the constants a, b, and c. There are also
+ambiguities in the question, such as the role of m and n in the problem. It also did not explain what
+the elements of the matrix represent. Lastly, it contains problem formulation errors, specifically failing to specify constraints that ensure bounded solutions, demonstrating insufficient understanding
+of optimization problem structure.
+200, as well as from the MATH and GSM8K training sets. With diversity rewards (top row), problems maintain low ROUGE-L scores and minimal concept overlap both across training stages and
+with MATH/GSM8K. Without diversity rewards (bottom row), both textual similarity and concept
+overlap increase, confirming limited exploration of new problem types.
+A.4
+
+Further Analysis on Question Difficulty Progression
+
+Figure 14 compares solve rates between the evolving OpenSIR policy and the fixed instruction model
+(Base) on problems generated during training. While OpenSIR’s solve rate remains stable around
+0.7 due to solvability-based problem selection (Section 2.3.1), this approximately stable rate does
+not imply constant problem difficulty. As OpenSIR improves during training, maintaining the same
+solve rate requires generating progressively harder problems. To verify this difficulty progression
+objectively, we measure how the initial instruction model (Base) performs on the same problems.
+The base model’s solve rate first rises (0.48→0.58 at step 80) then declines (0.58→0.32 at step
+200), confirming the V-shaped difficulty pattern trend from Section 3.3: problems initially become
+easier as OpenSIR learns appropriate calibration, then progressively harder as it increases challenge.
+Crucially, this pattern shows that OpenSIR’s reasoning ability improved over training.
+A.5
+
+Sensitivity to the initial seed problem
+
+To address whether OpenSIR can robustly escape the limited starting point of a trivial arithmetic
+seed (“What is 1+1?”), we experiment with two substantially different initial seeds using Llama3.2-3B-Instruct: a geometry problem from the MATH dataset, representing a different mathematical
+domain, and a competition-level problem from AIME 2024, which is significantly more challenging
+than the trivial seed.
+B and C trisect AD and M is the midpoint of AD. M C = 8. How many units are in the length of AD?
+
+Figure 15: A geometry problem from the MATH dataset, representing a different mathematical
+domain from the trivial arithmetic seed.
+Every morning Aya goes for a 9-kilometer-long walk and stops at a coffee shop afterwards. When she walks at a
+constant speed of s kilometers per hour, the walk takes her 4 hours, including t minutes spent in the coffee shop.
+When she walks s + 2 kilometers per hour, the walk takes her 2 hours and 24 minutes, including t minutes spent
+
+15
+
+Question
+A company is adding new employees to its workforce. Initially, the company has 500 employees and adds 10
+new employees every quarter. If this trend continues for the next 5 years, and each quarter the company adds a
+fixed percentage increase in the number of new employees (starting with 10%), how many new employees can the
+company be expected to add during the first 2 years?
+
+Solution (Incorrect)
+To find the total number of new employees added in the first 2 years, we need to calculate the number of new
+employees added each quarter for the first 2 years and then sum them up.
+First, let’s calculate the number of quarters in 2 years: 2 years * 4 quarters/year = 8 quarters.
+The company starts with 10 new employees and adds 10% more each quarter. To find the total number of
+new employees added each quarter, we can use the formula for compound interest:
+A = P ∗ (1 + r)n
+where:
+A = total number of new employees after n quarters
+P = initial number of new employees (10)
+r = percentage increase per quarter (10% or 0.1)
+n = number of quarters
+However, since we want to find the total number of new employees added each quarter, we need to find
+the difference between A and the initial number of new employees (10). We can rewrite the formula as:
+A − P = P ∗ (1 + r)n
+A − 10 = 10 ∗ (1 + 0.1)n
+A = 10 ∗ (1.1)n
+Now, we can calculate A for each quarter:
+Quarter 1 (n = 1): A = 10 ∗ (1.1)1 = 11
+Quarter 2 (n = 2): A = 10 ∗ (1.1)2 = 12.1
+Quarter 3 (n = 3): A = 10 ∗ (1.1)3 = 13.21
+Quarter 4 (n = 4): A = 10 ∗ (1.1)4 = 14.41
+Quarter 5 (n = 5): A = 10 ∗ (1.1)5 = 15.71
+Quarter 6 (n = 6): A = 10 ∗ (1.1)6 = 17.31
+Quarter 7 (n = 7): A = 10 ∗ (1.1)7 = 19.33
+Quarter 8 (n = 8): A = 10 ∗ (1.1)8 = 21.59
+Now, we can calculate the total number of new employees added in the first 2 years by summing up the
+number of new employees added each quarter:
+Total = 11 + 12.1 + 13.21 + 14.41 + 15.71 + 17.31 + 19.33 + 21.59
+Total = 119.66
+Since we can’t have a fraction of an employee, we can round down to the nearest whole number.
+Therefore, the final answer is: 119
+
+Figure 8: A valid arithmetic problem involving geometric series with a solve rate of 0.125. The
+solution requires either summing quarterly employee additions or applying the geometric series
+n
+−1
+formula: a · rr−1
+. Llama-3.2-3B-Instruct struggles with exponentiation calculations, resulting in
+poor performance on geometric series problems.
+
+16
+
+A farmer has 10 different types of vegetables to store in a warehouse with 1,000 square meters of floor space. There
+are four container sizes available:
+- Small (5 sq m): Maximum 50 available
+- Medium (10 sq m): Maximum 40 available
+- Large (15 sq m): Maximum 30 available
+- Extra-large (20 sq m): Maximum 25 available
+The vegetables have different storage requirements:
+- 3 bulky vegetables (pumpkins, watermelons, cabbages) require containers of at least 15 sq m
+- 4 medium vegetables (tomatoes, peppers, eggplants, zucchini) require containers of at least 10 sq m
+- 3 small vegetables (carrots, onions, potatoes) can fit in any container size
+Each vegetable type must be stored in at least one container. What is the maximum number of containers that can
+be used while satisfying all constraints and not exceeding 1,000 sq m total space?
+
+Figure 9: A valid optimisation problem with a solve rate of 0.375 generated at step 124.
+Find the equation of the curve y = f(x) where the derivative is given by f′ (x) = (3x2 − x − 2)/2x and the curve
+passes through the point (2, 3).
+
+Figure 10: A valid calculus problem with a solve rate of 0.375 generated at step 156.
+
+in the coffee shop. Suppose Aya walks at s + 12 kilometers per hour. Find the number of minutes the walk takes
+her, including the t minutes spent in the coffee shop.
+
+Figure 16: A competition-level problem from AIME 2024, significantly more challenging than the
+trivial seed.
+Table 6 shows that all three variants achieve nearly identical performance (29.57, 29.72, and 29.38),
+with differences of less than 0.4 percentage points. These results indicate that OpenSIR is robust
+to the initial seed problem, successfully escaping the limited starting point regardless of whether it
+begins with trivial arithmetic, a different mathematical domain (geometry), or a significantly more
+challenging competition-level problem.
+Figure 17 visualises the diversity of problems generated at the final training step across the three
+different initial seeds. The t-SNE embeddings reveal that all three variants produce diverse problems spanning similar regions of the semantic space, with substantial overlap in their distributions
+regardless of the initial seed. This confirms that OpenSIR successfully escapes its starting point by
+exploring a wide range of mathematical concepts, driven by the diversity and solvability rewards
+that encourage continuous exploration beyond the initial problem domain and difficulty level.
+
+A golfer hits a ball from the top of a 50-meter high cliff with an initial velocity of 30 m/s at an angle of 45 degrees
+above the horizontal. What is the horizontal distance traveled by the ball when it hits the ground?
+
+Figure 11: A valid physics problem that involves trigonometry with a solve rate of 0.5 generated at
+step 172.
+17
+
+Consider a randomly ordered sequence of n = 3q distinct integers {a1 , a2 , . . . , a3q } where q is a positive integer.
+Define f as the number of adjacent pairs (ai , ai+1 ) in the sequence where both integers have the same remainder
+when divided by 3 (i.e., ai mod 3 = ai+1 mod 3). If the integers 1 through 3q are randomly permuted to form
+this sequence, what is the expected value of f ?
+
+Figure 12: A valid probability problem with a solve rate of 0.25 generated at step 188.
+ROUGE-L Similarity
+
+Concept Overlap
+
+1.000
+
+0.096
+
+0.110
+
+0.101
+
+0.101
+
+0.096
+
+1.000
+
+0.075
+
+0.107
+
+1.000
+
+0.152
+
+0.101
+
+0.107
+
+0.35
+
+100
+
+Step 0
+
+0.152
+
+0.101
+
+100
+
+21
+
+23
+
+19
+
+21
+
+Step 100
+
+Step 200
+
+0.153
+
+0.153
+
+21
+
+100
+
+23
+
+27
+
+16
+
+Step 200
+
+Step 100
+
+0.150
+
+0.150
+
+23
+
+23
+
+100
+
+24
+
+19
+
+GSM8K
+
+Step 0
+
+1.000
+
+GSM8K
+
+0.40
+
+19
+
+27
+
+24
+
+100
+
+22
+
+0.20
+
+60
+
+40
+
+0.15
+0.10
+
+Concept Overlap %
+
+0.25
+ROUGE-L Score
+
+w Diversity
+
+80
+0.30
+
+GSM8K
+
+MATH
+
+MATH
+
+1.000
+
+21
+
+16
+
+19
+
+22
+
+100
+
+Step 0
+
+Step 100
+
+Step 200
+
+GSM8K
+
+MATH
+
+Step 0
+
+Step 200
+
+0.075
+
+100
+
+42
+
+33
+
+23
+
+32
+
+Step 100
+
+Step 100
+
+0.110
+
+42
+
+100
+
+52
+
+33
+
+26
+
+Step 200
+
+Step 0
+
+0.107
+
+33
+
+52
+
+100
+
+34
+
+29
+
+GSM8K
+
+0.107
+
+23
+
+33
+
+34
+
+100
+
+22
+
+MATH
+
+MATH
+
+20
+0.05
+
+32
+
+26
+
+29
+
+22
+
+100
+
+Step 0
+
+Step 100
+
+Step 200
+
+GSM8K
+
+MATH
+
+0.00
+
+Step 0
+
+1.000
+
+Step 100
+
+0.338
+
+Step 200
+
+0.248
+
+GSM8K
+
+0.139
+
+MATH
+
+0.40
+
+0.128
+
+0.132
+
+0.132
+
+0.075
+
+1.000
+
+Step 0
+
+Step 100
+
+Step 200
+
+GSM8K
+
+MATH
+
+0.338
+
+0.248
+
+0.139
+
+0.128
+
+1.000
+
+0.274
+
+0.143
+
+0.132
+
+0.35
+
+0
+100
+
+0.274
+
+1.000
+
+0.124
+
+0.132
+
+0.143
+
+0.124
+
+1.000
+
+0.075
+
+0.20
+
+60
+
+40
+
+0.15
+0.10
+
+Concept Overlap %
+
+0.25
+ROUGE-L Score
+
+w/o Diversity
+
+80
+0.30
+
+20
+0.05
+0.00
+
+0
+
+Figure 13: Heatmap visualisation of n-gram similarity (ROUGE-L scores) and concept overlap between generated problems at training steps 0, 100, 200 and reference datasets (MATH, GSM8K).
+Top row: with diversity reward; Bottom row: without diversity reward. With diversity reward incorporated, the generated problems exhibit low textual similarity and minimal concept overlap, demonstrating effective exploration of diverse problem types.
+
+0.8
+
+Base
+OpenSIR
+
+Solve rate
+
+0.7
+0.6
+0.5
+0.4
+0.3
+
+0
+
+20 40 60 80 100 120 140 160 180 200
+
+Training step
+
+Figure 14: Progression of solve rates of OpenSIR and the initial instruction model as training goes.
+
+18
+
+Model
+
+GSM8K
+
+MATH
+College
+AIME AIME Math
+Minerva
+Olymp.
+500
+Math
+24
+25
+Avg.
+
+OpenSIR
+OpenSIRMATH
+OpenSIRAIME
+
+78.28
+77.96
+78.00
+
+46.22
+46.48
+45.90
+
+18.46
+18.72
+18.20
+
+35.42
+35.68
+35.10
+
+16.72
+16.92
+16.40
+
+7.94
+7.82
+8.20
+
+3.97
+4.22
+3.86
+
+29.57
+29.72
+29.38
+
+Table 6: Performance of OpenSIR with different initial seed problem.
+
+t-SNE of Question Embeddings
+
+15
+
+Component 2
+
+10
+5
+0
+5
+10
+15
+
+20
+
+15
+
+10
+
+5
+
+OpenSIR
+
+0
+
+Component 1
+
+5
+
+10
+
+OpenSIR (MATH)
+
+15
+
+20
+
+OpenSIR (AIME)
+
+Figure 17: t-SNE visualisation of problem embeddings generated by OpenSIR from three different
+initial seeds. The substantial overlap demonstrates that the method converges to similar problem
+distributions regardless of the starting point.
+
+A.6
+
+OpenSIR Incentivises Reasoning Capacity
+
+Llama 3.1 8B Instruct
+Pass@k
+
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+
+Llama 3.2 3B Instruct
+Pass@k
+
+To investigate whether OpenSIR elicits reasoning improvements rather than memorisation, we evaluate pass@k performance on five challenging mathematical benchmarks following [Yue et al., 2025].
+Figure 18 shows that OpenSIR consistently outperforms base instruction models across all k values
+(8–256) on all benchmarks, with stable or increasing gaps at higher k. These results suggest that
+OpenSIR improves the model’s mathematical reasoning capacity.
+
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+
+AIME 2024
+Base
+OpenSIR
+
+8 16 32 64 128256
+
+8 16 32 64 128256
+
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+
+AIME 2025
+
+8 16 32 64 128256
+
+8 16 32 64 128256
+
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+
+Minerva
+
+8 16 32 64 128256
+
+8 16 32 64 128256
+
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+
+Math-500
+
+8 16 32 64 128256
+
+8 16 32 64 128256
+
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+1.0
+0.8
+0.6
+0.4
+0.2
+0.0
+
+OlympiadBench
+
+8 16 32 64 128256
+
+8 16 32 64 128256
+
+Figure 18: Pass@k curves comparing base instruction models and OpenSIR across five mathematical benchmarks. OpenSIR consistently improves performance across all k values, with stable or
+increasing gaps at higher k, demonstrating genuine reasoning improvements rather than memorization.
+
+19
+
+Avg. Math Acc.
+
+34
+32
+30
+28
+26
+0
+
+100
+
+200
+
+300
+
+Training Steps
+
+400
+
+500
+
+Figure 19: Performance of OpenSIR extended training using Llama-3.2-3B-Instruct.
+A.7 Prolonged Training Analysis
+To better understand the limitation of OpenSIR, we extend training of a single run of Llama-3.2-3BInstruct to 500 steps, substantially beyond the 200 steps used in the main experiments. Figure 19
+shows the evaluation performances over training. We observe consistent improvement from 25.6%
+to 33.5% at step 300, representing a gain of +7.9 points. Performance then plateaus after step 300
+and remains around 33% through step 500, with no further noticeable gains in this single run.
+By step 300, generated problems show narrower topical and difficulty variation than earlier checkpoints, and performance plateaus thereafter. Future work could explore richer seed curricula,
+larger model capacity, or complementary exploration strategies to prolong broad exploration before
+plateauing.
+A.8
+
+Synergy with Annotated Data
+Model
+
+GSM8K
+
+MATH
+College
+AIME AIME Math
+Minerva
+Olymp.
+500
+Math
+24
+25
+Avg.
+
+Base
+GRPOgsm8k
+OpenSIR
+GSM8K → OpenSIR
+GSM8K & OpenSIR
+
+73.94
+79.72
+78.28
+81.43
+81.57
+
+42.86
+45.30
+46.22
+46.12
+49.48
+
+15.21
+16.27
+18.46
+19.43
+20.39
+
+28.78
+33.33
+35.42
+36.15
+36.85
+
+13.09
+14.56
+16.72
+18.35
+18.14
+
+5.00
+6.82
+7.94
+8.38
+8.64
+
+0.21
+1.88
+3.97
+4.12
+4.38
+
+25.58
+28.27+2.69
+29.57+3.99
+30.57+4.99
+31.35+5.77
+
+Table 7: The Pass@1 performance on seven mathematical benchmarks. OpenSIR obtains better
+results when trained together with GSM8K compared to OpenSIR or GSM8K alone.
+While we showed that OpenSIR achieves significant improvements in math reasoning without using
+annotated data, we further investigate if OpenSIR can be combined with annotated data to achieve
+even greater performance gains. Having demonstrated that OpenSIR achieves significant improvements without annotated data, we investigate whether combining OpenSIR with annotated data can
+yield further gains. We focus on Llama-3.2-3B-Instruct and use Gsm8K as the training data, as
+Table 1 shows that fine-tuning on GSM8K consistently outperforms using MATH.
+We explore two training strategies: (1) GSM8K → OpenSIR: The model is first trained on GSM8K
+for half the training iterations, then trained with OpenSIR for the remaining half. (2) GSM8K &
+OpenSIR: Each training iteration uses half GSM8k samples and half OpenSIR samples.
+Table 7 shows that both setups achieve better performance than using OpenSIR alone or only on
+GSM8K. One possible explanation for the sequential approach’s effectiveness (GSM8K → OpenSIR) is that training on GSM8K first may improve the model’s foundational reasoning abilities,
+which could provide a stronger starting point for OpenSIR’s self-generated questions. The concurrent approach (GSM8K & OpenSIR) achieves a slight additional edge, which might be attributed
+20
+
+to the model receiving better feedback signals for question calibration from the beginning, as it can
+leverage both supervised and self-generated data simultaneously throughout training. The precise
+underlying mechanisms for these improvements require further investigation.
+A.9 Computational Cost Analysis
+Let B be the rollout batch size per gradient update. OpenSIR uses double the rollout batch size of
+standard GRPO, split evenly between teacher (problem-generation) and student (solution) rollouts
+after problem selection (Section 2.4). The per-update cost is therefore exactly 2× the baseline.
+Problem embeddings for diversity scoring are computed asynchronously during solution generation,
+adding negligible wall-clock time. Cosine distance calculations require O(B × |Pt |) operations,
+where |Pt | is the problem pool size, and take under 3 seconds per iteration.
+
+B
+
+Algorithm
+
+Algorithm 1 OpenSIR
+(0)
+
+Require: Problem pool P0 , policy πθ , embedding encoder ε, batch size B, generation group size G, solve
+rate range [smin , smax ], teacher prompt pT , student prompt pS
+for t = 1 to T do
+// Problem Generation
+Sample k = B/G reference problems {p1 , . . . , pk } from Pt−1
+for i = 1 to k do
+(t)
+Sample qi,1:G ∼ πθ (· | pi , pT )
+end for
+Qvalid ← {qi,j | qi,j has valid format}
+// Solution Sampling
+for each qi ∈ Qvalid do
+(t)
+Sample solutions oi,1:G ∼ πθ (· | qi , pS )
+Parse answers ai,1:G from solutions oi,1:G
+a∗i ← arg maxa∈ai,1:G count(a) // reference answer via majority voting
+Compute solve rate sqi = count(a∗i )/G
+Compute embedding eqi ← ε(qi )
+end for
+// Scoring
+Compute scorenovel (qi ) for all qi ∈ Qvalid via Eq. 5
+// Teacher sample selection
+IT ← topB/(2G) (i : Var(scorenovel (qi,1:G )), i ∈ {1, . . . , k})
+// Student sample selection
+QS ← topB/(2G) (q : scorenovel (q), q ∈ Qvalid )
+Compute scorecorrect (oi,j , ai,j ) for solutions where qi ∈ QS via Eq. 6
+// Model Update
+T
+T
+= scorenovel (qi,j )
+DT ← {(pT , qi,j , Ri,j
+) : i ∈ IT , 1 ≤ j ≤ G} where Ri,j
+S
+S
+DS ← {(pS , oi,j , Ri,j ) : qi ∈ QS , 1 ≤ j ≤ G} where Ri,j
+= scorecorrect (oi,j , ai,j )
+(t+1)
+(t)
+Update πθ
+← GRPO(πθ , DT ∪ DS )
+Pt ← Pt−1 ∪ Qvalid
+end for
+(T )
+return πθ
+
+C
+
+Annotation Details
+
+One of the authors prepared the samples for annotation, and the rest of the authors annotated the
+samples with the instructions provide in Figure 20.
+You will be presented with multiple sets of 5 math problems to evaluate. For each set, please complete the following
+three-step annotation process.
+# Step 1: Identify Topics
+For each problem, identify ALL relevant mathematical topics from the following list:
+- Algebra
+- Geometry
+- Calculus
+
+21
+
+- Probability
+- Statistics
+- Number Theory
+- Combinatorics
+- Optimization
+- Arithmetic
+- Discrete Math
+- Trigonometry
+# Step 2: Assess Validity
+For each problem, determine if it is valid or invalid:
+- Valid: The problem is logically sound, clearly stated, and can be answered with the given information
+- Invalid: The problem contains logical flaws, contradictions, insufficient information, or ambiguities that prevent
+a proper solution
+# Step 3: Rank Difficulty
+Rank all 5 problems from easiest to hardest. Provide your ranking as a sequence of problem numbers.
+Example: [3, 1, 5, 2, 4] means problem 3 is the easiest and 4 is the hardest.
+Consider these factors when assessing difficulty:
+- Number of steps required
+- Complexity of concepts involved
+- Level of mathematical knowledge needed
+- Computational complexity
+# Response Format
+Provide your annotations as a JSON list where each element represents one problem set. Here are some examples:
+[
+{
+"set_id": "SET_1",
+"problems": {
+"1": {"topics": ["Algebra", "Calculus"], "valid": true},
+"2": {"topics": ["Geometry"], "valid": false},
+"3": {"topics": ["Probability"], "valid": true},
+"4": {"topics": ["Number Theory"], "valid": true},
+"5": {"topics": ["Arithmetic"], "valid": true}
+},
+"difficulty_ranking": [5, 3, 1, 2, 4]
+},
+{
+"set_id": "SET_2",
+"problems": {
+"1": {"topics": ["Statistics"], "valid": true},
+"2": {"topics": ["Discrete Math"], "valid": true},
+"3": {"topics": ["Optimization"], "valid": true},
+"4": {"topics": ["Algebra"], "valid": false},
+"5": {"topics": ["Geometry", "Algebra"], "valid": true}
+},
+"difficulty_ranking": [1, 2, 5, 3, 4]
+},
+...
+]
+
+Figure 20: The instruction provided to the annotators to annotate problems.
+Inter-annotator agreement. To assess reliability, annotators shared a common set of 20 overlapping samples. We report Fleiss’ κ [Fleiss, 1971] for topic labels (κ = 0.82) and validity (κ = 0.86),
+indicating satisfactory agreement on both categorical tasks. For difficulty rankings, we compute
+Kendall’s coefficient of concordance W [Kendall and Smith, 1939] per set and average across sets,
+obtaining W = 0.67, which reflects moderate alignment on relative problem difficulty.
+
+D
+
+Additional Ablations
+
+D.1
+
+Solution Length Reward Increases Problem Complexity
+
+We investigate the impact of the solution length reward in OpenSIR. Table 8 shows this reward improves performance from 28.09% to 29.57%. It also increases the average question length (from 150
+to 207 tokens) and solution lengths (from 238 to 387 tokens). By examining the generated questions
+22
+
+Model
+w/ length
+w/o length
+
+Question
+Length
+
+Solution
+Length
+
+Math
+Avg.
+
+207
+150
+
+387
+238
+
+29.57
+28.09
+
+Table 8: Comparison of OpenSIR performance with and without solution length reward. Solution
+length reward improves OpenSIR accuracy and increases average question and solution lengths.
+
+manually, we find that the policy tends to generate more sophisticated problems involving advanced
+concepts with this reward, such as linear programming and optimization, which naturally require
+longer multi-step solutions to solve. These results demonstrate that the solution length reward effectively guides the policy toward generating more complex problems, which in turn leads to better
+performance.
+
+E
+
+Implementation Details
+
+E.1
+
+Training Details
+
+Category
+
+Hyperparameter
+
+Value
+
+Trainer
+
+Learning rate
+Optimiser
+Warmup steps
+Training steps
+KL loss coefficient
+Gradient norm clipping
+Seeds
+GPUs
+
+3 × 10−7
+AdamW [Loshchilov and Hutter, 2018]
+20
+200
+1 × 10−4
+0.5
+42/43/44
+3 H100
+
+Rollout
+
+Batch size†
+Max prompt length
+Max solution length
+Number of rollouts per prompt
+Temperature
+
+256 / 512‡
+1024
+2048
+8
+1.0
+
+Teacher Rewards
+
+Solvability weight (α)
+Solution length weight (λ)
+Diversity weight (γ)
+Format weight (δ)
+Embedding model
+
+1.0
+1.0
+1.0
+0.1
+Linq-Embed-Mistral (7B)
+
+Student Rewards
+
+Accuracy weight
+Format weight (δ)
+
+1.0
+0.1
+
+† The number of rollouts seen for one gradient update.
+‡ Baselines use batch size 256; OpenSIR uses 512 because each batch is split between teacher (problem generator) and
+
+student (solver) rollouts, keeping the student-side problem-solution pairs per gradient step equal across methods.
+
+Table 9: The training configurations for the experiments.
+We implement OpenSIR based on the TRL framework [von Werra et al., 2020]. Each OpenSIR batch
+is split between teacher (problem generator) and student (solver) rollouts, so we double OpenSIR’s
+total rollout batch size relative to the baselines; this keeps the number of student problem-solution
+pairs per gradient step (and the total over training) equal across methods. Table 9 provides a summary of the training hyperparameters used in our experiments.
+E.2 Evaluation Details
+We use sampling temperature 0.6 and top-p 0.95 with maximum response length 4,096 tokens
+(38,912 for reasoning models, following Qwen [2025]). We report Pass@1, averaged over 16
+independently sampled generations per problem. Answer extraction and comparison use the
+math_verify library.
+23
+
+E.3 Prompts
+We detailed the prompt for generating problems in Figure 21 and solving problems in Figure 22.
+You are given a math problem: {Problem}
+Your task is to create a math problem that is conceptually different from the provided problem. The new problem must be answerable with a numerical value or mathematical expression.
+First, explain how your new problem differs conceptually from the original problem inside the <think>...</think> tags. Then, present your new problem inside the <problem>...</problem> tags. Finally, identify at most three math concepts required to solve
+your problem. Provide these concepts in a comma separated list inside the <concepts>...</concepts> tags.
+Figure 21: Prompt for generating math problems. {Problem} is a placeholder for the reference
+problem sampled from the problem pool.
+
+You are a helpful AI Assistant, designed to provide well-reasoned and detailed responses.
+You FIRST think about the reasoning process step by step and then provide the user with
+the answer. The last line of your response should be ’Therefore, the final answer is:
+$\boxed{ANSWER}$’ (without quotes) where ANSWER is just the final number or expression that solves the problem.
+{Problem}
+Figure 22: Prompt for generating solutions to math problems. {Problem} is a placeholder for the
+actual problem.
+
+24
+
+

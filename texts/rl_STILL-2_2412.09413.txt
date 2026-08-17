@@ -1,0 +1,1399 @@
+Technical Report on Slow Thinking with LLMs: II
+
+Imitate, Explore, and Self-Improve: A Reproduction
+Report on Slow-thinking Reasoning Systems
+
+Yingqian Min1∗, Zhipeng Chen1∗ , Jinhao Jiang1∗ , Jie Chen1 ,
+Jia Deng , Yiwen Hu1 , Yiru Tang1 , Jiapeng Wang1 , Xiaoxue Cheng1 , Huatong Song1 ,
+Wayne Xin Zhao1†, Zheng Liu2 , Zhongyuan Wang2 , Ji-Rong Wen1
+1
+Gaoling School of Artificial Intelligence, Renmin University of China.
+2
+BAAI.
+{yingqianm,zhipeng_chen,jiangjinhao,jrwen}@ruc.edu.cn
+batmanfly@gmail.com
+
+arXiv:2412.09413v2 [cs.AI] 22 Dec 2024
+
+1
+
+Abstract
+Recently, slow-thinking reasoning systems, such as o1, have demonstrated remarkable capabilities in solving complex reasoning tasks. These systems typically engage in an extended thinking process before responding to a query, allowing them to generate more thorough, accurate, and well-reasoned solutions.
+These systems are primarily developed and maintained by industry, with their
+core techniques not publicly disclosed. In response, an increasing number of
+studies from the research community aim to explore the technical foundations
+underlying these powerful reasoning systems. Building on these prior efforts,
+this paper presents a reproduction report on implementing o1-like reasoning systems. We introduce an “imitate, explore, and self-improve” framework, denoted
+as STILL-2 3 , as our primary technical approach to train the reasoning model.
+In the initial phase, we use distilled long-form thought data to fine-tune the reasoning model, enabling it to invoke a slow-thinking mode. The model is then
+encouraged to explore challenging problems by generating multiple rollouts, which
+can result in increasingly more high-quality trajectories that lead to correct answers. Furthermore, the model undergoes self-improvement by iteratively refining
+its training dataset. To verify the effectiveness of this approach, we conduct extensive experiments on three challenging benchmarks. The experimental results
+demonstrate that our approach achieves competitive performance compared to
+industry-level reasoning systems on these benchmarks. We release our resources at
+https://github.com/RUCAIBox/Slow_Thinking_with_LLMs.
+
+1
+
+Introduction
+
+Recently, slow-thinking reasoning systems, exemplified by OpenAI’s o1 4 , have significantly enhanced
+the capabilities of large language models (LLMs) [1] in tackling challenging tasks [2, 3, 4, 5].
+Unlike previous reasoning approaches [6, 7, 8], these systems employ test-time scaling, allowing
+more time for contemplation before responding to a query. This thinking process is also reflected
+as a text generation process that produces long internal chains of reasoning steps, referred to as
+∗
+
+Equal contribution.
+Correspondence to Wayne Xin Zhao.
+3
+STILL stands for Slow Thinking with LLMs, and this is the second slow-thinking model developed by our
+project, “Slow Thinking with LLMs”.
+4
+https://openai.com/o1/
+†
+
+Preprint. Under review.
+
+thoughts, to discover suitable solutions. By examining the generated thought data, we can observe
+various complex reasoning behaviors exhibited by LLMs, such as planning, divide-and-conquer,
+self-refinement, summarization, and backtracking. Initially, it may seem surprising that LLMs can
+manage such complex reasoning processes, even though we know that specific training or inference
+strategies are employed to support this capability.
+To uncover the underlying mechanisms, the research community has been actively exploring slowthinking reasoning systems and conducting extensive studies to investigate various potential approaches to reproducing o1-like systems [9, 10, 11, 12, 13, 14, 15]. However, these studies are often
+limited to specific domains (e.g., mathematical domains) or developed using relatively weak base
+models, which makes the implemented systems significantly inferior to industry systems like o1.
+Implementing an open o1-like reasoning system—with all key details publicly disclosed—that can
+readily generalize across domains and achieve performance comparable to industry-level systems
+remains a challenging task.
+Building on existing research efforts in the literature, our team has been dedicated to advancing
+the reproduction of o1-like systems. To approach this goal, we released a technical report [9] in
+November detailing the implementation of a reasoning framework for addressing mathematical
+problems. Our framework comprises a policy model, a reward model, and a search algorithm. During
+inference, the policy model is guided by the reward model to perform the tree search to find correct
+solutions to mathematical problems. We provide an extensive discussion of the explored training and
+inference methods to implement such a system.
+Despite the promising improvements, we quickly realized that the implemented framework in our
+previous report might not be the correct path toward developing o1-like systems. We identified three
+major challenges that limit its potential. First, the domain-specific reward model we trained does
+not generalize well across different domains. Second, performing tree search during the inference
+stage was very time-consuming, making it impractical for real-world applications. Third, although
+test-time scaling works, we still cannot achieve train-time scaling to improve model performance.
+These considerations have led us to reconsider our technical approach to creating o1-like reasoning
+systems.
+Our approach is inspired by two main lines of recent progress. Firstly, DeepSeek and Qwen have
+released the API or checkpoints for o1-like systems [16, 17], allowing us to closely examine the
+actual thought processes rather than the summarized versions in o1. This is particularly important for
+us in obtaining initial labeled data for preliminary attempts. Secondly, we have empirically found
+that fine-tuning LLMs with a small amount of long chain-of-thought data can significantly enhance
+their performance on complex reasoning tasks, as also reported in previous studies [12, 18]. Based
+on these considerations, we speculate that o1 might implement a one-pass decoding process that
+encompasses both the internal thought and final solution. In other words, complex reward models
+and explicit tree search algorithms might not be necessary to support the reasoning process. This
+speculation has guided our efforts in developing this work for reproducing o1-like systems.
+Specifically, we first propose a conceptional framework comprising an “imitate, explore, and selfimprove" process for developing our approach. In the imitation phase, the LLM should learn to tackle
+tasks by first producing internal thoughts and then generating the solution. Given that this output
+format significantly differs from a standard response, additional demonstration data is necessary to
+support this imitation process. This data serves the dual purposes of format adherence (i.e., following
+a slow-thinking response) and ability elicitation (i.e., activating a slow-thinking mode). In the exploration phase, the LLM should expand its capacity elicited through the demonstration data provided
+during the imitation stage. We believe it’s crucial for the LLM to engage in extensive exploration
+(typically using techniques like rollout or beam search) on complex tasks to help identify correct
+solutions to challenging problems. The enhanced outputs generated through exploration are valuable
+for boosting the model’s capabilities. Finally, the LLM should leverage the successful trajectories
+acquired through exploration to further enhance its abilities. It is challenging to continuously obtain
+training data of higher quality than what the model itself can readily generate, and employing exploration or search methods can help to address this. Once this three-phase training cycle is established,
+the capabilities of LLMs can be gradually improved, particularly in handling difficult tasks.
+Following this proposal, in this technical report, we implement an o1-like reasoning system, denoted as
+STILL-2, which can achieve promising results compared in challenging reasoning tasks. Specifically,
+we collect a small amount of slow-thinking responses from the open o1-like API or checkpoints, and
+
+2
+
+employ these responses as demonstration data to fine-tune our base model. We find that this simple
+strategy effectively elicits the slow-thinking capacities of LLMs and aligns with the desired output
+format of both thought and solution. We carefully study how to construct the demonstration dataset
+by mixing solutions from different domains or with varying levels of difficulty. Additionally, we
+focus on tackling difficult problems for exploration. We employ simple search strategies to obtain
+correct trajectories (i.e., those responses that lead to the ground-truth answers), which are difficult for
+the fine-tuned model to obtain in a single rollout. Furthermore, we implement different strategies to
+achieve self-improvements by either supervised fine-tuning and direct preference optimization. We
+observe considerable improvements through such a refinement training method.
+To compare our system with industry counterparts, we conduct evaluations on several benchmarks,
+including MATH-OAI [19], AIME 5 , and GPQA [20]. Experimental results show that when scaling
+the demonstration instances to 3,900, our variant using distillation-based training even approaches
+the performance of some industry-level systems. Furthermore, our exploration and self-improvement
+approach also shows very promising results using only 1,100 distilled demonstration instances as
+seed data.
+
+2
+
+Method
+
+In this section, we provide a detailed introduction of our technical approach to implement o1-like
+reasoning systems6 . We denote the implemented system by STILL-2.
+
+Imitation Learning for Slow-Thinking Reasoning
+
+Math
+
+SFT
+
+Long-form Thought Dataset
+
+Data Mixture
+
+Prompt & Question
+Thought:
+Wait a minute, let me think for a while ...
+
+Code
+
+Solution：
+Step 1: Calculate the length of AC ...
+
+Puzzle Science
+
+Exploration and Self-Improvement
+Gold
+Label
+
+Data
+Mixture
+
+{𝑞𝑖 , 𝑡𝑖+ 𝑠𝑖+ }
+
+SFT
+
+{𝑞𝑖 , 𝑡𝑖− , 𝑠𝑖− }
+Iterative Refinement {𝑞𝑖 , 𝑡𝑖+ , 𝑠𝑖+ }
+
+DPO
+
+Instance Pool
+Add
+
+Prompt & Question
+Thought
+Solution
+
+Sampling
+Update
+
+Figure 1: An illustrative overview of our training pipeline for STILL-2.
+2.1
+
+Overview
+
+In this work, we propose a three-phase training approach—imitate, explore, and self-improve—to
+develop reasoning systems similar to o1. After training, the inference phase is also completed by a
+single-pass text generation process, akin to prior prompt-based methods, with the key distinction that
+the generated response includes both the reasoning process and the solution. Next, we detail each
+phase below.
+• Imitate: The core idea is that both the internal thought process and the final solution should
+be generated in a single response. To achieve this, specific formatting tokens can be used
+to guide the model in producing such outputs [21, 22]. We argue that a well-established
+model, even with a small amount of long-form thought data, can easily adhere to o1-like
+output formats. This process is fundamentally about following a prescribed format. The
+key rationale is that, although the entire thought process may be complex, LLMs can
+5
+
+https://huggingface.co/datasets/AI-MO/aimo-validation-amc
+Because the exact development of OpenAI’s o1 systems is not publicly known, in this paper, “o1-like” refers
+to the reasoning systems that first conducts extensive reasoning process before producing the final solution.
+6
+
+3
+
+effectively handle individual steps (e.g., planning, self-refinement, and verification). By
+using format-following, we can guide LLMs to seamlessly manage and connect these steps.
+If this hypothesis proves true, two major benefits can be realized: (1) large amounts of
+data are not needed for format-following, and (2) the approach can be easily generalized to
+various domains.
+• Explore: While imitation enables LLMs to generate o1-like outputs, it may not fully
+encourage the model to master or improve its ability to use long-form thought to tackle
+complex tasks. To address this, we believe it is crucial to incorporate exploration, allowing
+the model to generate progressively better training data on its own. We term this process
+exploration, as the reasoning model cannot directly (or easily) generate a correct solution
+for challenging tasks. Therefore, search strategies are needed to generate multiple candidate
+solutions, increasing the likelihood of finding the correct trajectory [23, 24] (i.e., the entire
+response consisting of thought and solution). In practice, evaluating the correctness of these
+attempted trajectories is challenging, requiring a simulated environment with well-trained
+reward models. In this work, we adopt a simplified method that directly compares the
+model’s output with the ground-truth answer. Our results show that, for most of the collected
+problems, increasing the number of rollouts allows our base model to generate correct
+trajectories within a reasonable number of attempts.
+• Self-Improve: The third phase aims to further enhance the reasoning model’s capabilities by utilizing progressively improved trajectory data. We hypothesize that providing
+high-quality demonstrations—particularly those the model cannot easily generate—will
+effectively strengthen its reasoning abilities. There are several ways to implement this.
+Typically, we can use rejection sampling for learning with high-quality samples, and direct
+preference optimization for learning by comparing high-quality trajectories with lowerquality ones (e.g., those that do not lead to the correct answer). Additionally, the “explore”
+and “self-improve” phases can be combined through reinforcement learning to achieve systematic model improvement, though this approach generally requires more computational
+resources and additional training time.
+We show the overview of our method in Figure 1. Note that this framework is somewhat conceptual,
+and while we have made some preliminary attempts at instantiating it, our implementation does not
+fully realize its potential. In the following, we will detail the specific implementation of each part in
+our approach.
+2.2
+
+Imitation Learning for Slow-Thinking Reasoning
+
+As discussed in Section 1, we propose using imitation learning to enable the LLM to engage in slowthinking reasoning—producing an extended process of thought (referred to as long-form thought7 )
+before responding to a query. In this section, we will first discuss how to construct the long-form
+thought dataset for imitation learning (Section 2.2.1), and then present the fine-tuning method based
+on the long-form thought dataset (Section 2.2.2).
+2.2.1
+
+Long-form Thought Dataset Construction
+
+To guide the LLM in producing the long-form thought in a slow-thinking mode followed by the
+solution, we first need to construct a collection of high-quality demonstration data that exhibits this
+behavior.
+Table 1: The summarization of selected data sources.
+Math
+
+Code
+
+Science
+
+Puzzle
+
+NuminaMath, AIME
+
+Leetcode, OpenCoder
+
+Camel, Gaokao
+
+RiddleSense
+
+Data Collection. In practice, there are three typical approaches to constructing long-form thought
+data. First, human annotators can be employed to generate this data. Second, LLMs can be employed
+7
+
+We prefer not to use “chain-of-thought” since thoughts can be presented flexibly, embodying different
+reasoning structures.
+
+4
+
+generate long-form thought data with the assistance of auxiliary search algorithms (e.g., Monte Carlo
+Tree Search). Third, this data can be distilled from o1-like reasoning systems. Given considerations
+of simplicity and budget constraints, we adopt the third approach for collecting long-form thought
+data, recognizing that our approach can be extended to include other data collection methods. We
+access two o1-like reasoning systems: DeepSeek-R1-Lite-Preview [16] (abbreviated as R1) and
+QwQ-32B-preview [17] (abbreviated as QwQ). R1 provides an open API with limited access, while
+QwQ offers open model checkpoints. We opt not to distill data from o1, as it summarizes internal
+thought data before presenting it to the user, rendering it not directly suitable for imitation. Upon
+examining the thought processes of R1 and QwQ, we find that the thoughts can be presented in a
+relatively flexible and even colloquial manner. To obtain the distilled data, we input the specified
+problems into both systems and perform multiple rollouts to generate a diverse set of responses. We
+then automatically label each solution based on whether it leads to the correct answer.
+!
+!
+!
+Problem: Given a triangle ABC with side lengths a, b, and c, an inradius of 3, and a circumradius of 7, find the value of "#
++ #$
++ "$
+
+
+
+
+
+• So I've got this problem about a triangle with sides !, " and #. It says the inradius is
+)
+)
+)
+3 and circumradius is 7, and I need to find the value of !#
++ #$
++ !$
+. Hmm, I'm not
+super familiar with inradius and circumradius, but I know that the inradius is the
+radius of the inscribed circle, and the circumradius is the radius of the circumscribed
+circle. Maybe I can find some formulas that relate these to the sides of the triangle.
+• First, I recall that the area of a triangle can be expressed in terms of its inradius and
+its semiperimeter. The semiperimeter, usually denoted by s, is half the perimeter, '
+= !"#"$
+. The area, ), is then ) = % & ', where % is the inradius. So in this case, ) = 3'.
+%
+• I also know that the area of a triangle can be expressed using its circumradius, *.
+There's a formula that says ) = !#$
+. Given that * is 7, that would make ) = !#$
+.
+&.
+%(
+• So now I have two expressions for the area: ) = 3' and ) = !#$
+. Maybe I can set them
+%(
+equal to each other: 3' = !#$
+.
+That
+gives
+me
+!"#
+=
+84'.
+Hmm,
+that
+might
+be
+useful
+%(
+later.
+)
+)
+)
+• I need to find !#
++ #$
++ !$
+. Let’s see, that’s equal to $"#"!
+, which is !"#"$
+. But since ' =
+!#$
+!#$
+!"#"$
+%*
+, then ! + " + # = 2'. So, !"#"$
+= !#$
+.
+%
+!#$
+• Let me double-check my steps. First, area ) = 3s and ) = !#$
+,
+so
+setting
+them equal:
+%(
+)
+)
+)
+%+
+)
+3' = !#$
+, which gives !"# = 84'. Then, !#
++ #$
++ !$
+= !"#"$
+= (&*
+= &%
+. Yeah, that seems
+%(
+!#$
+correct.
+• But just to be thorough, let's see if there's another way to approach this. maybe I can
+use Heron's formula for the area in terms of the sides, but that seems more
+complicated than what I've already done.
+/
+• Alternatively, perhaps I can use the fact that in any triangle, r(R + r) = !"#, but I'm
+not sure about that.
+)
+)
+)
+$"!"#
+!"#"$
+• Wait, perhaps I should consider the expression (!# + #$ + !$ = !#$ = !#$ ) I'm trying
+%+
+)
+to find. I already have ! + " + # = 2' and !"# = 84', so !"#"$
+= (&*
+= &%
+. It seems
+!#$
+consistent with what I got earlier.
+)
+)
+)
+)
+• Alternatively, maybe I can consider the expression !#
++ #$
++ !$
+= !#$
+& (! + " + #) ,
+%*
+%+
+)
+which is again !#$
+, and with !!"# = 84', it simplifies to (&*
+= &%
+.
+,
+
+• I think I've confirmed it in multiple ways now. So, the answer should be .
+-.
+• Final Answer
+,
+-.
+
+  
+• So I‘ve got this problem here. We have a triangle
+ABC with sides !, ", #, an inradius of 3, and a
+)
+circumradius of 7. I need to find the value of !#
++
+)
+)
++ !$
+. Hmm, okay, let's break this down step by
+#$
+step.
+• First off, I know that in a triangle, the inradius (r)
+and the circumradius (r) are related to other
+elements of the triangle, like the area and the sides.
+I recall that the area of the triangle can be expressed
+in terms of the inradius and the semiperimeter: area
+= % & ', where s is the semiperimeter, ' = !"#"$
+.
+%
+• Also, the area can be expressed in terms of the
+circumradius: area = !#$
+. So, since both expressions
+&'
+equal the area, I can set them equal to each other:
+% & ' = !#$
+. Plugging in the known values, r = 3 and % =
+&'
+!#$
+7, so: 3' = &×⟹ 3' = !#$
+⟹ !"# = 84'.
+%(
+• Okay, that‘s one equation involving a, b, c, and now,
+)
+)
+)
+I need to find !#
++ #$
++ !$
+. Let me see if I can express
+this in terms of s or other known quantities. First,
+)
+)
+)
++ #$
++ !$
+can be written as $"#"!
+. Since ! + " + # =
+!#
+!#$
+2', this becomes $"#"!
+. From earlier, I have !"# = 84',
+!#$
+%+
+so plugging that in: (&*
+= %
+= )
+.
+(&
+&%
+• Alternatively, I could use the formula for the area in
+terms of % and % and see if that leads me somewhere,
+but I think the approach I took is valid. Let me see if
+I can confirm this with another method. Perhaps
+using the formula for the area in terms of r and s. I
+know that area = % & ' = 3', and area = !#$
+= !#$
+.
+&'
+%(
+Setting them equal: 3' = !#$
+⟹ !"# = 84'. Now, back
+%(
+)
+)
+)
+%*
+to !#
++ #$
++ !$
+= $"#"!
+=
+.
+Substituting
+!"#
+=
+84',
+!#$
+!#$
+%+
+%
+)
+we get (&*
+= (&
+= &%
+.
+
+   
+• First, we use the fact that the area
+of the triangle can be expressed in
+terms of the inradius and
+semiperimeter:
+- = % & ' = 3'
+• Where ' = !"#"$
+is the
+%
+semiperimeter.
+• Additionally, the area can be
+expressed using the circumradius:
+- = !#$
+= !#$
+&'
+%(
+• Equating the two expressions for
+the area:
+!#$
+3' = %( ⟹ !"# = 84'
+• Next, we need to find:
+,
+,
+,
++ 01
++ /1
+= 12/20
+/0
+.
+• Since ! + " + # = 2', we have:
+)
+)
+)
+%*
++
++
+= !#$
+!#
+#$
+!$
+• Substituting !"# = 84':
+%+
+%
+)
+ (&
+ &%
+(&*
+3' = !#$
+%(
+• Thus, the value is 
+,
+-.
+
+Figure 2: A case study comparing QwQ with DeepSeek in solving math problems.
+Format Unification. After examining the thought processes of R1 and QwQ, we observe that
+R1 explicitly separates the thinking and solution components, whereas QwQ directly outputs the
+correct answer following the thinking process. A comparative example of the two systems is shown
+in Figure 2. Following R1’s structure, we divide the response into two parts, separated by the tokens
+“begin_of_thought/end_of_thought” and “begin_of_solution/end_of_solution”. Since
+QwQ does not explicitly contain a solution component, we consider performing a rollout to complete
+this part. Specifically, we first fine-tune a reasoning model (either QwQ or our model) with the
+distilled, formatted data from R1 and then prompt it to complete the solution section. We find that,
+given the preceding thought process, the reasoning model can readily generate the solution if trained
+using imitation learning. The final format of our demonstration data is shown below:
+Long-form Thought Format for Our Reasoning Model
+<|begin_of_thought|>
+{different step of thought separated by \n\n}
+<|end_of_thought|>
+<|begin_of_solution|>
+{formated step-by-step final solution}
+<|end_of_solution|>
+
+Data Mixing. Our goal is to develop more generalized LLMs capable of reasoning across different
+domains. To achieve this, we begin by mixing demonstration instances (problems paired with their
+distilled responses) from multiple domains, including mathematics, coding, science, and puzzles.
+5
+
+We limit ourselves to these three domains, as we hypothesize that the ability to perform longform reasoning can transfer easily across them. The second consideration is the difficulty of the
+demonstration instances. Intuitively, applying long-form reasoning to solve relatively simple problems
+may be less beneficial. Therefore, we focus on collecting more challenging problems from the
+selected domains. Specifically, for the mathematics domain, we select problems from the MATH and
+Olympiads subsets of the NuminaMATH [25] dataset, as well as AIME problems collected from the
+AOPS website 8 spanning 1983 to 2023. In the coding domain, we use problems labeled as “Hard”
+from the LeetCode website 9 . For the science domain, we gather questions from college entrance
+examinations and camel-ai 10 , covering subjects such as physics, chemistry, and biology. For the
+puzzle domain, we select questions from RiddleSense 11 . We summarize the selected data in Table 1.
+Pre-processing Demonstration Data. After collecting the labeled data, we perform further preprocessing to ensure data quality, including deduplication and filtering. Specifically, when generating
+long-form thought, existing models often produce issues such as repetitions, gibberish, or mixtures of
+English and Chinese. To address this, we use rule-based methods (e.g., regex matching and n-gram
+matching) to remove such instances. Another key observation is that longer instances tend to lead to
+better performance, so we also remove relatively short examples. As a result, we obtain a cleaned
+demonstration dataset suitable for fine-tuning our reasoning model. Additionally, we employ the
+following prompt to guide the model in performing slow thinking more effectively.
+2.2.2
+
+Long-form Thought Instruction Tuning
+
+After collecting instruction data for long-form reasoning, we fine-tune the model to replicate the
+behavior of the slow-thinking mode. Specifically, we first determine the data ratio for each domain
+through empirical experiments, and then optimize the model using supervised fine-tuning (SFT). The
+optimization settings are as follows: learning rate=1e-5, and batch size=96. For the base
+model, we select Qwen2.5-32B-Instruct, as it has been shown to perform effectively in extensive
+evaluations. And we utilize the following prompt for instruction tuning.
+Prompt Template for Our Reasoning Model
+Your role as an assistant involves thoroughly exploring questions through a systematic long
+thinking process before providing the final precise and accurate solutions. This requires
+engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection,
+backtracing, and iteration to develop well-considered thinking process.
+Please structure your response into two main sections:
+
+Thought and Solution.
+
+In the Thought section, detail your reasoning process using the specified format:
+“‘
+<|begin_of_thought|>
+{thought with steps separated with "\n\n"}
+<|end_of_thought|>
+”’
+Each step should include detailed considerations such as analisying questions, summarizing
+relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining
+any errors, and revisiting previous steps.
+In the Solution section, based on various attempts, explorations, and reflections from the Thought
+section, systematically present the final solution that you deem correct. The solution should
+remain a logical, accurate, concise expression style and detail necessary step needed to reach the
+conclusion, formatted as follows:
+“‘
+<|begin_of_solution|>
+{final formatted, precise, and clear solution}
+<|end_of_solution|>
+”’
+Now, try to solve the following question through the above guidelines:
+
+Although we can distill a large amount of instruction data, we retain only several thousand demonstration instances during SFT. Our ultimate goal is to assess the effectiveness of self-improvement
+learning within this approach. In our experiments, we empirically find that capable LLMs can readily
+8
+
+https://artofproblemsolving.com
+https://leetcode.com
+10
+https://huggingface.co/camel-ai
+11
+https://github.com/INK-USC/RiddleSense
+9
+
+6
+
+learn to perform long-form thinking, and this ability can be transferred across domains. Further
+discussions and experimental details are provided in Section 3.3.
+2.3
+
+Exploration and Self-Improvement
+
+Although we can increasingly annotate or distill more demonstration data, the process remains largely
+limited by extra efforts in producing the long-form thought data. In this section, we propose enabling
+LLMs to explore on their own, gradually generating more data for self-improvement. First, we
+guide the LLM to explore challenging problems (Section 2.3.1), then identify the trajectories that are
+suitable for the LLM’s learning process (Section 2.3.2), and finally use the selected trajectories to
+further enhance the LLM’s reasoning abilities (Section 2.3.3).
+2.3.1
+
+Exploration on Hard Problems
+
+Our main idea is to collect correct trajectories (consisting of both thoughts and solutions) to train our
+reasoning model. Since we do not include a trainable reward model, we focus on collecting a variety
+of problems with ground-truth answers for exploration. Specifically, for each problem, we perform
+multiple rollouts to generate candidate trajectories. This process continues until a solution containing
+the correct answer is produced. In this way, as we scale the number of rollouts, we can collect an
+increasing number of problems, while the quality of the trajectories improves as the reasoning model
+is further trained. This iterative process is crucial for self-improvement training.
+We empirically find that challenging problems, which require longer thought processes for reasoning,
+are particularly useful for improving the model’s performance. In contrast, simpler problems often
+do not contribute to slow-thinking reasoning and can even degrade model performance. Among
+the hard problems in our collected datasets, the mathematical domain contains a higher proportion,
+exemplified by the challenging problems from the Mathematical Olympiad. Another interesting
+observation is that long-form thinking appears to be an inherent capability of LLMs, not limited to
+specific domains. Even when trained exclusively on mathematical problems, the model can effectively
+reason in a slow-thinking mode across other domains. It is important to note that the number of hard
+problems is highly limited, so our training set will be relatively small in scale.
+2.3.2
+
+Iteratively Refined Training Data
+
+We propose using iterative training to enhance the slow-thinking capabilities of our model, with the
+key idea being to generate progressively refined training datasets. This refinement can be approached
+from two main aspects. First, the dataset can be refined by incorporating more correct trajectories
+from challenging problems. Second, it can be refined by adding more high-quality trajectories
+generated by an improved reasoning model.
+Specifically, let D0 denote the original dataset, consisting of distilled trajectories from external
+reasoning systems, which is used to train our initial reasoning model. Once the model is trained,
+we use it to perform exploration and generate additional trajectories. These new trajectories are
+then added to D0 , resulting in a new dataset D1 . This process can be repeated iteratively by
+alternating between training stronger models and generating refined training data. In this way, we can
+continuously improve the training dataset as the reasoning model evolves.
+At each refinement step, we also perform strict pre-processing to filter out low-quality trajectories,
+such as those that are short or noisy. Additionally, we find that perplexity can serve as a useful metric
+for data selection [26], allowing us to identify and retain more challenging trajectories as recognized
+by the current reasoning model.
+However, as discussed above, a significant limitation is the scarcity of challenging problems, especially those paired with ground-truth answers. As a result, the pool of such problems will be quickly
+exhausted after only a few iterations. We plan to address this limitation in future work.
+2.3.3
+
+Optimization for Self-improvement
+
+After discussing how to generate iteratively refined training data, we now introduce the optimization
+methods for self-improvement. Our aim is to study how exploration can enhance the reasoning
+capabilities of the models. To achieve this, we apply two straightforward optimization strategies,
+integrating the refined training datasets: supervised fine-tuning and direct preference optimization.
+7
+
+Supervised Fine-tuning. We first consider using SFT. Since we employ length and perplexity
+as selection metrics to filter out low-quality rollouts, this approach can also be viewed as rejection
+sampling [27, 28]. We adopt the capable model Qwen2.5-32B-Instruct [29] as the base model,
+denoted as M0 . At the t-th iteration, M0 is firstly trained on the previous dataset Dt−1 , resulting in
+the improved model Mt . This alternating process of generation and training is repeated multiple
+times, until our problem pool is exhausted or the maximum number of iterations is reached. Note
+that another training method is to train Mt based on Mt−1 . However, this would not benefit the
+optimization in our experiments, and we speculate that the training set Dt is relatively small in scale,
+which may even lead to performance degradation in incremental training.
+Direct Preference Optimization. Another approach to improving the reasoning model is through
+direct preference optimization (DPO) [30]. For DPO, we need to select paired positive and negative
+instances for contrastive learning. As mentioned earlier, we select the correct responses with a higher
+perplexity score as positive instances and the incorrect responses with a lower perplexity score as
+negative instances, which enhances the discrimination difficulty for the reasoning model, allowing it
+to improve to a greater extent. Similar to the SFT method, at the t-th iteration, we take the checkpoint
+M1 (with the first-round training) as the base model for DPO training. Additionally, we incorporate
+an SFT loss to help stabilize the DPO training, using the same problem set. When using DPO,
+a straightforward method is to align the entire response. An alternative approach is to align only
+the thought part. As mentioned earlier, we observed that once the thought part is generated, the
+randomness in generating the solution part becomes quite limited. In other words, a detailed thought
+process often leads to a relatively certain solution. We will examine the effects of aligning different
+parts in Section 3.4.
+In addition to the two methods described above, another promising training approach is reinforcement
+learning [31, 32], where the policy model is directly trained during the exploration process. However,
+due to computational resource constraints, we leave this approach for future work.
+
+3
+
+Experiments
+
+In this section, we conduct experiments to examine the effectiveness of the implemented framework.
+3.1
+
+Evaluation Setup
+
+To demonstrate the effectiveness of our framework, we mainly conduct experiments on three challenging benchmarks: MATH-OAI [19], AIME2024 12 , and GPQA [20]. MATH-OAI contains 500
+competition mathematics problems from the MATH [33] test set. AIME2024 features 30 problems
+specifically designed to challenge top high school students with complex problem solving tasks.
+GPQA consists of 198 multiple-choice problems in biology, physics, and chemistry. In our experiments, we focus on mathematics as the primary domain, with biology, physics, and chemistry serving
+as auxiliary domains. Among the math benchmarks, MATH-OAI is considered relatively easier, while
+AIME2024 is regarded as very challenging. Additionally, due to the small number of test samples in
+AIME2024, its performance tends to fluctuate in our experiments.
+We select Qwen2.5-32B-Instruct [29] as the backbone model because it demonstrates sufficient
+foundational capabilities to effectively engage in extended reasoning process. As for baselines,
+we select several leading o1-like models for comparison (i.e., o1-preview [5], DeepSeek-R1-LitePreview [16], and QwQ-32B [17]). In addition, we include GPT-4o [34] and Claude 3.5 Sonnet [35],
+which are advanced general-purpose models. We use greedy search to evaluate the performance of
+our model with maximum tokens set to 32k.
+3.2
+
+Main Results
+
+In this part, we present a detailed performance comparison of various methods on the selected
+evaluation benchmarks, as shown in Table 2. The results include performance metrics for o1-like
+models, general-purpose models, and several approaches based on the backbone model with additional
+training methods. We report both the accuracy and the gain relative to the backbone’s performance.
+12
+
+https://huggingface.co/datasets/AI-MO/aimo-validation-amc
+
+8
+
+Table 2: Performance comparison of different methods on three representative benchmarks. “Backbone” refers to CoT reasoning method based on the Qwen2.5-32B-Instruct model, while “w/
+SFT” and “w/ SFT & DPO” denote training with our proposed method. The columns of “Distill”
+and “Explore” indicate that the source of training instances, either distillation from R1 and QwQ
+or exploration by the model itself. The bold fonts denote the best performance among our training
+variants, and we report the gain over the backbone model (in percentage).
+Method
+
+Num. Data
+
+MATH-OAI
+
+AIME
+
+GPQA
+
+Distill Explore Acc (%) Gain (%) Acc (%) Gain (%) Acc (%) Gain (%)
+GPT-4o
+Claude 3.5 Sonnet
+o1-preview
+DeepSeek-R1-Lite-P
+QwQ-32B-preview
+
+-
+
+-
+
+76.6
+78.3
+85.5
+91.6
+90.6
+
+-
+
+9.3
+16.0
+44.6
+52.5
+50.0
+
+-
+
+53.6
+65.0
+72.3
+58.5
+65.2
+
+-
+
+Backbone
+w/ SFT (STILL-2)
+w/ SFT
+
+3.9k
+1.1k
+
+-
+
+80.0
+90.2
+86.0
+
++12.8
++7.5
+
+13.3
+46.7
+33.3
+
++251.1
++153.8
+
+43.4
+55.1
+48.0
+
++27.0
++10.6
+
+w/ SFT
+w/ SFT
+w/ SFT (STILL-2)
+
+1.1k
+1.1k
+1.1k
+
+0.7k
+1.6k
+1.8k
+
+87.1
+87.4
+89.8
+
++8.9
++9.2
++12.3
+
+40.0
+46.7
+40.0
+
++200.8
++251.1
++200.8
+
+49.0
+53.0
+56.1
+
++12.9
++22.1
++29.3
+
+w/ SFT & DPO
+1.1k
+w/ SFT & DPO (STILL-2) 1.1k
+
+0.3k
+1.0k
+
+87.2
+85.4
+
++9.0
++6.8
+
+30.0
+46.7
+
++125.6
++251.1
+
+49.5
+51.0
+
++14.1
++17.5
+
+From the table (the first part of Table 2), we can observe that industry-level slow-thinking reasoning
+systems achieve excellent performance across the three benchmarks, showing significant improvement on the most challenging benchmark, AIME. Overall, o1-preview demonstrates more balanced
+performance, while R1 and QwQ perform better in the math domain. These results indicate the
+effectiveness of slow thinking in enhancing the complex reasoning capabilities of LLMs.
+Secondly, distillation-based variants of our approach (the first group in the second part of Table 2) can
+yield very competitive results, as shown in the second group of rows, approaching those of industry
+counterparts. For example, using 3.9k distilled instances obtained from both R1 and QwQ after our
+preprocessing, our method achieves 46.7% accuracy on AIME and 90.2% accuracy on MATH-OAI.
+We find that conducting careful data cleaning, selection, and mixing of demonstration instances is
+very useful when implementing this variant. Another observation is that increasing the amount of
+high-quality demonstration data can effectively improve model performance, as evidenced by the
+comparison between models trained with 1.1k and 3.9k instances.
+Thirdly, the iteratively trained variants of our approach (the second and third groups in the second
+part of Table 2) can also achieve promising results across the three benchmarks. Using the variant w/
+SFT 1.1k as a reference, we observe that incorporating exploration and self-improvement leads to
+performance improvements for both SFT or DPO, e.g., the performance on AIME goes from 33.3%
+to 40.0%, 46.7%, and 40.0% respectively. Note that our variants are optimized by the iteratively
+refined training datasets in Section 2.3.2. Since the exploration on challenging problems is very
+time-consuming, we maintain all the derived correct trajectories of multiple trained or experimented
+variants in a global pool across multiple runs of experiments. The explored instances (the third
+column of Table 2) are selected from this pool, rather than from a single variant or the preceding
+variants in the same run of experiments. Additionally, we find that using more explored instances can
+also lead to performance improvement to some extent.
+Empirically, we find that the improvement of iterative training is often limited to the initial iterations
+and might lead to performance fluctuations on some benchmarks. We speculate that, due to the
+constrained number of rollouts (at most 20 in our experiments), a portion of challenging problems
+cannot be sufficiently explored by our reasoning model—meaning the model fails to arrive at the
+correct answer—thereby significantly limiting its exploration capacity. As future work, we plan to
+extend the search time for exploration to address this limitation.
+Overall, our distillation-based variant (with 3.9k instances) achieves the best performance among
+all our attempts, approaching the performance of industry-level reasoning systems. Meanwhile, the
+9
+
+Table 3: Performance comparison with different mixtures for multi-domain data. We also report the
+average length for each data mixture.
+Settings
+
+Avg. Length
+
+MATH-OAI
+
+AIME
+
+GPQA
+
+Avg.
+
+w/o hard problems
+w/o other domains
+mixed
+
+2866
+3389
+3162
+
+86.0
+87.4
+89.8
+
+33.3
+46.7
+40.0
+
+51.0
+53.0
+56.1
+
+56.8
+62.4
+62.0
+
+Table 4: Performance comparison of different variants with the DPO algorithm. For SFT, we optimize
+the model over both the parts of thought and solution. We incorporate the performance of the
+fine-tuned model after imitation learning as the reference.
+DPO
+
+SFT
+
+MATH-OAI
+
+AIME
+
+GPQA
+
+Avg.
+
+Thought + Solution
+Thought + Solution
+Thought
+Thought
+
+✗
+✔
+✗
+✔
+
+86.2
+87.2
+85.4
+87.6
+
+33.3
+26.7
+46.7
+33.3
+
+52.5
+43.9
+51.0
+50.5
+
+57.4
+52.6
+61.0
+57.1
+
+variants incorporating exploration and self-improvement also show substantial improvements over
+the backbone model.
+3.3
+
+Further Analysis of Data Mixture
+
+During SFT training, we prepare a mixture of training data from different domains and varying
+difficulty levels. In this section, we examine the impact of this data mixture on the model’s performance. Specifically, our training dataset consists of three main sources: hard mathematical
+problems (corresponding to difficulty levels such as AIME or the Mathematical Olympiad), normal
+mathematical problems (corresponding to the MATH-OAI difficulty level), and data from other
+domains (corresponding to other disciplines in GPQA). Since the math domain typically contains
+many challenging reasoning problems, we prioritize it as the main domain.
+For the three sources, we experiment with different proportions for data mixture: w/o hard problems
+(removing the hard mathematical problems), w/o other domains (removing all non-math data), and
+mixed domain data (including all three parts with a carefully tuned distribution).
+We present the performance comparison in Table 3 and derive three major findings. First, excluding
+the hard problem data leads to a significant drop in performance. This highlights the importance of
+hard problems in enhancing the reasoning model’s capabilities, particularly on the most challenging
+benchmark, AIME, in our experiments. We observe that hard problems typically require a longer
+thought process to reach the correct solution (as indicated by the average thought length statistics),
+which helps better guide and teach LLMs to generate long-form thought.
+Second, using mathematical data alone results in a strong performance across all three benchmarks,
+not limited to the math domain. This suggests that reasoning with long-form thought is an inherent
+capability of LLMs, which can be generalized across domains once properly elicited or taught. This
+finding is particularly significant for the design of generalized reasoning algorithms.
+3.4
+
+Further Analysis of DPO Training
+
+Another aspect to consider is the setting of the DPO algorithm in Section 2.3.3. We introduce two
+major modifications to the original DPO algorithm: (1) aligning only the thought process, and (2)
+incorporating SFT for more stable optimization. To examine the impact of these strategies, we
+compare the performance using variants that align both the thought and the solution, as well as those
+that exclude the SFT loss.
+The comparison results are presented in Table 4. An interesting finding is that aligning only the
+thought process can yield promising results. This is likely because the thought process is the core
+element to learn, and once it is well established, LLMs can readily generate the corresponding
+10
+
+solution. Another observation is that the SFT loss seems to have little positive influence when
+aligning both the thought and solution, as the solution is already incorporated into the DPO training.
+While our results appear to fluctuate across different runs, we recommend that future research conduct
+more thorough experiments to explore various alignment strategies when using DPO to train reasoning
+models.
+
+4
+
+Conclusion
+
+In this paper, we present a detailed introduction to a reproduced o1-like reasoning system, STILL-2.
+We outline a three-phase development approach for implementing such a capable system, where the
+model is initially trained using distilled long-form thought data and then undergoes self-improvement
+by exploring difficult problems. Our system has demonstrated strong performance on three challenging evaluation benchmarks. We find that the slow-thinking mode can be easily transferred across
+domains and is particularly effective at solving hard, complex problems. Our main findings can be
+summarized as follows:
+• The ability to perform long-form thinking can be effectively elicited by training with a
+small amount of high-quality demonstration data. Once established, this ability appears to
+naturally generalize across domains.
+• Demonstration data from the math domain is particularly well-suited for developing the longform thinking ability of LLMs, and data with longer thought processes appears especially
+effective in enhancing the model’s capacity to tackle challenging problems.
+• Unlike the formal responses generated by LLMs in a fast-thinking mode, the thought process
+is typically expressed in a flexible, informal manner, serving to guide LLMs toward the
+correct path to the solution.
+• The slow-thinking capacity can be effectively enhanced through exploration and selfimprovement, whereas the improvements from offline learning methods seem to occur
+primarily in the initial iterations, especially for challenging tasks.
+This work follows our previous study [9] on building complex reasoning systems. Despite the
+promising results, our exploration remains preliminary, and there is still a substantial capacity gap
+compared to industry-level systems. As future work, we plan to investigate how to scale our training
+approach and extend its capacity to more complex tasks. As always, we are committed to keeping
+our technical approach open, and we welcome collaboration and support in computational resources.
+
+Acknowledgments
+We are grateful to DeepSeek and Qwen for providing public access to their reasoning systems. We
+also thank Haoxiang Sun for sharing his mathematical expertise.
+
+References
+[1] Wayne Xin Zhao, Kun Zhou, Junyi Li, Tianyi Tang, Xiaolei Wang, Yupeng Hou, Yingqian Min,
+Beichen Zhang, Junjie Zhang, Zican Dong, Yifan Du, Chen Yang, Yushuo Chen, Zhipeng Chen,
+Jinhao Jiang, Ruiyang Ren, Yifan Li, Xinyu Tang, Zikang Liu, Peiyu Liu, Jian-Yun Nie, and
+Ji-Rong Wen. A survey of large language models. CoRR, abs/2303.18223, 2023.
+[2] Kahneman Daniel. Thinking, fast and slow. 2017.
+[3] Siwei Wu, Zhongyuan Peng, Xinrun Du, Tuney Zheng, Minghao Liu, Jialong Wu, Jiachen Ma,
+Yizhi Li, Jian Yang, Wangchunshu Zhou, Qunshu Lin, Junbo Zhao, Zhaoxiang Zhang, Wenhao
+Huang, Ge Zhang, Chenghua Lin, and Jiaheng Liu. A comparative study on reasoning patterns
+of openai’s o1 model. CoRR, abs/2410.13639, 2024.
+[4] Tianyang Zhong, Zhengliang Liu, Yi Pan, Yutong Zhang, Yifan Zhou, Shizhe Liang, Zihao Wu,
+Yanjun Lyu, Peng Shu, Xiaowei Yu, Chao Cao, Hanqi Jiang, Hanxu Chen, Yiwei Li, Junhao
+Chen, Huawen Hu, Yihen Liu, Huaqin Zhao, Shaochen Xu, Haixing Dai, Lin Zhao, Ruidong
+Zhang, Wei Zhao, Zhenyuan Yang, Jingyuan Chen, Peilong Wang, Wei Ruan, Hui Wang, Huan
+11
+
+Zhao, Jing Zhang, Yiming Ren, Shihuan Qin, Tong Chen, Jiaxi Li, Arif Hassan Zidan, Afrar
+Jahin, Minheng Chen, Sichen Xia, Jason Holmes, Yan Zhuang, Jiaqi Wang, Bochen Xu, Weiran
+Xia, Jichao Yu, Kaibo Tang, Yaxuan Yang, Bolun Sun, Tao Yang, Guoyu Lu, Xianqiao Wang,
+Lilong Chai, He Li, Jin Lu, Lichao Sun, Xin Zhang, Bao Ge, Xintao Hu, Lian Zhang, Hua Zhou,
+Lu Zhang, Shu Zhang, Ninghao Liu, Bei Jiang, Linglong Kong, Zhen Xiang, Yudan Ren, Jun
+Liu, Xi Jiang, Yu Bao, Wei Zhang, Xiang Li, Gang Li, Wei Liu, Dinggang Shen, Andrea Sikora,
+Xiaoming Zhai, Dajiang Zhu, and Tianming Liu. Evaluation of openai o1: Opportunities and
+challenges of AGI. CoRR, abs/2409.18486, 2024.
+[5] OpenAI. Learning to reason with llms, 2024.
+[6] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed H. Chi,
+Quoc V. Le, and Denny Zhou. Chain-of-thought prompting elicits reasoning in large language
+models. In NeurIPS, 2022.
+[7] An Yang, Beichen Zhang, Binyuan Hui, Bofei Gao, Bowen Yu, Chengpeng Li, Dayiheng Liu,
+Jianhong Tu, Jingren Zhou, Junyang Lin, Keming Lu, Mingfeng Xue, Runji Lin, Tianyu Liu,
+Xingzhang Ren, and Zhenru Zhang. Qwen2.5-math technical report: Toward mathematical
+expert model via self-improvement. CoRR, abs/2409.12122, 2024.
+[8] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Mingchuan Zhang, Y. K. Li,
+Y. Wu, and Daya Guo. Deepseekmath: Pushing the limits of mathematical reasoning in open
+language models. CoRR, abs/2402.03300, 2024.
+[9] Jinhao Jiang, Zhipeng Chen, Yingqian Min, Jie Chen, Xiaoxue Cheng, Jiapeng Wang, Yiru Tang,
+Haoxiang Sun, Jia Deng, Wayne Xin Zhao, et al. Technical report: Enhancing llm reasoning
+with reward-guided tree search. CoRR, abs/2411.11694, 2024.
+[10] Di Zhang, Jianbo Wu, Jingdi Lei, Tong Che, Jiatong Li, Tong Xie, Xiaoshui Huang, Shufei
+Zhang, Marco Pavone, Yuqiang Li, Wanli Ouyang, and Dongzhan Zhou. Llama-berry: Pairwise
+optimization for o1-like olympiad-level mathematical reasoning. CoRR, abs/2410.02884, 2024.
+[11] Yuxiang Zhang, Shangxi Wu, Yuqi Yang, Jiangming Shu, Jinlin Xiao, Chao Kong, and Jitao
+Sang. o1-coder: an o1 replication for coding. CoRR, abs/2412.00154, 2024.
+[12] Yiwei Qin, Xuefeng Li, Haoyang Zou, Yixiu Liu, Shijie Xia, Zhen Huang, Yixin Ye, Weizhe
+Yuan, Hector Liu, Yuanzhi Li, and Pengfei Liu. O1 replication journey: A strategic progress
+report – part 1. CoRR, 2024.
+[13] Yu Zhao, Huifeng Yin, Bo Zeng, Hao Wang, Tianqi Shi, Chenyang Lyu, Longyue Wang, Weihua
+Luo, and Kaifu Zhang. Marco-o1: Towards open reasoning models for open-ended solutions.
+CoRR, abs/2411.14405, 2024.
+[14] Kimi. k0math, 2024.
+[15] Skywork o1 Team. Skywork-o1 open series. https://huggingface.co/Skywork, November 2024.
+[16] DeepSeek Team. Deepseek-r1-lite-preview is now live: unleashing supercharged reasoning
+power!, November 2024.
+[17] Qwen Team. Qwq: Reflect deeply on the boundaries of the unknown, November 2024.
+[18] Zhen Huang, Haoyang Zou, Xuefeng Li, Yixiu Liu, Yuxiang Zheng, Ethan Chern, Shijie Xia,
+Yiwei Qin, Weizhe Yuan, and Pengfei Liu. O1 replication journey–part 2: Surpassing o1-preview
+through simple distillation, big progress or bitter lesson? arXiv preprint arXiv:2411.16489,
+2024.
+[19] Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee,
+Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In ICLR.
+OpenReview.net, 2024.
+[20] David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien
+Dirani, Julian Michael, and Samuel R. Bowman. GPQA: A graduate-level google-proof q&a
+benchmark. CoRR, abs/2311.12022, 2023.
+[21] Eric Zelikman, Georges Harik, Yijia Shao, Varuna Jayasiri, Nick Haber, and Noah D. Goodman. Quiet-star: Language models can teach themselves to think before speaking. CoRR,
+abs/2403.09629, 2024.
+12
+
+[22] David Herel and Tomás Mikolov. Thinking tokens for language modeling. CoRR,
+abs/2405.08644, 2024.
+[23] Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V. Le, Ed H. Chi, Sharan Narang, Aakanksha
+Chowdhery, and Denny Zhou. Self-consistency improves chain of thought reasoning in language
+models. In ICLR. OpenReview.net, 2023.
+[24] Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Tom Griffiths, Yuan Cao, and Karthik
+Narasimhan. Tree of thoughts: Deliberate problem solving with large language models. In
+NeurIPS, 2023.
+[25] Jia Li, Edward Beeching, Lewis Tunstall, Ben Lipkin, Roman Soletskyi, Shengyi Huang, Kashif
+Rasul, Longhui Yu, Albert Q Jiang, Ziju Shen, et al. Numinamath: The largest public dataset in
+ai4maths with 860k pairs of competition math problems and solutions. Hugging Face repository,
+2024.
+[26] Zachary Ankner, Cody Blakeney, Kartik Sreenivasan, Max Marion, Matthew L. Leavitt, and
+Mansheej Paul. Perplexed by perplexity: Perplexity-based data pruning with small reference
+models. CoRR, abs/2405.20541, 2024.
+[27] Zheng Yuan, Hongyi Yuan, Chengpeng Li, Guanting Dong, Chuanqi Tan, and Chang Zhou.
+Scaling relationship on learning mathematical reasoning with large language models. CoRR,
+abs/2308.01825, 2023.
+[28] Eric Zelikman, Yuhuai Wu, Jesse Mu, and Noah D. Goodman. Star: Bootstrapping reasoning
+with reasoning. In NeurIPS, 2022.
+[29] Qwen Team. Qwen2.5: A party of foundation models, September 2024.
+[30] Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D. Manning, Stefano Ermon, and
+Chelsea Finn. Direct preference optimization: Your language model is secretly a reward model.
+In NeurIPS, 2023.
+[31] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal
+policy optimization algorithms. CoRR, abs/1707.06347, 2017.
+[32] Chenlu Ye, Wei Xiong, Yuheng Zhang, Nan Jiang, and Tong Zhang. Online iterative reinforcement learning from human feedback with general preference model. CoRR, abs/2402.07314,
+2024.
+[33] Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn
+Song, and Jacob Steinhardt. Measuring mathematical problem solving with the MATH dataset.
+In Joaquin Vanschoren and Sai-Kit Yeung, editors, Proceedings of the Neural Information
+Processing Systems Track on Datasets and Benchmarks 1, NeurIPS Datasets and Benchmarks
+2021, December 2021, virtual, 2021.
+[34] OpenAI. Hello gpt-4o, 2024.
+[35] Anthropic. Claude 3.5 sonnet, 2024.
+
+13
+
+Problem: Convert the point (0, 3) in rectangular coordinates to polar coordinates.
+Enter your answer in the form (r, θ), where r > 0 and 0 ≤ θ < 2π.
+
+Output:
+<|begin_of_thought|>
+Alright, so I’ve got this problem here: I need to convert the point (0,3) from rectangular coordinates to polar coordinates. I know that in polar coordinates, points are represented as (r, θ), where r
+is the radius or the distance from the origin, and θ is the angle from the positive x-axis.
+First, I need to find r. I remember that r is the distance
+from the origin to the point, which
+p
+can be found using the Pythagorean theorem. So, r = x2 + y 2 . Plugging in the values, x is 0 and y
+is 3, so
+p
+√
+r = 02 + 32 = 9 = 3
+Okay, so r is 3.
+Next, I need to find θ. θ is the angle that the line from the origin to the point makes with the
+positive x-axis. I think I can use the arctangent function, θ = arctan(y/x). But wait, in this case, x is
+0, so y/x would be 3/0, which is undefined. Hmm, that’s a problem.
+I recall that when x is 0, the point lies on the y-axis. If y is positive, the point is on the positive y-axis, and if y is negative, it’s on the negative y-axis. In this case, y is 3, which is positive, so the
+point is on the positive y-axis.
+I know that the angle for the positive y-axis is π/2 radians, or 90 degrees. So, θ should be
+π/2.
+But let me double-check. The arctangent function usually gives angles in the range of −π/2
+to π/2, but since the point is on the y-axis, I need to consider the correct quadrant. The point (0,3) is in
+the upper half-plane, so θ should indeed be π/2.
+Also, the problem specifies that r should be positive, which it is, and θ should be between 0
+and 2π, which π/2 is.
+So, putting it all together, the polar coordinates should be (3, π/2).
+I think that’s the answer.
+<|end_of_thought|>
+<|begin_of_solution|>
+To convert the point (0, 3) from rectangular coordinates to polar coordinates, we need to find
+r and θ.
+1. Calculate r:
+r=
+
+p
+
+x2 + y 2 =
+
+p
+√
+02 + 3 2 = 9 = 3
+
+2. Determine θ:
+Since the point (0, 3) lies on the positive y-axis, the angle θ is π2 radians.
+Thus, the polar coordinates are:
+(3,
+
+π
+)
+2
+
+<|end_of_solution|>
+
+Table 5: A sample solution to a problem in MATH-OAI.
+14
+
+Problem: Every morning Aya goes for a 9-kilometer-long walk and stops at a coffee shop afterwards.
+When she walks at a constant speed of s kilometers per hour, the walk takes her 4 hours, including t
+minutes spent in the coffee shop. When she walks s + 2 kilometers per hour, the walk takes her 2 hours
+and 24 minutes, including t minutes spent in the coffee shop. Suppose Aya walks at s + 21 kilometers
+per hour. Find the number of minutes the walk takes her, including the t minutes spent in the coffee
+shop.
+
+Output:
+<|begin_of_thought|>
+Alright, so I’ve got this problem here about Aya’s morning routine. She walks 9 kilometers and then
+stops at a coffee shop for t minutes. The time she takes for the whole routine depends on her walking
+speed.
+When she walks at s kilometers per hour, the total time is 4 hours, including the time at the coffee shop.
+When she walks at s + 2 kilometers per hour, the total time is 2 hours and 24 minutes, again including
+the coffee shop time.
+I need to find out how many minutes the whole routine takes when she walks at s + 12 kilometers per hour.
+Okay, first things first, I need to understand what’s being asked. There are two scenarios given with different speeds and total times, including the coffee shop stop. I need to find the total time for a third speed.
+Let’s break it down. In the first scenario, walking at s km/h, the total time is 4 hours, which
+includes the walking time and t minutes at the coffee shop. In the second scenario, walking at s + 2
+km/h, the total time is 2 hours and 24 minutes, again including t minutes at the coffee shop.
+I need to find the total time when she walks at s + 0.5 km/h.
+First, I should probably find the value of s, her original walking speed. To do that, I can set up equations
+based on the information given.
+Let’s denote the walking time without the coffee shop as T . So, in the first scenario: Walking time T + t minutes = 4 hours. Similarly, in the second scenario: Walking time T ′ + t minutes = 2
+hours and 24 minutes. But I need to express T and T ′ in terms of s. We know that time = distance /
+speed. So, for the first scenario:
+T =
+
+9
+hours
+s
+
+And for the second scenario:
+T′ =
+
+9
+hours
+s+2
+
+So, I have two equations:
+9
+t
++
+=4
+s
+60
+9
+t
++
+= 2.4
+s+2
+60
+I can solve these two equations to find s and t.
+Using the quadratic formula, I get:
+s = 2.5 km/h, t = 24 minutes
+To find the total time when she walks at s + 0.5 = 3 km/h:
+Total time =
+
+9
+t
++
+= 3 + 0.4 = 3.4 hours
+3
+60
+
+Converting 3.4 hours to minutes:
+3 × 60 + 0.4 × 60 = 204 minutes
+Thus, the total time is 204 minutes.
+<|end_of_thought|>
+
+Table 6: A sample solution to a problem in AIME.
+15
+
+<|begin_of_solution|>
+Given that Aya walks 9 kilometers at a speed of s kilometers per hour, and the total time including t
+minutes at the coffee shop is 4 hours, we have:
+9
+t
++
+=4
+s
+60
+Similarly, when she walks at s + 2 kilometers per hour, the total time is 2 hours and 24 minutes:
+9
+t
++
+= 2.4
+s+2
+60
+Solving for s and t, we get:
+s = 2.5 km/h, t = 24 minutes
+To calculate the total time at speed s + 12 = 3 km/h:
+Total time =
+
+9
+t
++
+= 3 + 0.4 = 3.4 hours
+3
+60
+
+Converting to minutes:
+3 × 60 + 0.4 × 60 = 204 minutes
+Thus, the total time is:
+204 minutes
+<|end_of_solution|>
+
+Table 6 (Continued): A sample solution to a problem in AIME.
+
+16
+
+

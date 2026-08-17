@@ -1,0 +1,1687 @@
+Self-Verified Distillation: Your Language Model Is
+Secretly Its Own Synthetic Data Pipeline
+
+arXiv:2605.26132v1 [cs.CL] 20 May 2026
+
+Tony Lee
+Stanford University
+tonyhlee@stanford.edu
+
+Percy Liang
+Stanford University
+pliang@cs.stanford.edu
+
+Abstract
+Can post-trained large language models (LLMs) further improve themselves using
+only unlabeled prompts, without external teachers or feedback from tools? We
+study this setting starting only from unlabeled seed questions with no groundtruth solutions, across three reasoning domains: math, science, and coding. We
+propose Self-Verified Distillation, a simple post-training refinement algorithm in
+which the model generates candidate solutions to these seed questions, filters them
+using prompt-based self-verification, and trains on the resulting self-curated dataset.
+Inspired by the UQ benchmark’s use of multiple validators to screen candidate
+answers to hard unsolved questions, we adapt this validation-based filtering idea
+to self-training: the model filters its own generated solutions through a threestage cascade of cycle-consistency, factuality, and correctness checks, accepting
+a solution only if it passes all stages with unanimous judge votes. We find that
+sampling more candidate generations and using a larger verification budget during
+training data construction produces higher-quality self-curated data and, in turn,
+better reasoning models. We then train Qwen3 models at multiple scales with
+Self-Verified Distillation and obtain gains across all three domains. For Qwen3-4B,
+our method improves aggregate held-out pass@1 by +16.7 points in math (AIME26
+and HMMT), +11.1 points in science (GPQA Diamond and HLE), and +8.3 points
+in coding (LCBv5 and LCBv6), with gains also extending to 0.6B and 8B models.
+Compared to our test-time-only baseline (UQ-TTC), which improves performance
+by spending extra compute at inference time, Self-Verified Distillation achieves
+better performance in most settings while requiring only a single inference call at
+test time.
+
+Figure 1: Self-Verified Distillation trains models on their own generations filtered by strong
+self-verification without ground-truth answers. Across model scales, Self-Verified Distillation
+improves held-out pass@1 in math, science, and code, showing that self-verified training can further
+improve post-trained models. Error bars show ±1 standard error of the mean across evaluation seeds.
+Preprint.
+
+Figure 2: Overview of Self-Verified Distillation. Starting from unlabeled seed questions without
+ground-truth answers, the model samples n candidate solutions per question, filters each candidate
+with UQ-style multi-stage self-verification using v repeated judge calls per stage, and trains on the
+accepted solutions as supervised data. This produces a self-curated dataset without external teachers,
+tool feedback, or ground-truth solutions.
+
+1
+
+Introduction
+
+Despite rapid progress in post-training large language models for reasoning, further improving an
+already strong reasoning model remains challenging. Many successful approaches rely on additional
+sources of supervision, such as ground-truth answers for verifier training [Cobbe et al., 2021],
+human-labeled process supervision [Lightman et al., 2023], or teacher-generated reasoning traces
+and synthetic answers [Guha et al., 2025, Abdin et al., 2025, Zhu et al., 2026]. These sources of
+supervision can be expensive to obtain, difficult to scale, or unavailable for the hardest reasoning
+problems. This issue arises across model scales and becomes especially important when stronger
+teachers are unavailable, inaccessible, or costly to use. This motivates a broader question for posttraining: can an already post-trained reasoning model further improve using only itself? This work
+builds on prior self-improvement and self-distillation approaches [Huang et al., 2022, Zelikman et al.,
+2022, Zhang et al., 2026], but studies whether explicit self-verification can make self-generated data
+reliable enough for further post-training in a deliberately constrained setting across math, science,
+and coding: the model is given only unlabeled seed questions with no ground-truth solutions, no
+external teacher, and no tool feedback. It must generate its own candidate solutions, decide which
+of those solutions are worth training on, and then improve from the resulting self-curated data.
+The main challenge is whether a model can reliably verify its own generations. Naive self-training
+can reinforce the model’s own mistakes: a model may generate incorrect solutions, judge them
+as valid, and then train on flawed reasoning traces. This challenge is closely related to generatorvalidator consistency, which studies whether a language model’s behavior as a generator agrees
+with its behavior as a validator [Li et al., 2023]. In our setting, self-verification is useful only if the
+model’s validator view provides a higher-precision filter than the raw generator distribution: the
+verifier need not be perfect, but the accepted solutions must be better training data than unfiltered
+generations. To study this setting, we introduce Self-Verified Distillation, a simple post-training
+refinement algorithm that turns unlabeled seed questions into supervised training data. Starting
+from a post-trained model, Self-Verified Distillation samples n candidate solutions for each seed
+question. It then filters these solutions using prompt-based, multi-stage self-verification inspired
+by the Unsolved Questions (UQ) benchmark, which uses compound validators to screen candidate
+answers to hard unsolved questions [Nie et al., 2025]. Each candidate is checked by a cascade of
+2
+
+cycle-consistency, factuality, and correctness verifiers, with v repeated judge calls per stage, where
+a candidate is accepted only if it passes all checks. Finally, the model is trained on the accepted
+self-generated solutions (see Figure 2).
+A summary of our contributions is as follows:
+1. Self-verified distillation from unlabeled questions. We propose Self-Verified Distillation,
+a simple post-training refinement algorithm that further improves reasoning models starting
+only from unlabeled seed questions. Unlike many post-training pipelines, Self-Verified
+Distillation does not require external teachers, tool feedback, or ground-truth solutions:
+the model generates candidate solutions, self-verifies them, and trains on the resulting
+self-curated data.
+2. A controlled study of self-curated data construction. We study which parts of the
+synthetic data-generation pipeline matter by varying generation count, verification strength,
+verifier type, selection policy, and model scale across math, science, and coding. These
+experiments show that simply training on self-generated data can hurt performance, while
+stronger UQ verification improves the quality of the training data and outperforms a simpler
+prompt that checks correctness under the same verification strength.
+3. Training-time verification versus test-time verification. We introduce UQ-TTC, a testtime compute baseline that applies the same UQ-style verification procedure only at inference
+time. Compared to UQ-TTC, Self-Verified Distillation achieves competitive or stronger
+held-out math performance while requiring only a single inference call at evaluation time,
+showing that verification can be used to construct training data rather than repeatedly applied
+at test time.
+Figure 1 gives an overview of the final held-out test results. Across Qwen3-0.6B, 4B, and 8B,
+Self-Verified Distillation improves pass@1 across math, science, and coding. The gains are strongest
+for Qwen3-4B, while the 0.6B results are smaller and less consistent, suggesting that model capability
+affects the quality of self-curated data. Self-Verified Distillation also performs competitively against
+our more computationally expensive UQ-TTC baseline on math, while using only a single inference
+call at evaluation time. These results suggest that Self-Verified Distillation can serve as a lightweight
+additional refinement stage for already post-trained reasoning models.
+
+2
+
+Related Work
+
+Self-training. Our work builds on a long line of self-training and self-distillation methods. Some approaches bootstrap instruction-following data from model-generated instructions and outputs [Wang
+et al., 2023], while others use self-generated rationale-augmented answers for self-improvement
+on unlabeled questions [Huang et al., 2022]. Others train models to generate or use rationales
+more effectively. STaR iteratively bootstraps rationales by keeping those that lead to correct final
+answers [Zelikman et al., 2022]. Quiet-STaR instead learns to generate latent rationales that improve next-token prediction in general text [Zelikman et al., 2024]. A related line of work uses
+model-generated critiques and revisions [Bai et al., 2022] or multi-agent roles as self-improvement
+signals [Chen et al., 2025b].
+Recent work also studies related ways of obtaining learning signals from a model’s own behavior.
+On-policy distillation trains on student-generated sequences while using a teacher to provide feedback
+on those sequences [Agarwal et al., 2024]. POPE uses privileged solution prefixes from humans or
+other models to guide on-policy exploration on hard reasoning problems [Qu et al., 2026]. Other
+work studies internal-feedback learning, where the model’s own confidence provides a reward
+signal without external rewards or labeled data [Zhao et al., 2026], or demonstration-conditioned
+self-distillation, where expert demonstrations are used in context to produce on-policy training
+signals [Shenfeld et al., 2026]. Self-Distillation Zero [He et al., 2026], a concurrent work, uses
+self-revision to turn binary correctness rewards into dense token-level supervision. In contrast, our
+setting does not assume access to ground-truth final answers, binary correctness rewards, expert
+demonstrations, external teachers, or tool feedback, and instead filters self-generated solutions using
+prompt-based multi-stage self-verification.
+The closest prior work to our setting is Simple Self-Distillation (SSD), which improves code generation by directly training on a model’s own raw, unverified outputs, without a stronger teacher, reward
+3
+
+model, verifier, or labeled solutions [Zhang et al., 2026]. SSD’s central finding is that this simple,
+unverified self-training can improve code generation. In contrast, our work studies math, science, and
+coding and focuses on the complementary question of whether self-generated data should be filtered
+before training. We show that simply training on a model’s own generations can hurt performance,
+while applying strong self-verification to filter those generations yields further improvements across
+multiple domains.
+Verification and rewards. Verification and reward models are central tools for improving reasoning
+models. Outcome verifiers are often trained to judge whether a generated solution is correct, and can
+be used to select among multiple sampled answers at inference time [Cobbe et al., 2021]. Process
+reward models instead score intermediate reasoning steps, providing finer-grained signals for ranking,
+reranking, or reinforcement learning over reasoning traces [Lightman et al., 2023, Wang et al., 2024].
+These verifiers and reward models are commonly used to filter, rank, or improve generated reasoning
+traces, either for test-time selection, rejection-sampling-style fine-tuning, reward-ranked fine-tuning,
+fine-grained reward-guided improvement, or verifier-guided search [Dong et al., 2023, Zhang et al.,
+2024, Hwang et al., 2024]. Recent work also studies how to combine multiple weak or imperfect
+verifiers into stronger aggregate verification systems [Saad-Falcon et al., 2025a]. Relatedly, the
+Unsolved Questions (UQ) benchmark evaluates frontier models on hard questions without known
+ground-truth answers using compound, oracle-free validators [Nie et al., 2025]. We adapt this
+validator-based filtering idea to select self-generated solutions for training.
+Test-time compute. Our work is also related to test-time compute methods, which improve reasoning by spending more computation at inference time. One common approach is repeated sampling:
+generate many candidate solutions, then use a verifier, majority vote, unit tests, proof checkers, or
+reward model to select a final answer [Brown et al., 2024]. More generally, test-time compute can
+be viewed as modifying the model’s prediction process at inference time, either by changing the
+input context or by sampling and selecting among multiple outputs [Snell et al., 2024]. Other work
+explores larger inference-time systems that combine components such as generators, rankers, critics,
+verifiers, fusers, and unit-test evaluators under a fixed compute budget [Saad-Falcon et al., 2025b].
+Recent work also studies self-improvement or aggregation entirely at test time. Some methods
+recursively generate, verify, and condition on previous attempts without updating model parameters [Zhuang et al., 2026], while others maintain a population of candidate solutions and repeatedly
+aggregate or recombine them to produce stronger answers [Venkatraman et al., 2026]. Related
+approaches study distilled reasoners or societies of thought as ways to better use inference-time
+computation [Paliotta et al., 2025, Kim et al., 2026]. In contrast, Self-Verified Distillation spends
+compute during data construction rather than only at test time: the model samples multiple candidate
+solutions, applies verification to filter candidates, and then amortizes the resulting compute into the
+model parameters through supervised fine-tuning.
+Other work analyzes the structure and efficiency of reasoning traces themselves. Some studies find
+that reasoning models can overthink, producing unnecessarily long or repetitive reasoning traces on
+easier problems [Chen et al., 2025a], while others show that models can underthink by abandoning
+promising lines of reasoning too early [Wang et al., 2025]. Related methods prefer shorter reasoning
+chains when they preserve correctness [Hassid et al., 2026], or explicitly explore alternative reasoning
+paths that were not taken in the original trajectory [Lu et al., 2025]. These works study how to spend
+or structure reasoning computation at inference time, while our work uses generation and verification
+compute to construct training data.
+
+3
+
+Self-Verified Distillation
+
+Self-Verified Distillation is a post-training refinement pipeline with three components: (1) generation,
+where the model proposes candidate solutions for unlabeled seed questions, (2) verification, where
+prompt-based checks filter low-quality or incorrect responses, and (3) training, where the accepted
+solutions are used as supervised fine-tuning data. The resulting self-curated dataset allows the model
+to further train on its own verified generations. Figure 2 gives an overview of the pipeline, and
+Algorithm 1 provides the full procedure.
+4
+
+Algorithm 1 Self-Verified Distillation. Given unlabeled seed questions, the model samples n
+candidate solutions per question, applies three-stage self-verification with v repeated judge calls per
+stage, and trains on the accepted solutions with supervised fine-tuning.
+Require: Initial post-trained model pθ
+Unlabeled seed questions Q
+Number of generations n
+Verification strength v (number of repeated judge calls per verification stage)
+Ensure: Refined model pθ′
+1: Initialize self-curated dataset Dsft ← ∅
+2: for each seed question q ∈ Q do
+3:
+Generate candidate solutions {y1 , . . . , yn } ∼ pθ (· | q)
+4:
+for each candidate solution yi do
+5:
+Evaluate self-verifier Vθ,cycle (q, yi ) for v repeated judge calls
+6:
+Evaluate self-verifier Vθ,fact (q, yi ) for v repeated judge calls
+7:
+Evaluate self-verifier Vθ,corr (q, yi ) for v repeated judge calls
+8:
+if yi passes all three verifier stages in all repeated judge calls then
+9:
+Add (q, yi ) to Dsft
+10:
+end if
+11:
+end for
+12: end for
+13: Train pθ on Dsft with supervised fine-tuning: θ ′ ← SFT(θ, Dsft )
+14: return pθ′
+
+During generation, for each unlabeled seed question q, the initial model pθ samples n candidate
+solutions {y1 , . . . , yn }. These candidates are not assumed to be correct. They are treated as proposals
+that must undergo self-verification before being added to the training set. For verification, we are
+inspired by Unsolved Questions (UQ), a benchmark of challenging questions curated to lack known
+ground-truth answers, which uses automatic, oracle-free validators to pre-screen candidate answers
+for human review [Nie et al., 2025]. Because such questions lack ground-truth answers, UQ cannot
+rely on standard answer matching for evaluation. Instead, it studies compound validation strategies
+that combine prompt-based checks, including cycle consistency, fact and logic checking, correctness
+checking, repeated or iterated judgments, and unanimous voting. We adapt this UQ-style verification
+from benchmark construction to post-training data construction: rather than using validators to
+decide whether an answer should enter an evaluation benchmark, we use them to decide whether a
+model-generated solution should be added to the supervised training dataset. Each candidate solution
+is checked by a cascade of cycle-consistency, factuality, and correctness verifiers, and is accepted
+only if it passes all stages. Full verifier prompts are provided in Appendix B.
+We use two data-construction parameters: n, the number of candidate solutions sampled per seed
+question, and v, the number of repeated judge calls per verification stage. Increasing n gives the
+model more opportunities to produce a useful solution for each seed question. Increasing v makes
+verification more conservative, since a candidate solution must pass every repeated judge call at
+every stage. Therefore, during data construction, n controls exploration over candidate solutions,
+while v controls verification stringency. Algorithm 1 summarizes the full Self-Verified Distillation
+pipeline.
+
+4
+
+Experiments
+
+Our experiments are organized to isolate the main design choices in the self-training synthetic data
+pipeline before evaluating whether the resulting recipe transfers across model scales. We first study
+two core uses of data-construction compute: n, the number of candidate generations sampled per
+seed question, and v, the verification strength used to filter those generations. We then ablate the
+type of verifier and compare selection policies for converting accepted candidates into training data.
+Finally, we evaluate the resulting recipe across Qwen3 models of different sizes and compare using
+verification for training data construction against using the same verifier only at test time.
+5
+
+4.1
+
+Setup
+
+We use a shared setup across experiments, varying only the data-construction component under
+study. Starting from a set of unlabeled seed questions, we generate candidate solutions with fixed
+inference hyperparameters, filter outputs, train with a fixed SFT recipe, and evaluate on validation
+and held-out test benchmarks across math, science, and coding. This setup allows differences across
+ablations to primarily reflect changes in the self-curated training data rather than changes in prompting,
+optimization, or evaluation.
+Seed questions We initialize our starting question set from OpenThoughts [Guha et al., 2025]: the
+math subset (53,125 examples), and expanded subsets for science (26,041 examples) and code (9,168
+examples). We use only the questions from OpenThoughts and disregard the provided reasoning
+traces and answers to remain consistent with settings where the objective is to improve reasoning
+without ground-truth solutions. Additional details and representative seed questions are provided in
+Appendix C.1.1.
+Inference We use the same inference hyperparameters for both generation and verification: temperature of 0.8, top-p of 0.95, and a maximum output length of 32,768 tokens, the recommended output
+length for Qwen3 models. During data generation, we immediately filter out malformed generations
+(e.g., incomplete reasoning traces or missing final answers).
+Training We use a fixed training recipe across ablations so that differences between runs primarily reflect differences in the generated training data rather than optimization choices. Training
+hyperparameters and compute details are provided in Appendix C.1.2.
+Evaluation We evaluate across math, science, and coding benchmarks. We report pass@1, averaged
+across random seeds for benchmarks evaluated with multiple seeds. For math, we use AIME24
+(x10 random seeds), AIME25 (x10), MATH500, and OlympiadBench (English-only math subset)
+for validation, and AIME26 (x10) and HMMT 02/25 (x10) for test. For science, we use JEEBench
+(x3) and OlympiadBench (English-only physics subset) for validation, and GPQA Diamond (x3) and
+HLE (x3) for test. For coding, we use LiveCodeBench v2 (5/2023–5/2024, x6) for validation, and
+LiveCodeBench v5 Official (8/2024–1/2025, x6) and LiveCodeBench v6 Official (1/2025–4/2025,
+x6) for test. We select checkpoints based on validation performance and report final results on the
+held-out test benchmarks. Additional evaluation details are provided in Appendix C.1.3.
+4.2
+
+Number of Generations and Verification Strength
+
+Self-verified distillation benefits from both broader generation and stronger verification. We
+study how Self-Verified Distillation depends on the two main data-construction choices: the number
+of candidate generations n and the verification strength v. This experiment tests whether greater
+self-improvement comes from broader exploration, more selective filtering, or both. Increasing
+n gives the model more opportunities to produce a useful solution for each seed question, while
+increasing v makes the verifier more conservative by requiring repeated judge calls to agree at each
+verification stage. We conduct controlled ablations of Self-Verified Distillation across three domains
+(math, science, and coding) using the same post-trained Qwen3-4B model [Team, 2025].
+Figure 3 shows that increasing compute for generation and verification during data construction
+generally improves downstream performance, but the allocation of compute between generation and
+verification matters. In math, the largest generation and verification setting, n = 8 and v = 5, gives
+the best held-out results on both AIME26 and HMMT, improving over the initial model by +10.0
+and +6.7 points, respectively. This suggests that, for this seed-question distribution and evaluation
+setup, combining more candidate generations with stronger verification produces the best self-curated
+training data. However, this trend is not simply monotonic in verification strength alone: when n
+is small, increasing v can make the filter too conservative and leave too few accepted solutions for
+training. Strong verification is most useful when paired with enough candidate generations, since a
+larger candidate pool can better absorb the lower acceptance rate.
+Code provides the clearest evidence that filtering is necessary. Training on unfiltered generations
+performs worse than the initial model on both LCBv5 and LCBv6, while verified data improves
+performance. This shows that simply training on unfiltered generations can hurt performance,
+6
+
+Figure 3: Effect of generation count and verification strength for Qwen3-4B. We vary the number
+of candidate generations n ∈ {1, 4, 8} and the verification strength v ∈ {N O F ILTER, 1, 3, 5} across
+math, science, and coding held-out test benchmarks. Here, v = N O F ILTER denotes training on
+unfiltered generations, and the dashed horizontal line shows the initial Qwen3-4B model. Using more
+generation and verification during data construction generally improves performance.
+while filtering those generations with self-verification can turn the same self-generated data into
+a useful training signal. The best code settings improve LCBv5 by +4.2 points and LCBv6 by +6.7
+points. Science shows the same general trend, but with more variation across benchmarks: n = 8,
+v = 5 gives the best GPQA Diamond result, improving by +9.6 points, while HLE performs best with
+n = 4, v = 3, improving by +6.2 points. Overall, these results show that simply generating more
+data is not sufficient and that the generated data must also be filtered carefully. They also highlight an
+interaction between exploration and verification: stronger filtering can improve quality, but only if
+enough generations are sampled to preserve sufficient training coverage. This motivates studying
+how n and v jointly shape the quality and coverage of the self-curated training data.
+4.3
+
+Type of Verification
+
+The structure of verification matters, not just the verification strength. The previous experiment
+varies verification strength, but not the structure of the verifier itself. We next ask whether stronger
+results come only from more stringent verification, or whether the form of verification also matters.
+This distinction is important because a simple correctness prompt is easier to implement in practice,
+while the UQ-style verifier decomposes verification into multiple checks that probe different failure
+modes.
+We use the same setting as the Qwen3-4B math ablation above: for each seed question, we sample
+n = 8 candidate solutions, apply verification with strength v = 5, and then train on the accepted
+solutions. The only difference between the two variants is the verification filter. The simple verifier
+directly asks whether each generated solution is correct or incorrect. The UQ-style verifier instead
+uses the full multi-stage cascade of cycle-consistency, factuality, and correctness checks. The full
+prompt for the simple verifier is provided in Appendix C.3.
+As shown in Table 1, the UQ-style multi-stage Table 1: Effect of verification type on held-out
+verifier substantially outperforms the simple ver- math benchmarks. Mean ∆ is the average imifier under the same generation count, verification provement over the initial model.
+strength, and training setup. The simple verifier al- Verification
+AIME26
+HMMT
+Mean ∆
+ready improves over the initial model, suggesting
+64.7 (+5.4)
+43.7 (+4.4)
++4.9
+that even direct prompt-based filtering is useful. Simple
+Full UQ
+69.3 (+10.0) 46.0 (+6.7)
++8.4
+However, replacing it with the UQ-style verifier
+7
+
+Table 2: Effect of model scale. We apply Self-Verified Distillation with n = 8 candidate generations and verification strength v = 5 to Qwen3 models of different sizes and report held-out test
+performance across math, science, and coding. Values in parentheses show absolute improvement
+over the corresponding initial model. Mean ∆ is the average improvement across the two held-out
+benchmarks in each domain.
+Models
+
+Math
+
+Science
+
+Code
+
+AIME26
+
+HMMT
+
+Mean ∆
+
+GPQA Diamond
+
+HLE
+
+Mean ∆
+
+LCBv5
+
+LCBv6
+
+Mean ∆
+
+Qwen3-0.6B
+SV Distillation
+
+9.7
+12.7 (+3.0)
+
+6.7
+10.0 (+3.3)
+
+–
++3.2
+
+16.7
+26.4 (+9.7)
+
+12.3
+11.4 (-0.9)
+
+–
++4.4
+
+9.0
+11.3 (+2.3)
+
+10.1
+11.9 (+1.8)
+
+–
++2.1
+
+Qwen3-4B
+SV Distillation
+
+59.3
+69.3 (+10.0)
+
+39.3
+46.0 (+6.7)
+
+–
++8.4
+
+50.8
+60.4 (+9.6)
+
+8.5
+10.0 (+1.5)
+
+–
++5.6
+
+45.1
+49.0 (+3.9)
+
+37.5
+41.9 (+4.4)
+
+–
++4.2
+
+Qwen3-8B
+SV Distillation
+
+62.0
+64.7 (+2.7)
+
+42.3
+48.7 (+6.4)
+
+–
++4.6
+
+61.1
+63.1 (+2.0)
+
+8.7
+12.0 (+3.3)
+
+–
++2.7
+
+38.6
+42.8 (+4.2)
+
+32.4
+38.2 (+5.8)
+
+–
++5.0
+
+increases the mean held-out improvement from +4.9 to +8.4 points. This indicates that decomposing
+verification into cycle-consistency, factuality, and correctness checks produces self-curated data that
+leads to stronger reasoning models compared to using the simple verifier.
+4.4
+
+Effect of Model Scale
+
+Self-Verified Distillation improves performance across Qwen3 model scales. We next evaluate
+whether the same data-construction recipe transfers across model scales. Since Self-Verified Distillation depends on both generation and verification, model capability may affect the quality of the
+self-curated data. We therefore apply the same Self-Verified Distillation recipe, using n = 8 candidate
+generations and verification strength v = 5, across Qwen3-0.6B, Qwen3-4B, and Qwen3-8B, with
+the same held-out test benchmarks across math, science, and coding.
+Table 2 shows that Self-Verified Distillation improves mean held-out performance across all three
+model sizes and all three domains. For Qwen3-0.6B, Self-Verified Distillation improves mean
+performance by +3.2 points in math, +4.4 points in science, and +2.1 points in coding. The gains
+for this weakest model are smaller and less consistent: in particular, performance on HLE decreases
+slightly from 12.3 to 11.4. For Qwen3-4B, the gains are stronger, with mean improvements of +8.4
+points in math, +5.6 points in science, and +4.2 points in coding. For Qwen3-8B, Self-Verified
+Distillation continues to improve performance, with mean gains of +4.6 points in math, +2.7 points
+in science, and +5.0 points in coding.
+These results suggest that Self-Verified Distillation is not limited to a single model scale. At the same
+time, the gains are not monotonic in model size, and the weakest model shows no improvement on
+one benchmark (HLE). One possible explanation is that a fixed seed-question distribution provides
+different amounts of useful learning signal for different initial models: weaker models may struggle
+to generate or verify high-quality solutions, while stronger models may already solve many of the
+easier seed questions. More broadly, these results suggest that the difficulty and diversity of seed
+questions may need to be matched to the capability of the initial model, which we leave to future
+work.
+4.5
+
+Training vs. Test-Time Compute
+
+Self-Verified Distillation is stronger than test-time verification in most settings, while using
+a single inference call at evaluation time. A natural alternative to Self-Verified Distillation is
+to use the same self-verification procedure only at test time. In this setting, the model samples
+multiple candidate solutions for each test problem, applies the UQ-style verifier to those candidates,
+and returns an accepted solution. This directly improves inference, but it is expensive because the
+generation and verification costs are paid for every test example. In contrast, Self-Verified Distillation
+pays this cost upfront during training data construction, trains on the accepted solutions, and then
+evaluates the trained model with a single generation per test example.
+We compare these two ways of using the same verification strength on held-out math benchmarks. For
+test-time compute with UQ verification (UQ-TTC), we use the same n = 8, v = 5 setting as our best
+math SFT recipe, applying the prompts from Appendix B at inference time. This requires sampling
+up to 8 candidate solutions and running repeated verifier calls for each candidate. In our UQ-style
+8
+
+Table 3: Training on verified data versus using UQ verification only at test time. We compare the
+initial Qwen3 models of various sizes, Self-Verified Distillation training with the best math recipe,
+and UQ test-time compute (UQ-TTC) using the same n = 8, v = 5 verification setting. Max
+inference calls denotes the maximum total number of inference calls at evaluation time per test
+problem, including candidate generations and verifier calls. Values in parentheses show absolute
+improvement over the corresponding initial model.
+Model size
+
+Method
+
+Max inference calls
+
+AIME26
+
+HMMT
+
+0.6B
+
+Initial model
+Self-Verified Distillation
+UQ-TTC
+
+1
+1
+168
+
+9.7
+12.7 (+3.0)
+10.7 (+1.0)
+
+6.7
+10.0 (+3.3)
+9.3 (+2.6)
+
+4B
+
+Initial model
+Self-Verified Distillation
+UQ-TTC
+
+1
+1
+168
+
+59.3
+69.3 (+10.0)
+68.0 (+8.7)
+
+39.3
+46.0 (+6.7)
+45.3 (+6.0)
+
+8B
+
+Initial model
+Self-Verified Distillation
+UQ-TTC
+
+1
+1
+168
+
+62.0
+64.7 (+2.7)
+67.7 (+5.7)
+
+42.3
+48.7 (+6.4)
+47.0 (+4.7)
+
+verifier, cycle-consistency requires two inference calls, one to infer the question from the candidate
+solution and one to judge whether the inferred question matches the original question, followed by
+fact/logic and correctness checks. Thus, UQ-TTC can require up to 8 candidate generations plus
+8 × 4 × 5 = 160 verifier calls, for up to 168 total inference calls per test problem. By contrast, after
+Self-Verified Distillation training, evaluation uses only a single model generation per test problem.
+Table 3 shows that both uses of verification improve over the initial models on every held-out
+benchmark. Compared to UQ-TTC, Self-Verified Distillation performs better on five of the six
+individual benchmark comparisons while using only a single inference call at evaluation time. For
+Qwen3-0.6B and Qwen3-4B, Self-Verified Distillation outperforms UQ-TTC on both AIME26 and
+HMMT. For Qwen3-8B, UQ-TTC is stronger on AIME26, while Self-Verified Distillation is stronger
+on HMMT. Overall, these results suggest that training and test-time verification are complementary
+ways to use the same verification procedure. UQ-TTC can give strong per-example gains, but
+Self-Verified Distillation amortizes the data-construction compute into the model, yielding
+pass@1 improvements without requiring multi-sample generation and repeated verification at
+evaluation time.
+
+5
+
+Discussion
+
+In this work, we introduced Self-Verified Distillation, a simple post-training refinement method that
+turns unlabeled seed questions into supervised training data using the model’s own generations and
+prompt-based self-verification. Across math, science, and coding, we find that post-trained Qwen3
+models can further improve without external teachers, tool feedback, or ground-truth solutions. Our
+ablations show that these gains depend on the data-construction pipeline: unfiltered generations can
+hurt performance, stronger verification can improve the quality of the self-curated data, and UQ-style
+multi-stage verification outperforms a simpler correctness prompt under the same verification strength.
+More broadly, our results suggest that generation and verification compute can be useful not only
+at test time, but also during training-data construction: Self-Verified Distillation samples multiple
+candidate solutions, filters them with strong self-verification, and amortizes this compute into the
+model through supervised fine-tuning.
+At the same time, Self-Verified Distillation has important limitations and risks. Self-verification is
+imperfect: even with a conservative multi-stage verifier, the model may accept incorrect solutions,
+reject useful ones, or apply verification unevenly across domains. The method also depends on
+the difficulty and diversity of the seed questions. A fixed seed distribution may provide different
+amounts of useful learning signal for different model scales, suggesting that future work should
+study how to match seed-question difficulty to the capability of the initial model. More broadly,
+training on self-generated data can reinforce systematic mistakes, overfit to the verifier’s preferences,
+or make models more confident in flawed reasoning patterns. Future work should explore alternative
+verification methods, better mitigation strategies, and richer seed-question distributions.
+9
+
+Acknowledgments
+We thank Moo Jin Kim, Kaiyue Wen, Ken Liu, Rohith Kuditipudi, and Suhas Kotha for helpful
+discussions related to this work. This work is part of the Marin Project, and the compute was
+supported by the Google TPU Research Cloud (TRC) program. This research was supported by
+Schmidt Sciences.
+
+References
+Marah Abdin, Sahaj Agarwal, Ahmed Awadallah, Vidhisha Balachandran, Harkirat Behl, Lingjiao
+Chen, Gustavo de Rosa, Suriya Gunasekar, Mojan Javaheripi, Neel Joshi, Piero Kauffmann, Yash
+Lara, Caio César Teodoro Mendes, Arindam Mitra, Besmira Nushi, Dimitris Papailiopoulos,
+Olli Saarikivi, Shital Shah, Vaishnavi Shrivastava, Vibhav Vineet, Yue Wu, Safoora Yousefi, and
+Guoqing Zheng. Phi-4-reasoning technical report, 2025. URL https://arxiv.org/abs/2504.
+21318.
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos, Matthieu Geist,
+and Olivier Bachem. On-policy distillation of language models: Learning from self-generated
+mistakes, 2024. URL https://arxiv.org/abs/2306.13649.
+Daman Arora, Himanshu Gaurav Singh, and Mausam. Have llms advanced enough? a challenging
+problem solving benchmark for large language models, 2023. URL https://arxiv.org/abs/
+2305.15074.
+Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones,
+Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, Carol Chen, Catherine Olsson,
+Christopher Olah, Danny Hernandez, Dawn Drain, Deep Ganguli, Dustin Li, Eli Tran-Johnson,
+Ethan Perez, Jamie Kerr, Jared Mueller, Jeffrey Ladish, Joshua Landau, Kamal Ndousse, Kamile
+Lukosuite, Liane Lovitt, Michael Sellitto, Nelson Elhage, Nicholas Schiefer, Noemi Mercado,
+Nova DasSarma, Robert Lasenby, Robin Larson, Sam Ringer, Scott Johnston, Shauna Kravec,
+Sheer El Showk, Stanislav Fort, Tamera Lanham, Timothy Telleen-Lawton, Tom Conerly, Tom
+Henighan, Tristan Hume, Samuel R. Bowman, Zac Hatfield-Dodds, Ben Mann, Dario Amodei,
+Nicholas Joseph, Sam McCandlish, Tom Brown, and Jared Kaplan. Constitutional ai: Harmlessness
+from ai feedback, 2022. URL https://arxiv.org/abs/2212.08073.
+Bradley Brown, Jordan Juravsky, Ryan Ehrlich, Ronald Clark, Quoc V. Le, Christopher Ré, and
+Azalia Mirhoseini. Large language monkeys: Scaling inference compute with repeated sampling,
+2024. URL https://arxiv.org/abs/2407.21787.
+Center for AI Safety, Scale AI, and HLE Contributors Consortium. A benchmark of expert-level
+academic questions to assess AI capabilities. Nature, 649:1139–1146, 2026. doi: 10.1038/
+s41586-025-09962-4. URL https://arxiv.org/abs/2501.14249.
+Xingyu Chen, Jiahao Xu, Tian Liang, Zhiwei He, Jianhui Pang, Dian Yu, Linfeng Song, Qiuzhi
+Liu, Mengfei Zhou, Zhuosheng Zhang, Rui Wang, Zhaopeng Tu, Haitao Mi, and Dong Yu.
+Do not think that much for 2+3=? on the overthinking of o1-like llms, 2025a. URL https:
+//arxiv.org/abs/2412.21187.
+Yixing Chen, Yiding Wang, Siqi Zhu, Haofei Yu, Tao Feng, Muhan Zhang, Mostofa Patwary,
+and Jiaxuan You. Multi-agent evolve: Llm self-improve through co-evolution, 2025b. URL
+https://arxiv.org/abs/2510.23595.
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser,
+Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John
+Schulman. Training verifiers to solve math word problems, 2021. URL https://arxiv.org/
+abs/2110.14168.
+Quy-Anh Dang and Chris Ngo. Reinforcement learning for reasoning in small llms: What works and
+what doesn’t, 2026. URL https://arxiv.org/abs/2503.16219.
+Hanze Dong, Wei Xiong, Deepanshu Goyal, Yihan Zhang, Winnie Chow, Rui Pan, Shizhe Diao,
+Jipeng Zhang, Kashun Shum, and Tong Zhang. Raft: Reward ranked finetuning for generative
+foundation model alignment, 2023. URL https://arxiv.org/abs/2304.06767.
+10
+
+Xinyu Guan, Li Lyna Zhang, Yifei Liu, Ning Shang, Youran Sun, Yi Zhu, Fan Yang, and Mao Yang.
+rstar-math: Small llms can master math reasoning with self-evolved deep thinking, 2025. URL
+https://arxiv.org/abs/2501.04519.
+Etash Guha, Ryan Marten, Sedrick Keh, Negin Raoof, Georgios Smyrnis, Hritik Bansal, Marianna
+Nezhurina, Jean Mercat, Trung Vu, Zayne Sprague, Ashima Suvarna, Benjamin Feuer, Liangyu
+Chen, Zaid Khan, Eric Frankel, Sachin Grover, Caroline Choi, Niklas Muennighoff, Shiye Su,
+Wanjia Zhao, John Yang, Shreyas Pimpalgaonkar, Kartik Sharma, Charlie Cheng-Jie Ji, Yichuan
+Deng, Sarah Pratt, Vivek Ramanujan, Jon Saad-Falcon, Jeffrey Li, Achal Dave, Alon Albalak,
+Kushal Arora, Blake Wulfe, Chinmay Hegde, Greg Durrett, Sewoong Oh, Mohit Bansal, Saadia
+Gabriel, Aditya Grover, Kai-Wei Chang, Vaishaal Shankar, Aaron Gokaslan, Mike A. Merrill,
+Tatsunori Hashimoto, Yejin Choi, Jenia Jitsev, Reinhard Heckel, Maheswaran Sathiamoorthy,
+Alexandros G. Dimakis, and Ludwig Schmidt. Openthoughts: Data recipes for reasoning models,
+2025. URL https://arxiv.org/abs/2506.04178.
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu
+Zhang, Shirong Ma, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou,
+Zhihong Shao, Zhuoshu Li, Ziyi Gao, Aixin Liu, Bing Xue, Bingxuan Wang, Bochao Wu, Bei
+Feng, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chong Ruan, Damai Dai, Deli Chen, Dongjie
+Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li,
+H. Zhang, Hanwei Xu, Honghui Ding, Huazuo Gao, Hui Qu, Hui Li, Jianzhong Guo, Jiashi Li,
+Jingchang Chen, Jingyang Yuan, Jinhao Tu, Junjie Qiu, Junlong Li, J. L. Cai, Jiaqi Ni, Jian Liang,
+Jin Chen, Kai Dong, Kai Hu, Kaichao You, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean
+Wang, Lecong Zhang, Liang Zhao, Litong Wang, Liyue Zhang, Lei Xu, Leyi Xia, Mingchuan
+Zhang, Minghua Zhang, Minghui Tang, Mingxu Zhou, Meng Li, Miaojun Wang, Mingming
+Li, Ning Tian, Panpan Huang, Peng Zhang, Qiancheng Wang, Qinyu Chen, Qiushi Du, Ruiqi
+Ge, Ruisong Zhang, Ruizhe Pan, Runji Wang, R. J. Chen, R. L. Jin, Ruyi Chen, Shanghao Lu,
+Shangyan Zhou, Shanhuang Chen, Shengfeng Ye, Shiyu Wang, Shuiping Yu, Shunfeng Zhou,
+Shuting Pan, S. S. Li, Shuang Zhou, Shaoqing Wu, Tao Yun, Tian Pei, Tianyu Sun, T. Wang,
+Wangding Zeng, Wen Liu, Wenfeng Liang, Wenjun Gao, Wenqin Yu, Wentao Zhang, W. L. Xiao,
+Wei An, Xiaodong Liu, Xiaohan Wang, Xiaokang Chen, Xiaotao Nie, Xin Cheng, Xin Liu, Xin
+Xie, Xingchao Liu, Xinyu Yang, Xinyuan Li, Xuecheng Su, Xuheng Lin, X. Q. Li, Xiangyue Jin,
+Xiaojin Shen, Xiaosha Chen, Xiaowen Sun, Xiaoxiang Wang, Xinnan Song, Xinyi Zhou, Xianzu
+Wang, Xinxia Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Yang Zhang, Yanhong Xu, Yao Li, Yao
+Zhao, Yaofeng Sun, Yaohui Wang, Yi Yu, Yichao Zhang, Yifan Shi, Yiliang Xiong, Ying He, Yishi
+Piao, Yisong Wang, Yixuan Tan, Yiyang Ma, Yiyuan Liu, Yongqiang Guo, Yuan Ou, Yuduan
+Wang, Yue Gong, Yuheng Zou, Yujia He, Yunfan Xiong, Yuxiang Luo, Yuxiang You, Yuxuan Liu,
+Yuyang Zhou, Y. X. Zhu, Yanping Huang, Yaohui Li, Yi Zheng, Yuchen Zhu, Yunxian Ma, Ying
+Tang, Yukun Zha, Yuting Yan, Z. Z. Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda Xie,
+Zhengyan Zhang, Zhewen Hao, Zhicheng Ma, Zhigang Yan, Zhiyu Wu, Zihui Gu, Zijia Zhu, Zijun
+Liu, Zilin Li, Ziwei Xie, Ziyang Song, Zizheng Pan, Zhen Huang, Zhipeng Xu, Zhongyu Zhang,
+and Zhen Zhang. Deepseek-r1 incentivizes reasoning in llms through reinforcement learning.
+Nature, 645(8081):633–638, 2025. ISSN 1476-4687. doi: 10.1038/s41586-025-09422-z. URL
+http://dx.doi.org/10.1038/s41586-025-09422-z.
+Harvard-MIT Mathematics Tournament. Archive of February 2025. https://www.hmmt.org/www/
+archive/282, 2025. Accessed: 2026-05-07.
+Michael Hassid, Gabriel Synnaeve, Yossi Adi, and Roy Schwartz. Don’t overthink it. preferring
+shorter thinking chains for improved llm reasoning, 2026. URL https://arxiv.org/abs/2505.
+17813.
+Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu, Zhen Leng Thai, Junhao Shen, Jinyi Hu,
+Xu Han, Yujie Huang, Yuxiang Zhang, Jie Liu, Lei Qi, Zhiyuan Liu, and Maosong Sun. Olympiadbench: A challenging benchmark for promoting agi with olympiad-level bilingual multimodal
+scientific problems, 2024. URL https://arxiv.org/abs/2402.14008.
+Yinghui He, Abhishek Panigrahi, Yong Lin, and Sanjeev Arora. Skill-targeted adaptive training,
+2025. URL https://arxiv.org/abs/2510.10023.
+11
+
+Yinghui He, Simran Kaur, Adithya Bhaskar, Yongjin Yang, Jiarui Liu, Narutatsu Ri, Liam Fowl,
+Abhishek Panigrahi, Danqi Chen, and Sanjeev Arora. Self-distillation zero: Self-revision turns
+binary rewards into dense supervision, 2026. URL https://arxiv.org/abs/2604.12002.
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song,
+and Jacob Steinhardt. Measuring mathematical problem solving with the math dataset, 2021. URL
+https://arxiv.org/abs/2103.03874.
+Jiaxin Huang, Shixiang Shane Gu, Le Hou, Yuexin Wu, Xuezhi Wang, Hongkun Yu, and Jiawei Han.
+Large language models can self-improve, 2022. URL https://arxiv.org/abs/2210.11610.
+Hyeonbin Hwang, Doyoung Kim, Seungone Kim, Seonghyeon Ye, and Minjoon Seo. Self-explore:
+Enhancing mathematical reasoning in language models with fine-grained rewards, 2024. URL
+https://arxiv.org/abs/2404.10346.
+Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia Yan, Tianjun Zhang, Sida Wang, Armando
+Solar-Lezama, Koushik Sen, and Ion Stoica. Livecodebench: Holistic and contamination free
+evaluation of large language models for code, 2024. URL https://arxiv.org/abs/2403.
+07974.
+Yu Kang, Xianghui Sun, Liangyu Chen, and Wei Zou. C3ot: Generating shorter chain-of-thought
+without compromising effectiveness, 2024. URL https://arxiv.org/abs/2412.11664.
+Junsol Kim, Shiyang Lai, Nino Scherrer, Blaise Agüera y Arcas, and James Evans. Reasoning models
+generate societies of thought, 2026. URL https://arxiv.org/abs/2601.10825.
+Xiang Lisa Li, Vaishnavi Shrivastava, Siyan Li, Tatsunori Hashimoto, and Percy Liang. Benchmarking
+and improving generator-validator consistency of language models, 2023. URL https://arxiv.
+org/abs/2310.01846.
+Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan
+Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. arXiv preprint
+arXiv:2305.20050, 2023.
+Zhenghao Liu, Zhuoyang Wu, Xinze Li, Yukun Yan, Shuo Wang, Zulong Chen, Yu Gu, Ge Yu,
+and Maosong Sun. Long-chain reasoning distillation via adaptive prefix alignment, 2026. URL
+https://arxiv.org/abs/2601.10064.
+Ximing Lu, Seungju Han, David Acuna, Hyunwoo Kim, Jaehun Jung, Shrimai Prabhumoye, Niklas
+Muennighoff, Mostofa Patwary, Mohammad Shoeybi, Bryan Catanzaro, and Yejin Choi. Retrosearch: Exploring untaken paths for deeper and efficient reasoning, 2025. URL https://arxiv.
+org/abs/2504.04383.
+Mathematical Association of America. American Invitational Mathematics Examination (AIME).
+https://maa.org/maa-invitational-competitions/, 2026. Accessed: 2026-05-07.
+Fan Nie, Ken Ziyu Liu, Zihao Wang, Rui Sun, Wei Liu, Weijia Shi, Huaxiu Yao, Linjun Zhang,
+Andrew Y. Ng, James Zou, Sanmi Koyejo, Yejin Choi, Percy Liang, and Niklas Muennighoff. Uq:
+Assessing language models on unsolved questions, 2025. URL https://arxiv.org/abs/2508.
+17580.
+Daniele Paliotta, Junxiong Wang, Matteo Pagliardini, Kevin Y. Li, Aviv Bick, J. Zico Kolter, Albert
+Gu, François Fleuret, and Tri Dao. Thinking slow, fast: Scaling inference compute with distilled
+reasoners, 2025. URL https://arxiv.org/abs/2502.20339.
+Yuxiao Qu, Amrith Setlur, Virginia Smith, Ruslan Salakhutdinov, and Aviral Kumar. Pope: Learning
+to reason on hard problems via privileged on-policy exploration, 2026. URL https://arxiv.
+org/abs/2601.18779.
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani,
+Julian Michael, and Samuel R. Bowman. Gpqa: A graduate-level google-proof q&a benchmark,
+2023. URL https://arxiv.org/abs/2311.12022.
+12
+
+Yangjun Ruan, Neil Band, Chris J. Maddison, and Tatsunori Hashimoto. Reasoning to learn from
+latent thoughts, 2025. URL https://arxiv.org/abs/2503.18866.
+Jon Saad-Falcon, E. Kelly Buchanan, Mayee F. Chen, Tzu-Heng Huang, Brendan McLaughlin,
+Tanvir Bhathal, Shang Zhu, Ben Athiwaratkun, Frederic Sala, Scott Linderman, Azalia Mirhoseini,
+and Christopher Ré. Shrinking the generation-verification gap with weak verifiers, 2025a. URL
+https://arxiv.org/abs/2506.18203.
+Jon Saad-Falcon, Adrian Gamarra Lafuente, Shlok Natarajan, Nahum Maru, Hristo Todorov, Etash
+Guha, E. Kelly Buchanan, Mayee Chen, Neel Guha, Christopher Ré, and Azalia Mirhoseini.
+Archon: An architecture search framework for inference-time techniques, 2025b. URL https:
+//arxiv.org/abs/2409.15254.
+Idan Shenfeld, Mehul Damani, Jonas Hübotter, and Pulkit Agrawal. Self-distillation enables continual
+learning, 2026. URL https://arxiv.org/abs/2601.19897.
+Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar. Scaling llm test-time compute optimally
+can be more effective than scaling model parameters, 2024. URL https://arxiv.org/abs/
+2408.03314.
+Qwen Team. Qwen3 technical report, 2025. URL https://arxiv.org/abs/2505.09388.
+Siddarth Venkatraman, Vineet Jain, Sarthak Mittal, Vedant Shah, Johan Obando-Ceron, Yoshua
+Bengio, Brian R. Bartoldson, Bhavya Kailkhura, Guillaume Lajoie, Glen Berseth, Nikolay Malkin,
+and Moksh Jain. Recursive self-aggregation unlocks deep thinking in large language models, 2026.
+URL https://arxiv.org/abs/2509.26626.
+Peiyi Wang, Lei Li, Zhihong Shao, R. X. Xu, Damai Dai, Yifei Li, Deli Chen, Y. Wu, and Zhifang
+Sui. Math-shepherd: Verify and reinforce llms step-by-step without human annotations, 2024.
+URL https://arxiv.org/abs/2312.08935.
+Yizhong Wang, Yeganeh Kordi, Swaroop Mishra, Alisa Liu, Noah A. Smith, Daniel Khashabi, and
+Hannaneh Hajishirzi. Self-instruct: Aligning language models with self-generated instructions,
+2023. URL https://arxiv.org/abs/2212.10560.
+Yue Wang, Qiuzhi Liu, Jiahao Xu, Tian Liang, Xingyu Chen, Zhiwei He, Linfeng Song, Dian Yu,
+Juntao Li, Zhuosheng Zhang, Rui Wang, Zhaopeng Tu, Haitao Mi, and Dong Yu. Thoughts are
+all over the place: On the underthinking of o1-like llms, 2025. URL https://arxiv.org/abs/
+2501.18585.
+Eric Zelikman, Yuhuai Wu, Jesse Mu, and Noah D. Goodman. Star: Bootstrapping reasoning with
+reasoning, 2022. URL https://arxiv.org/abs/2203.14465.
+Eric Zelikman, Georges Harik, Yijia Shao, Varuna Jayasiri, Nick Haber, and Noah D. Goodman.
+Quiet-star: Language models can teach themselves to think before speaking, 2024. URL https:
+//arxiv.org/abs/2403.09629.
+Dan Zhang, Sining Zhoubian, Ziniu Hu, Yisong Yue, Yuxiao Dong, and Jie Tang. Rest-mcts*: Llm
+self-training via process reward guided tree search, 2024. URL https://arxiv.org/abs/2406.
+03816.
+Ruixiang Zhang, Richard He Bai, Huangjie Zheng, Navdeep Jaitly, Ronan Collobert, and Yizhe
+Zhang. Embarrassingly simple self-distillation improves code generation, 2026. URL https:
+//arxiv.org/abs/2604.01193.
+Xuandong Zhao, Zhewei Kang, Aosong Feng, Sergey Levine, and Dawn Song. Learning to reason
+without external rewards, 2026. URL https://arxiv.org/abs/2505.19590.
+Xinyu Zhu, Yihao Feng, Yanchao Sun, Xianzhi Du, Pingzhi Li, Olli Saarikivi, Yun Zhu, and
+Yu Meng. Chimera: Compact synthetic data for generalizable llm reasoning, 2026. URL https:
+//arxiv.org/abs/2603.00889.
+Yufan Zhuang, Chandan Singh, Liyuan Liu, Yelong Shen, Dinghuai Zhang, Jingbo Shang, Jianfeng
+Gao, and Weizhu Chen. Test-time recursive thinking: Self-improvement without external feedback,
+2026. URL https://arxiv.org/abs/2602.03094.
+13
+
+A
+
+Additional Related Work
+
+Synthetic reasoning data for training. Recent reasoning models are often improved through
+synthetic data, teacher-generated reasoning traces, rejection sampling, reinforcement learning, data
+filtering, and carefully tuned post-training recipes. DeepSeek-R1 demonstrates that reinforcement
+learning can incentivize reasoning behavior in large language models [Guo et al., 2025], while Qwen3
+uses large-scale pretraining and synthetic math and code data as part of its reasoning-oriented training
+pipeline [Team, 2025]. OpenThoughts studies data recipes for reasoning models, including sourcequestion selection, teacher answer generation, filtering, and evaluation across math, science, and
+code [Guha et al., 2025]. Phi-4-reasoning trains on large-scale prompts with teacher-generated long
+reasoning traces and then applies a further reinforcement-learning stage for the “plus” model [Abdin
+et al., 2025]. CHIMERA constructs a compact synthetic reasoning dataset using state-of-the-art
+models for problem generation, verification, and solution synthesis before post-training a Qwen3
+model [Zhu et al., 2026]. These approaches show the importance of high-quality synthetic reasoning
+data, but they often rely on stronger teacher models, generated answers with known correctness,
+external verifiers, or model-specific data construction pipelines.
+Other work studies how to target or reshape reasoning supervision. Skill-targeted adaptive training
+generates synthetic data for missing skills [He et al., 2025], long-chain reasoning distillation studies
+adaptive alignment for transferring long reasoning behavior [Liu et al., 2026], and recent work
+examines when reinforcement learning helps reasoning in smaller LLMs [Dang and Ngo, 2026].
+Related methods improve small models with self-evolved reasoning [Guan et al., 2025]. There is also
+work on making reasoning supervision more efficient by training on compressed chain-of-thought
+traces [Kang et al., 2024] or by augmenting data with inferred latent thoughts [Ruan et al., 2025].
+Our setting is more constrained: we start only from unlabeled seed questions, discard any provided
+answers or reasoning traces, and ask whether the same post-trained model can generate, verify, and
+learn from its own candidate solutions without external teachers, tool feedback, or ground-truth
+solutions.
+
+B
+
+Self-Verification
+
+We use a multi-stage self-verification pipeline inspired by the validation procedure in Unsolved
+Questions (UQ) [Nie et al., 2025]. UQ studies hard unsolved questions, where ground-truth answers
+are unavailable, and therefore uses automatic, oracle-free validators to screen candidate answers.
+We adapt this idea from benchmark construction to post-training data construction: instead of using
+validators to decide whether a candidate answer should enter an evaluation benchmark, we use them
+to decide whether a model-generated solution should enter the supervised fine-tuning dataset.
+Our verifier has three stages. First, cycle consistency checks whether the generated solution appears
+to answer the original question by inferring the question from the answer and comparing it to the
+seed question. Second, factual error checking screens for factual, arithmetic, or logical errors in the
+response. Third, total correctness checks whether the answer is complete and solves the original
+question. For verification strength v, each stage is repeated v times, and a candidate solution is
+accepted only if it passes every stage in all repeated judge calls.
+B.1
+
+Cycle Consistency
+
+Cycle consistency consists of two prompts. The first prompt infers the question that the answer
+appears to address. The second prompt compares the inferred question to the original seed question.
+Question generation prompt.
+Given an answer, please generate the most likely question that would have prompted
+this answer. Focus on inferring the core question that this answer is addressing.
+Output only the inferred question, without any additional explanation.
+Answer:
+{answer}
+Inferred Question:
+
+14
+
+Question comparison prompt.
+You are evaluating whether an answer is relevant to the original question and
+touches the core of the question by comparing the original question with an
+inferred question derived only from the answer.
+Original Question: {original_question}
+Inferred Question: {inferred_question}
+Compare the two questions and determine:
+1. If the original question and inferred question are asking about the same core
+topic
+2. If the original question and inferred question share the same key elements and
+requirements
+3. If answering one question would effectively address the other question
+After your analysis, provide your decision: [[Y]] if the questions are semantically
+equivalent and address the same core problem, or [[N]] if they are asking about
+different things.
+
+B.2
+
+Factual Error Check
+
+The factual error check screens whether the candidate solution contains factual, arithmetic, or logical
+errors that would make it unsuitable for training.
+Please act as an impartial judge and carefully analyze the following answer for any
+factual errors, logical flaws, or misleading information.
+Question: {question}
+Answer: {answer}
+Consider the credibility of the claims made in the answer and determine if they
+align with established knowledge. Evaluate:
+1. Are there any incorrect facts, dates, numbers, formulas, or claims?
+2. Is there any faulty logic, reasoning, or problem-solving approach?
+3. Are there any misleading, incomplete, or ambiguous explanations?
+4. Does the answer introduce any misconceptions or propagate common errors?
+Minor typos or grammatical errors are acceptable. But be strict about any factual
+error, calculation error, or logical flaw. When unsure, lean toward accepting
+statements unless they contain clear errors.
+After a thorough analysis, provide your decision: [[Y]] if the answer has no
+factual errors or major flaws, or [[N]] if it contains important factual errors or
+logical flaws that would mislead the user.
+
+B.3
+
+Total Correctness
+
+The total correctness check evaluates whether the candidate solution fully solves the seed question.
+This stage is intentionally strict: partial, incomplete, or high-level answers are rejected.
+Please act as an impartial judge and evaluate whether the response is completely
+correct in both process and conclusion.
+Question: {question}
+Answer: {answer}
+Consider correctness, usefulness, completeness and depth in your assessment.
+Consider whether this answer completely solves the question.
+You should rely on your own reasoning to form a reference solution and compare the
+answer to your reasoning.
+
+15
+
+Begin your evaluation by giving a brief summary of your thoughts on the response.
+Focus on whether it is accurate, addresses the question well, and is reasonably
+detailed. Be precise about any errors or gaps you notice.
+Notes:
+1. If the answer is partial, high-level, or just states that this is an open
+problem, you should not accept it.
+2. If the answer lacks details or is not comprehensive, you should not accept it.
+3. If the answer contains any errors, you should not accept it.
+4. You should only accept the answer if it is at least 95% correct and solves the
+question.
+After providing your explanation, decide whether this answer is correct. Think
+twice about whether this answer solves the question.
+Format: Accepted: [[Y]] if you accept the answer or Accepted: [[N]] if you do not
+accept.
+
+C
+
+Experimental Details
+
+C.1
+
+Setup Details
+
+C.1.1
+
+Seed Questions
+
+We use OpenThoughts [Guha et al., 2025] as the source of unlabeled seed questions. OpenThoughts
+studies data recipes for reasoning models across math, science, and coding, and its datasets include
+questions together with model-generated reasoning traces and answers. In our setting, we use only
+the question portion of each example and discard any provided answers or reasoning traces. This
+matches our no-ground-truth setting: the model must generate candidate solutions from the seed
+questions, self-verify those candidates, and train only on the accepted self-generated data.
+Concretely, we use 53,125 math seed questions, 26,041 science seed questions, and 9,168 code seed
+questions from OpenThoughts-derived subsets. The seed questions span a range of formats and
+difficulty levels. Math seeds include competition-style combinatorics, number theory, geometry,
+algebra, and graph problems. Science seeds include chemistry, physics, and conceptual scientific
+reasoning questions, ranging from short multiple-choice items to longer open-ended questions.
+Code seeds include algorithmic programming problems, code-golf-style problems, and input-output
+programming tasks with constraints.
+Table 4 gives representative examples of seed questions from each domain. These examples illustrate
+the diversity of the starting questions; no ground-truth solutions from these examples are used during
+Self-Verified Distillation. The seed questions are used only as prompts for data construction. For
+each seed question q, the initial model samples n candidate solutions, applies the self-verification
+pipeline described in Appendix B, and adds only accepted solutions to the supervised fine-tuning
+dataset. Thus, the final training data is determined by both the seed-question distribution and the
+model’s ability to generate and verify useful solutions.
+
+C.1.2
+
+Training
+
+We train all models with supervised fine-tuning on the self-curated datasets produced by Self-Verified
+Distillation. Table 5 summarizes the training hyperparameters for the final n = 8, v = 5 runs across
+domains and model scales. Batch size denotes the effective batch size, with the micro-batch or
+gradient-accumulation configuration shown in parentheses.
+16
+
+Table 4: Representative unlabeled seed questions used for self-verified distillation. We use only
+the question text from OpenThoughts-derived examples and discard provided answers or reasoning
+traces.
+Domain
+
+Example seed question
+
+Math
+
+Five people, Alex, Bob, Charlie, Dave, and Emily, are randomly seated around a circular
+table. What is the probability that no two people with consecutive names are seated
+next to each other?
+
+Math
+
+Determine the largest positive integer x for which there exists a unique positive integer
+n such that x can be expressed as a sum of n distinct perfect cubes in at least two
+different ways.
+
+Science
+
+Which of the following are correct statements about white phosphorus (P4 )? (a) Each P
+atom has one lone pair of electrons in a molecule of P4 ; (b) it has tetrahedral structure
+with 109◦ 28′ bond angle; (c) there are six P–P linkages in a molecule of P4 ; (d) it
+undergoes disproportionation on reaction with alkalies.
+
+Science
+
+Compound (A), C5 H10 O, forms a phenylhydrazone, gives negative Tollens’ and iodoform tests, and is reduced to pentane. What is the compound?
+
+Code
+
+Given the infinite sequence formed by concatenating 1, 12, 123, 1234, . . ., return the
+digit at index n, where 1 ≤ n ≤ 1018 .
+
+Code
+
+There are n computers in a row, initially off. Phoenix manually turns on computers one
+at a time, while some computers may turn on automatically when both neighbors are on.
+Count the number of possible manual turn-on sequences modulo a prime M .
+
+Table 5: Training hyperparameters.
+Domain
+
+Scale
+
+Steps
+
+LR
+
+Warmup
+
+WD
+
+Clip
+
+Batch
+
+Math
+Math
+Math
+
+0.6B
+4B
+8B
+
+2,000
+4,000
+2,000
+
+3e−5
+2e−5
+5e−6
+
+0.05
+0.03
+0.05
+
+0.01
+0.0
+0.01
+
+1.0
+0.2
+1.0
+
+64 (64)
+64 (64)
+64 (32 × 2 accum.)
+
+Code
+Code
+Code
+
+0.6B
+4B
+8B
+
+2,000
+4,000
+2,000
+
+3e−5
+2e−5
+5e−6
+
+0.05
+0.03
+0.05
+
+0.01
+0.0
+0.01
+
+1.0
+0.2
+1.0
+
+64 (64)
+64 (64)
+64 (32 × 2 accum.)
+
+Science
+Science
+Science
+
+0.6B
+4B
+8B
+
+2,000
+4,000
+2,000
+
+3e−5
+2e−5
+5e−6
+
+0.05
+0.03
+0.05
+
+0.01
+0.0
+0.01
+
+1.0
+0.2
+1.0
+
+64 (64)
+64 (64)
+64 (32 × 2 accum.)
+
+All runs use AdamW with β1 = 0.9 and β2 = 0.999, cosine decay with decay ratio 0.9, minimum
+learning-rate ratio 0.1, maximum sequence length 32,768, RoPE θ = 106 , seed 42, and the Qwen3
+chat template. All experiments were run on Google Cloud preemptible TPU slices; representative
+wall-clock times ranged from roughly 5 hours for Qwen3-0.6B, about 49 hours for Qwen3-4B, and
+roughly 67 hours for Qwen3-8B.
+C.1.3
+
+Evaluation
+
+We evaluate Self-Verified Distillation across math, science, and coding benchmarks. Unless otherwise
+stated, we report pass@1. For benchmarks evaluated with multiple random seeds, we report average
+pass@1 across seeds. We use validation benchmarks for checkpoint selection and report final results
+only on held-out test benchmarks.
+Math. We evaluate mathematical reasoning using both broad competition-math benchmarks and
+recent contest problems.
+• MATH500 is a 500-problem subset of the MATH benchmark [Lightman et al., 2023,
+Hendrycks et al., 2021]. MATH consists of competition-style high-school mathematics
+problems with final answers and step-by-step solutions, spanning topics such as algebra,
+17
+
+geometry, number theory, probability, and precalculus. We use MATH500 as a validation
+benchmark for broad mathematical problem solving.
+• OlympiadBench Math is the English-only math subset of OlympiadBench [He et al., 2024],
+an olympiad-level bilingual multimodal benchmark containing mathematics and physics
+problems from olympiad-style competitions and the Chinese college entrance exam. We use
+it as a validation benchmark for harder olympiad-style mathematical reasoning.
+• AIME24/AIME25/AIME26 are drawn from the American Invitational Mathematics Examination (AIME), a 15-question, 3-hour invitational competition administered by the
+Mathematical Association of America in which answers are integers from 0 to 999 [Mathematical Association of America, 2026]. We use AIME24 and AIME25 for validation and
+AIME26 as a held-out test benchmark, evaluating each with 10 random seeds.
+• HMMT 02/25 is drawn from the Harvard-MIT Mathematics Tournament February 2025
+archive [Harvard-MIT Mathematics Tournament, 2025]. HMMT problems are recent
+competition-math problems spanning areas such as algebra, number theory, combinatorics,
+and geometry. We use HMMT 02/25 as a held-out test benchmark and evaluate with 10
+random seeds.
+Science. We evaluate scientific reasoning using benchmarks that test advanced STEM knowledge,
+multi-step problem solving, and expert-level question answering.
+• JEEBench consists of 515 challenging mathematics, physics, and chemistry problems
+curated from the IIT JEE-Advanced exam [Arora et al., 2023]. These problems require longhorizon reasoning together with pre-engineering domain knowledge, and prior evaluations
+found that even strong models remain far from saturating the benchmark. We use JEEBench
+as a validation benchmark and evaluate with 3 random seeds.
+• OlympiadBench Physics is the English-only physics subset of OlympiadBench [He et al.,
+2024]. We use it as a validation benchmark for difficult physics reasoning.
+• GPQA Diamond is the hardest commonly used subset of GPQA, a graduate-level multiplechoice benchmark written by domain experts in biology, chemistry, and physics [Rein et al.,
+2023]. GPQA is designed to be “Google-proof”: skilled non-experts with web access
+perform poorly, while domain experts do substantially better. We use GPQA Diamond as a
+held-out test benchmark and evaluate with 3 random seeds.
+• HLE refers to Humanity’s Last Exam, an expert-level closed-ended academic benchmark
+with broad subject coverage across mathematics, humanities, and the natural sciences [Center
+for AI Safety et al., 2026]. HLE questions are designed to be precise, verifiable, and resistant
+to simple internet lookup. We use HLE as a held-out test benchmark and evaluate with 3
+random seeds.
+Coding. We evaluate coding ability using temporally separated LiveCodeBench splits [Jain et al.,
+2024]. LiveCodeBench continuously collects programming problems from LeetCode, AtCoder, and
+Codeforces, annotates problems by release date, and supports time-windowed evaluation to reduce
+contamination risk. We use the code-generation setting and report pass@1.
+• LiveCodeBench v2 covers problems released from 5/2023–5/2024 and is used for validation.
+We evaluate with 6 random seeds.
+• LiveCodeBench v5 Official covers problems released from 8/2024–1/2025 and is used as a
+held-out test benchmark. We evaluate with 6 random seeds.
+• LiveCodeBench v6 Official covers problems released from 1/2025–4/2025 and is used as a
+held-out test benchmark. We evaluate with 6 random seeds.
+Checkpoint selection. For each training run, we select checkpoints using validation benchmarks
+from the corresponding domain. Math checkpoints are selected using MATH500, OlympiadBench
+Math, AIME24, and AIME25. Science checkpoints are selected using JEEBench and OlympiadBench
+Physics. Coding checkpoints are selected using LiveCodeBench v2. After checkpoint selection, we
+report final results on the held-out test benchmarks: AIME26 and HMMT 02/25 for math, GPQA
+Diamond and HLE for science, and LiveCodeBench v5/v6 Official for coding.
+18
+
+C.2
+
+Number of Generations and Verification Strength
+
+Tables 6, 7, and 8 report the full ablation results over the number of candidate generations n and
+verification strength v. Here, n controls how many solutions are sampled for each unlabeled seed
+question, while v controls how many repeated judge calls are used per verification stage. For each
+setting, we construct a self-curated dataset, train Qwen3-4B with the same SFT recipe, and report
+both validation and held-out test performance.
+Table 6: Math results from training Qwen3-4B on self-curated data constructed with varying generation and verification. ∆ denotes the summed improvement over the initial Qwen3-4B model within
+each split.
+Models
+
+Validation
+
+Test
+
+MATH500
+
+OlympiadBench
+
+AIME24
+
+AIME25
+
+∆
+
+AIME26
+
+HMMT
+
+Qwen3-4B
+
+88.4
+
+61.7
+
+65.7
+
+58.7
+
+–
+
+59.3
+
+39.3
+
+∆
+–
+
+No filter
+n = 1, v = 1
+n = 1, v = 3
+n = 1, v = 5
+n = 4, v = 1
+n = 4, v = 3
+n = 4, v = 5
+n = 8, v = 1
+n = 8, v = 3
+n = 8, v = 5
+
+91.0 (+2.6)
+90.0 (+1.6)
+90.2 (+1.8)
+90.4 (+2.0)
+90.6 (+2.2)
+91.6 (+3.2)
+90.0 (+1.6)
+89.8 (+1.4)
+91.4 (+3.0)
+90.6 (+2.2)
+
+63.8 (+2.1)
+65.0 (+3.3)
+63.2 (+1.5)
+63.1 (+1.4)
+64.2 (+2.5)
+63.8 (+2.1)
+65.0 (+3.3)
+65.6 (+3.9)
+65.6 (+3.9)
+65.1 (+3.4)
+
+74.0 (+8.3)
+73.3 (+7.6)
+68.7 (+3.0)
+72.0 (+6.3)
+73.7 (+8.0)
+73.3 (+7.6)
+72.7 (+7.0)
+76.0 (+10.3)
+73.0 (+7.3)
+73.0 (+7.3)
+
+61.0 (+2.3)
+63.7 (+5.0)
+64.3 (+5.6)
+60.0 (+1.3)
+62.0 (+3.3)
+61.3 (+2.6)
+62.3 (+3.6)
+59.7 (+1.0)
+62.3 (+3.6)
+65.7 (+7.0)
+
++15.3
++17.5
++11.9
++11.0
++16.0
++15.5
++15.5
++16.6
++17.8
++19.9
+
+62.3 (+3.0)
+63.7 (+4.4)
+63.7 (+4.4)
+60.3 (+1.0)
+63.7 (+4.4)
+64.0 (+4.7)
+64.0 (+4.7)
+61.0 (+1.7)
+61.0 (+1.7)
+69.3 (+10.0)
+
+41.0 (+1.7)
+41.3 (+2.0)
+42.0 (+2.7)
+41.3 (+2.0)
+41.3 (+2.0)
+43.3 (+4.0)
+42.0 (+2.7)
+44.7 (+5.4)
+45.7 (+6.4)
+46.0 (+6.7)
+
++4.7
++6.4
++7.1
++3.0
++6.4
++8.7
++7.4
++7.1
++8.1
++16.7
+
+Table 7: Science results from training Qwen3-4B on self-curated data constructed with varying
+generation and verification.
+Models
+
+Validation
+
+Test
+
+JEEBench
+
+OlympiadBench Physics
+
+∆
+
+GPQA Diamond
+
+HLE
+
+∆
+
+Qwen3-4B
+
+66.4
+
+13.3
+
+–
+
+50.8
+
+8.5
+
+–
+
+No filter
+n = 1, v = 1
+n = 1, v = 3
+n = 1, v = 5
+n = 4, v = 1
+n = 4, v = 3
+n = 4, v = 5
+n = 8, v = 1
+n = 8, v = 3
+n = 8, v = 5
+
+70.5 (+4.1)
+70.3 (+3.9)
+69.1 (+2.7)
+69.3 (+2.9)
+73.9 (+7.5)
+70.9 (+4.5)
+71.8 (+5.4)
+70.7 (+4.3)
+72.0 (+5.6)
+70.3 (+3.9)
+
+16.9 (+3.6)
+16.4 (+3.1)
+17.5 (+4.2)
+15.7 (+2.4)
+16.5 (+3.2)
+17.7 (+4.4)
+16.7 (+3.4)
+16.9 (+3.6)
+17.1 (+3.8)
+18.1 (+4.8)
+
++7.7
++7.0
++6.9
++5.3
++10.7
++8.9
++8.8
++7.9
++9.4
++8.7
+
+56.1 (+5.3)
+55.1 (+4.3)
+56.9 (+6.1)
+55.1 (+4.3)
+54.7 (+3.9)
+57.7 (+6.9)
+54.7 (+3.9)
+54.5 (+3.7)
+53.9 (+3.1)
+60.4 (+9.6)
+
+9.7 (+1.2)
+11.6 (+3.1)
+10.0 (+1.5)
+9.4 (+0.9)
+9.2 (+0.7)
+14.7 (+6.2)
+10.3 (+1.8)
+10.1 (+1.6)
+10.9 (+2.4)
+10.0 (+1.5)
+
++6.5
++7.4
++7.6
++5.2
++4.6
++13.1
++5.7
++5.3
++5.5
++11.1
+
+C.3
+
+Alternative Verification
+
+For the ablation comparing different verification strategies in Section 4.3, we replace the UQ-style
+multi-stage verifier with a simpler prompt-based verifier. This verifier directly judges whether a
+generated solution is accurate and correct for the given question, without using the separate cycleconsistency, factuality, and correctness stages used by the full UQ-style verifier. The prompt is as
+follows:
+Please act as an impartial judge and evaluate whether the following answer is
+accurate and correct given the question.
+Question: {question}
+Answer: {answer}
+Provide your decision: [[Y]] if the answer is accurate and correct, or [[N]] if it
+is not.
+
+19
+
+Table 8: Code results from training Qwen3-4B on self-curated data constructed with varying generation and verification.
+Models
+
+Validation
+
+Test
+
+LiveCodeBench
+
+∆
+
+LCBv5
+
+LCBv6
+
+∆
+
+Qwen3-4B
+
+70.6
+
+–
+
+45.1
+
+37.5
+
+–
+
+No filter
+n = 1, v = 1
+n = 1, v = 3
+n = 1, v = 5
+n = 4, v = 1
+n = 4, v = 3
+n = 4, v = 5
+n = 8, v = 1
+n = 8, v = 3
+n = 8, v = 5
+
+68.7 (-1.9)
+71.9 (+1.3)
+73.7 (+3.1)
+72.7 (+2.1)
+68.6 (-2.0)
+72.5 (+1.9)
+71.3 (+0.7)
+71.0 (+0.4)
+72.2 (+1.6)
+76.4 (+5.8)
+
+-1.9
++1.3
++3.1
++2.1
+-2.0
++1.9
++0.7
++0.4
++1.6
++5.8
+
+43.0 (-2.1)
+46.4 (+1.3)
+49.3 (+4.2)
+48.9 (+3.8)
+44.8 (-0.3)
+47.1 (+2.0)
+47.4 (+2.3)
+46.2 (+1.1)
+45.5 (+0.4)
+49.0 (+3.9)
+
+36.4 (-1.1)
+39.4 (+1.9)
+41.4 (+3.9)
+41.6 (+4.1)
+35.2 (-2.3)
+37.5 (+0.0)
+39.7 (+2.2)
+39.2 (+1.7)
+44.2 (+6.7)
+41.9 (+4.4)
+
+-3.2
++3.2
++8.1
++7.9
+-2.6
++2.0
++4.5
++2.8
++7.1
++8.3
+
+Table 9: Selection-policy ablation for Qwen3-4B math using n = 8 generations and verification
+strength v = 5. The default policy keeps a single accepted solution per seed question, whereas the
+all-valid policy trains on all accepted solutions. Val Avg. ∆ is the average improvement over the
+initial model across MATH500, OlympiadBench, AIME24, and AIME25. Test Avg. ∆ is the average
+improvement over the initial model across AIME26 and HMMT.
+Validation
+
+Test
+
+Selection policy
+
+MATH500
+
+OlympiadBench
+
+AIME24
+
+AIME25
+
+Avg. ∆
+
+AIME26
+
+HMMT
+
+Avg. ∆
+
+First valid
+All valid
+
+90.6 (+2.2)
+90.0 (+1.6)
+
+65.1 (+3.4)
+64.1 (+2.4)
+
+73.0 (+7.3)
+71.0 (+5.3)
+
+65.7 (+7.0)
+60.3 (+1.6)
+
++5.0
++2.7
+
+69.3 (+10.0)
+63.3 (+4.0)
+
+46.0 (+6.7)
+45.0 (+5.7)
+
++8.4
++4.9
+
+C.4
+
+Selection Policy
+
+Once verification is applied, a seed question may have zero, one, or multiple accepted candidate
+solutions. We therefore compare selection policies for converting verified candidates into the final
+training set. The default policy keeps the first accepted solution for each seed question, while the
+all-valid policy trains on every accepted solution.
+Table 9 shows that training on all accepted solutions is not always beneficial. Although the all-valid
+policy increases the amount of self-generated training data, it performs worse than the first-valid
+policy on both validation and held-out test benchmarks. This suggests that even verifier-accepted
+solutions are not equally useful: keeping all of them can introduce redundancy, overweight seed
+questions with many accepted candidates, or include lower-quality traces that passed verification. We
+therefore use the first-valid policy as our default selection rule.
+
+20
+
+
