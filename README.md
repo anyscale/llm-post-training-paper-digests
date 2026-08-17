@@ -38,11 +38,11 @@ The [`summaries/_digests/`](summaries/_digests/) subfolder holds the structured 
 - Each paper entry is a **synthesized** summary (prose + compact bullets) of **one lens only**, followed by a one-line **`Key results:`** and a one-line italic **`Evolution:`** note that places the paper in the timeline.
 - Frontier technical reports (DeepSeek-R1/V3/V3.2/V4, Kimi K1.5/K2/K3, Qwen2.5/3/3.5-Omni/3-Coder-Next, GLM-4.5/5/5V, Llama3, Gemma2/3, Phi-4, Seed1.5, …) span all four lenses, so they appear in every topic file where they contribute; method/data/RL papers appear under their primary lens.
 
-## How this version (v4) was generated
+## How these summaries were generated
 
-- **Source:** v4 is built from [`texts/`](texts/) only; the older `summaries/`, `summaries-v2/`, and `summaries-v3/` folders were deliberately **not** used as source material.
-- **Style:** v4 uses **synthesized prose + bullets** in the model's own words (concise, concrete, skimmable); v3 relied on verbatim quoted passages.
-- **Organization:** v4 keeps the **aggregate-by-topic** layout (four lens files, each sorted by year) and adds a dedicated [`summaries/EVOLUTION_OVERVIEW.md`](summaries/EVOLUTION_OVERVIEW.md) that traces older trends → newer methods → rationale, with explicit emphasis on the most-recent (2025–2026) technology evolution.
+- **Source:** built solely from the full-text files in [`texts/`](texts/).
+- **Style:** synthesized prose + bullets in the model's own words (concise, concrete, skimmable).
+- **Organization:** aggregate-by-topic layout (four lens files, each sorted by year) plus a dedicated [`summaries/EVOLUTION_OVERVIEW.md`](summaries/EVOLUTION_OVERVIEW.md) that traces older trends → newer methods → rationale, with explicit emphasis on the most-recent (2025–2026) technology evolution.
 - **Evolution framing:** every entry carries an `Evolution:` line, and the overview ties the eras together (surface alignment 2022–2023 → verifiable reasoning RL 2024–2025 → environment-grounded, self-evolving agents + efficient reasoning 2026).
 
 ## Corpus at a glance

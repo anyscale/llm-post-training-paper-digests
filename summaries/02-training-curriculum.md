@@ -1,6 +1,6 @@
 # 02 — Training Curriculum
 
-*v4 post-training summaries, generated solely from the full-text files in [`../texts/`](../texts/) (the existing `summaries/`, `summaries-v2/`, and `summaries-v3/` folders were **not** used as source material). Papers are sorted by arXiv-ID year (2022→2026), then by corpus order within each year. Each entry synthesizes **one lens only** for that paper; the chronological cross-lens narrative — older trends, how the field evolved, and why the newer methods were proposed — lives in [`EVOLUTION_OVERVIEW.md`](EVOLUTION_OVERVIEW.md).*
+*Post-training summaries, generated solely from the full-text files in [`../texts/`](../texts/). Papers are sorted by arXiv-ID year (2022→2026), then by corpus order within each year. Each entry synthesizes **one lens only** for that paper; the chronological cross-lens narrative — older trends, how the field evolved, and why the newer methods were proposed — lives in [`EVOLUTION_OVERVIEW.md`](EVOLUTION_OVERVIEW.md).*
 
 **Lens:** how training stages are ordered and combined — pretrain→SFT→preference→RL→distillation, multi-stage RL, self-play loops, warmup/anneal schedules, cross-stage data mixing — and the rationale behind each curriculum.
 

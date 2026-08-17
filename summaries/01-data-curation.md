@@ -1,6 +1,6 @@
 # 01 — Data Curation
 
-*v4 post-training summaries, generated solely from the full-text files in [`../texts/`](../texts/) (the existing `summaries/`, `summaries-v2/`, and `summaries-v3/` folders were **not** used as source material). Papers are sorted by arXiv-ID year (2022→2026), then by corpus order within each year. Each entry synthesizes **one lens only** for that paper; the chronological cross-lens narrative — older trends, how the field evolved, and why the newer methods were proposed — lives in [`EVOLUTION_OVERVIEW.md`](EVOLUTION_OVERVIEW.md).*
+*Post-training summaries, generated solely from the full-text files in [`../texts/`](../texts/). Papers are sorted by arXiv-ID year (2022→2026), then by corpus order within each year. Each entry synthesizes **one lens only** for that paper; the chronological cross-lens narrative — older trends, how the field evolved, and why the newer methods were proposed — lives in [`EVOLUTION_OVERVIEW.md`](EVOLUTION_OVERVIEW.md).*
 
 **Lens:** how training/evaluation data is sourced, generated, filtered, de-duplicated, quality-controlled, and scaled — the datasets, their sizes, and selection criteria.
 
