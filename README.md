@@ -15,8 +15,8 @@ Each paper is summarized across four lenses and the results are grouped into fou
 │   ├── 02-training-curriculum.md
 │   ├── 03-post-training-methods.md
 │   ├── 04-evaluation-metrics.md
-│   ├── EVOLUTION_OVERVIEW.md
-│   └── _digests/         # 99 structured per-paper JSON digests (machine-readable supplement)
+│   └── EVOLUTION_OVERVIEW.md
+├── digests/              # 99 structured per-paper JSON digests (machine-readable supplement)
 └── README.md             # you are here
 ```
 
@@ -30,7 +30,7 @@ Each paper is summarized across four lenses and the results are grouped into fou
 | [`summaries/04-evaluation-metrics.md`](summaries/04-evaluation-metrics.md) | **Evaluation & metrics** — benchmarks and metrics (AIME, MATH, HumanEval, SWE-bench, Arena, win rate, pass@k, avg@k, …) and headline results | 99 / 99 |
 | [`summaries/EVOLUTION_OVERVIEW.md`](summaries/EVOLUTION_OVERVIEW.md) | **Chronological evolution narrative** — older trends, how the field evolved, why newer methods were proposed, and the most-recent (2025–2026) technology shift | all 99 |
 
-The [`summaries/_digests/`](summaries/_digests/) subfolder holds the structured per-paper digests (one JSON per paper, with all four lenses, key results, and an evolution note) that back these summaries — kept as a machine-readable supplement.
+The [`digests/`](digests/) folder holds the structured per-paper digests (one JSON per paper, with all four lenses, key results, and an evolution note) that back these summaries — kept as a machine-readable supplement.
 
 ## How to read each topic file
 
