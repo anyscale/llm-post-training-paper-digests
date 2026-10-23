@@ -1,0 +1,2197 @@
+September 30, 2026
+
+On-policy Distillation with Verifiable Reward
+Wenze Lin 1,2 ∗ † , Jiale Zhao 1,3,∗ , Xitai Jiang 1,2,∗ , Songde Rao4 , Yining Li 1,2 , Shenzhi Wang1 ,
+Bingxiang He5 , and Gao Huang1,B
+
+arXiv:2608.24696v4 [cs.LG] 29 Sep 2026
+
+2 Qiuzhen College, Tsinghua University
+1 LeapLab, Tsinghua University
+5
+Peking University
+NLPLab, Tsinghua University
+∗ Equal Contribution
+
+† Project Lead
+
+3 Beihang University
+
+4 SMS,
+
+B Corresponding Author
+
+Reinforcement Learning with Verifiable Rewards (RLVR) and on-policy distillation (OPD)
+have become two widely adopted paradigms for post-training large language models. However,
+RLVR suffers from sparse task-level feedback, while OPD provides dense token-level guidance
+but ignores trajectory correctness, limiting its performance to that of the teacher. Combining
+them is a promising direction: OPD supplies dense supervisory signals, while RLVR provides
+task-level correctness. Nevertheless, existing integrations often rely on weighted combination
+or heuristic switching, introducing extra hyperparameters and trade-offs. We propose Onpolicy Distillation with Verifiable Reward (OPDVR), a simple yet effective method
+that seamlessly combines OPD and RLVR without adding any hyperparameters. We first
+reformulate the implicit reward of sampled-token OPD based on trajectory correctness, then
+apply a ReLU gating mechanism to ensure that correct trajectories receive non-negative rewards
+and incorrect ones receive non-positive rewards—thereby aligning the distillation signal with task
+success while preserving the teacher’s distributional guidance. Furthermore, our modification
+transforms sampled-token OPD into a proper RLVR method, making it readily combinable
+with any policy gradient algorithm, such as GRPO. Experiments on six reasoning benchmarks
+show that OPDVR consistently outperforms standard OPD. Our code is available at https:
+//github.com/LeapLabTHU/OPDVR.
+
+1. Introduction
+Reinforcement Learning with Verifiable Rewards (RLVR) has become a prevalent and effective posttraining paradigm for reasoning tasks (Guo et al., 2025; Shao et al., 2024; Jaech et al., 2024; Trinh et al.,
+2024; Yang et al., 2024). RLVR delivers explicit reward signals based on task outcomes, such as correct
+mathematical final answers or compilable code, which directly align model optimization with core task
+objectives. However, these rewards are typically sparse, providing little supervision for intermediate
+steps and making credit assignment challenging. Recently, On-policy Distillation (OPD) has emerged as
+a promising post-training paradigm (Xu et al., 2026a; Xiao et al., 2026; Yang et al., 2025a; Zeng et al.,
+2026). Unlike RLVR, which relies on sparse outcome-level rewards, OPD leverages a teacher model to
+provide dense token-level guidance. However, OPD’s objective is purely distributional—it drives the
+student to mimic the teacher’s output distribution without considering whether the generated response
+is correct or incorrect, limiting the student’s performance to that of the teacher.
+The complementary limitations of RLVR and OPD make combining them a natural and promising
+direction, where OPD provides fine-grained dense guidance and RLVR offers reliable task-level correctness
+supervision. Existing approaches typically treat OPD and RLVR as two separate methods, either
+Correspond to: linwz25@mails.tsinghua.edu.cn, gaohuang@tsinghua.edu.cn.
+
+On-policy Distillation with Verifiable Reward
+
+combining them explicitly or selectively applying one based on heuristic criteria. Despite their empirical
+effectiveness, such designs often introduce extra hyperparameters and heuristic trade-offs (Cai et al.,
+2026; Yang et al., 2026a; Li et al., 2026a; Wang et al., 2026).
+In this work, we propose On-policy Distillation with Verifiable Reward (OPDVR). We apply
+an extremely simple ReLU gating mechanism to sampled-token OPD, seamlessly combining OPD
+and RLVR without introducing any hyperparameters. We first revisit sampled-token OPD from an
+RLVR perspective and provide a mathematical reformulation of sample-token OPD’s reward. From the
+RLVR view, if we separate by trajectory correctness, sampled-token OPD can be viewed as applying
+token-level supervision by weighting binary task correctness rewards with teacher-student distribution
+discrepancies. Specifically, for sampled tokens that constitute correct reasoning trajectories, the model
+is assigned a token-level reward +1 weighted by log(πT /πθ ); for tokens leading to incorrect trajectories,
+the model receives a reward −1 weighted by log(πθ /πT ). However, we identify a critical limitation of
+this inherent reward design: both log(πT /πθ ) and log(πθ /πT ) are unbounded and can be either positive
+or negative. However, a key empirical principle shared by mainstream RLVR algorithms (Schulman
+et al., 2017; Guo et al., 2025; Shao et al., 2024) is that all tokens leading to a correct final outcome
+should receive non-negative advantages, while tokens leading to an incorrect outcome should receive
+non-positive advantages. This principle ensures that every token in a correct trajectory is treated as a
+valid prediction and reinforced accordingly, while every token in an incorrect trajectory is treated as
+an erroneous prediction and suppressed accordingly. Sampled-token OPD violates this principle: on
+correct trajectories, a negative value of log(πT /πθ ) penalizes valid token behaviors, while on incorrect
+trajectories, a negative value of log(πθ /πT ) encourages erroneous token predictions.
+Motivated by this gap, we use a ReLU gating mechanism to standardize the reward signs according to
+trajectory correctness: it enforces non-negative log(πT /πθ ) values for all verified correct trajectories and
+ensures non-negative log(πθ /πT ) values for all incorrect trajectories. This minimal correction directly
+converts conventional sampled-token OPD into a valid RLVR method while preserving the guidance from
+the teacher model. Specifically, for correct trajectories, larger log(πT /πθ ) values—indicating accurate
+student predictions where the teacher is more confident than the student—yield stronger rewards. For
+incorrect trajectories, larger log(πθ /πT ) values—corresponding to wrong student predictions where the
+student is more confident than the teacher—incur heavier penalties. This learning paradigm aligns
+well with human learning intuition, which reinforces reliable correct behaviors and suppresses
+overconfident erroneous predictions. Furthermore, by reformulating sampled-token OPD into an
+RLVR formulation, our OPDVR supports seamless integration with existing prominent RL algorithms,
+such as GRPO, DAPO and PPO. To instantiate this, we combine OPDVR with GRPO to obtain a
+new variant, which we call Group Relative Policy Distillation (GRPD). Overall, our method
+endows the model with dual supervisory signals: the rigorous task-level verifiable correctness from RLVR
+and the dense token-level distributional guidance from teacher distillation, leading to more robust and
+effective post-training optimization for reasoning tasks. Our experiments show that both OPDVR and
+GRPD consistently outperform OPD across all benchmarks.
+
+2. Related Work
+Reinforcement Learning with Verifiable Rewards (RLVR) Reinforcement Learning with
+Verifiable Rewards (RLVR) has emerged as a highly effective paradigm for post-training large language
+models (Schulman et al., 2017; Jaech et al., 2024; Trinh et al., 2024; Yang et al., 2024; Guo et al., 2025;
+Shao et al., 2024). RLVR leverages rule-based verifiers to provide objective, deterministic signals such
+as answer correctness or code compilation. Various extensions have been proposed to improve RLVR,
+such as controlling length (Liu et al., 2025; Sui et al., 2025; Xiang et al., 2025; Hammoud et al., 2025;
+Hou et al., 2025; Huang et al., 2026) and stabilizing entropy (Petrenko et al., 2026; Yang et al., 2025b;
+Jiang et al., 2025; Su et al., 2025). However, a fundamental limitation persists: the reward is sparse,
+leading to a severe credit assignment problem.
+On-policy Distillation On-policy Distillation (OPD) has recently emerged as an efficient post-training
+paradigm that provides dense, token-level supervisory signals by distilling a teacher model’s output
+2
+
+On-policy Distillation with Verifiable Reward
+OPD
+
+ROPD (ot ) = log
+
+
+
+πT (ot | q, o<t )
+πθ (ot | q, o<t )
+
+
+
+
+
+
+πT (ot | q, o<t )
+
+
+
+ log π (o | q, o ) · (+1),
+θ t
+<t
+=
+
+
+
+πθ (ot | q, o<t )
+
+
+ log
+· (−1),
+πT (ot | q, o<t )
+
+trajectory correct
+
+38
+
+66
+
+30
+
+trajectory incorrect
+
+28
+
+36
+
++ ReLU gate
+
+64
+
+26
+34
+
+OPDVR (Ours)
+
+
+
+
+
+πT (ot | q, o<t )
+
+
+· (+1), trajectory correct
+
+ max 0, log πθ (ot | q, o<t )
+ROPDVR (ot ) =
+
+
+
+
+πθ (ot | q, o<t )
+
+
+· (−1), trajectory incorrect
+ max 0, log
+πT (ot | q, o<t )
+
+24
+
+32
+30
+
+62
+
+22
+OPD
+
+OPDVR(Ours)
+
+AIME24
+
+20
+
+OPD
+
+OPDVR(Ours)
+
+AIME25
+
+60
+
+OPD
+
+OPDVR(Ours)
+
+AMC
+
+Figure 1: Left: Overview of OPDVR. The ReLU gating mechanism ensures correct trajectories receive
+non-negative rewards and incorrect ones receive non-positive rewards, while preserving the teacher’s
+distributional guidance. Right: Results on AIME24, AIME25, and AMC under the same-architecture
+setting (Qwen3-4B ← Qwen3-4B-RL), reported as avg@16 accuracy.
+distribution into the student (Xu et al., 2026a; Xiao et al., 2026; Yang et al., 2025a; Zeng et al., 2026).
+Unlike RLVR’s sparse outcome-based rewards, OPD offers fine-grained guidance at every generation
+step. A growing line of work has explored various aspects of OPD, including its failure modes (Fu et al.,
+2026; Li et al., 2026b), how to determine which tokens are worth training (Xing et al., 2026; Jin et al.,
+2026), and its training stability issues in practice (Oh et al., 2026). However, OPD’s objective is purely
+distributional: it drives the student to mimic the teacher’s output distribution without considering
+whether the generated response is correct or incorrect. This observation naturally raises the question
+of whether OPD can be combined with RLVR, where trajectory correctness provides the ultimate
+optimization signal. Combining the dense supervision of OPD with the task-level verifiability of RLVR
+thus represents a promising and increasingly relevant direction.
+Combining OPD with RLVR Given the complementary strengths of OPD (dense token-level
+guidance) and RLVR (task-level correctness), several recent works have attempted to combine them.
+These include directly weighting the two objectives (Hubotter et al., 2026), applying OPD and RLVR
+separately depending on the sign of the advantage (Wang et al., 2026; Cai et al., 2026), aligning
+outcome rewards with process-level distillation signals (Hou et al., 2026), and leveraging teacher-student
+probability ratios for to weight the advantage in GRPO (Yang et al., 2026a). Despite their empirical
+gains, these approaches often treat OPD and RLVR as distinct objectives or losses that must be
+either explicitly combined or selectively applied based on heuristic criteria, often introducing additional
+hyperparameters for balancing the two terms, or relies on heuristic trade-offs. Instead, our method
+implicitly transforms sampled-token OPD into a proper RLVR method using a simple gated mechanism,
+while preserving the teacher’s distributional guidance—achieving the benefits of both paradigms without
+explicit multi-objective balancing.
+Identifying the Misalignment between Teacher and Verifier Several recent works have identified
+the inconsistency between teacher distillation signals and verifier feedback. Uni-OPD (Hou et al., 2026)
+discards prompts whose teacher sequence-level reward gap between positive and negative trajectories is
+smaller than a safety margin. RG-OPD (Akhondzadeh et al., 2026) directly discards entire trajectories
+where the teacher signal disagrees with the verifier. However, they both operate at the trajectory level,
+discarding potentially valuable tokens in inconsistent trajectories. SG-OPD (Xu et al., 2026b) moves to
+the token level by extrapolating the distillation signal on agreeing tokens and interpolating on conflicting
+ones. Yet, it only applies a scalar coefficient to scale the conflicting signals, without actually eliminating
+their undesirable effects. In contrast, we show that a simple ReLU gate on the sampled token suffices to
+remove conflicting signals, directly transforming sampled-token OPD into a proper RLVR method that
+reinforces reliable correct predictions and suppresses overconfident errors, without introducing any extra
+hyperparameters or heuristics.
+3
+
+On-policy Distillation with Verifiable Reward
+
+3. Preliminaries
+3.1. Reinforcement Learning with Verifiable Rewards (RLVR)
+Reinforcement Learning with Verifiable Rewards (RLVR) optimizes a policy using reward signals that can
+be automatically verified against ground truth. In mathematical reasoning tasks, the reward indicates
+whether the final answer is correct. A common choice for REINFORCE is R = +1 for a correct trajectory
+and R = −1 for an incorrect one, while many other RLVR methods (including GRPO) use R = +1 for
+correct and R = 0 for incorrect.
+Consider a policy πθ that generates a response o = {o1 , . . . , o|o| } given a prompt q. The RLVR objective
+is to maximize the expected reward:
+where R is the trajectory-level reward.
+
+J (θ) = Eo∼πθ (·|q) [R] ,
+
+To optimize this objective via gradient ascent, we compute the gradient:
+∇θ J (θ) = ∇θ Eo∼πθ (·|q) [R] .
+Using the REINFORCE (log-derivative) trick, we rewrite this as:
+
+where log πθ (o | q) =
+
+P|o|
+
+∇θ J (θ) = Eo∼πθ (·|q) [R · ∇θ log πθ (o | q)] ,
+
+t=1 log πθ (ot | q, o<t ).
+
+We sample a single response o ∼ πθ (· | q) to obtain a Monte Carlo estimate:
+∇θ J (θ) ≈ R ·
+
+|o|
+X
+t=1
+
+∇θ log πθ (ot | q, o<t ).
+
+This gradient can be implemented by minimizing the following loss over the sequence:
+LRLVR (θ) = −R ·
+
+|o|
+X
+t=1
+
+log πθ (ot | q, o<t ).
+
+When R = +1, minimizing this loss increases the probability of the entire response (reward). When
+R = −1, it decreases the probability (penalty). This formulation embodies the core RL principle: correct
+actions are rewarded, incorrect ones are penalized.
+The REINFORCE formulation above suffers from high variance, as it relies on a single trajectory-level
+reward. A more stable alternative is Group Relative Policy Optimization (GRPO) (Guo et al., 2025;
+Shao et al., 2024). Specifically, for a group of G responses {o1 , . . . , oG } sampled from the policy, GRPO
+normalizes each response’s reward against the group mean and standard deviation:
+Âi,t =
+
+Ri − mean({Rj }G
+j=1 )
+std({Rj }G
+j=1 )
+
+.
+
+Note that GRPO typically uses R ∈ {0, 1} (1 for correct, 0 for incorrect) rather than {−1, +1}, since
+the group-relative normalization naturally centers the advantages around zero.
+This group-relative advantage reduces variance and serves as a stable, computationally efficient alternative
+to direct binary rewards. For simplicity, we present the on-policy version of GRPO without clipping or
+KL penalty; the loss is:
+G
+
+|oi |
+
+i=1
+
+t=1
+
+1 X 1 X
+LGRPO (θ) = −
+Âi,t log πθ (oi,t | q, oi,<t ).
+G
+|oi |
+4
+
+On-policy Distillation with Verifiable Reward
+
+3.2. On-policy Distillation
+On-policy Distillation (OPD) optimizes a student policy πθ toward a teacher policy πT by minimizing
+their reverse KL divergence:
+
+
+|o|
+X
+min Eo∼πθ (·|q) 
+DKL (πθ (· | q, o<t ) ∥ πT (· | q, o<t )) .
+θ
+
+t=1
+
+The full-vocabulary OPD computes this exact KL at every token position:
+
+
+|o|
+X
+X
+πθ (v | q, o<t ) 
+
+Lfull
+πθ (v | q, o<t ) log
+.
+OPD (θ) = Eo∼πθ (·|q)
+πT (v | q, o<t )
+t=1 v∈V
+
+This loss is directly minimized. In practice, the log-ratio log(πθ /πT ) is treated as a constant reward with
+stop-gradient when computing gradients, which is equivalent to the exact gradient of the reverse KL via
+the log-derivative trick. However, computing the reverse KL over the full vocabulary at every token
+position is computationally expensive, especially for large language models with very large vocabularies.
+A practical compromise is Top-k OPD, which restricts the KL computation to the k tokens with the
+highest student probabilities:
+
+
+|o|
+
+
+X
+(S )
+(S )
+
+Ltop-k
+DKL π̄θ t ∥ π̄T t  ,
+OPD (θ) = Eo∼πθ (·|q)
+t=1
+
+where St is the set of top-k tokens.
+
+The most widely adopted variant is sampled-token OPD. It uses a single Monte Carlo sample
+ot ∼ πθ (· | q, o<t ) to approximate the reverse KL gradient:
+
+
+|o|
+X
+π
+(o
+|
+q,
+o
+)
+<t 
+θ t
+
+.
+Lsample
+log
+OPD (θ) = Eo∼πθ (·|q)
+πT (ot | q, o<t )
+t=1
+
+The log-ratio log(πθ /πT ) is treated as a constant reward with stop-gradient.
+
+4. Method
+4.1. Revisiting Sampled-Token OPD from an RLVR Perspective
+We begin with the sampled-token OPD loss. Recall that sampled-token OPD approximates the reverse
+KL gradient using a single Monte Carlo sample. The loss over the entire response o = {o1 , . . . , o|o| } is
+defined as:
+
+
+|o|
+X
+πθ (ot | q, o<t ) 
+
+Lsample
+log
+.
+OPD (θ) = Eo∼πθ (·|q)
+πT (ot | q, o<t )
+t=1
+
+For a sampled response o ∼ πθ (· | q), the per-token loss is:
+ℓt = log
+
+πθ (ot | q, o<t )
+.
+πT (ot | q, o<t )
+
+The gradient of the sequence-level loss with respect to θ is:
+∇θ Lsample
+OPD (θ) =
+
+|o|
+X
+t=1
+
+log
+
+πθ (ot | q, o<t )
+· ∇θ log πθ (ot | q, o<t ).
+πT (ot | q, o<t )
+5
+
+On-policy Distillation with Verifiable Reward
+
+We now compare this with the standard RLVR gradient. Recall from Section 3 that the RLVR loss for a
+trajectory with reward R is:
+LRLVR (θ) = −R ·
+
+|o|
+X
+
+log πθ (ot | q, o<t ).
+
+∇θ LRLVR (θ) = −R ·
+
+|o|
+X
+
+∇θ log πθ (ot | q, o<t ).
+
+t=1
+
+Its gradient is:
+
+t=1
+
+We observe that the sampled-token OPD gradient shares the same form as the RLVR gradient, where the
+log-ratio term corresponds to the reward coefficient. By matching the coefficients of ∇θ log πθ (ot |q, o<t ),
+we obtain:
+πθ (ot | q, o<t )
+−R = log
+.
+πT (ot | q, o<t )
+this observation allows us to reinterpret the log-ratio term as an implicit token-level reward ROPD (ot )
+πθ (ot | q, o<t )
+πT (ot | q, o<t )
+ROPD (ot ) = − log
+= log
+.
+πT (ot | q, o<t )
+πθ (ot | q, o<t )
+
+However, unlike RLVR, where the reward sign is determined by the verifier outcome, the sign of Ropd is
+solely determined by the teacher-student probability ratio. To analyze their alignment, we consider two
+cases based on trajectory correctness:
+
+πT (ot | q, o<t )
+
+
+log π (o | q, o ) · (+1), trajectory correct,
+<t
+θ t
+ROPD (ot ) =
+
+π
+(o
+|
+q,
+o
+<t )
+
+log θ t
+· (−1), trajectory incorrect.
+πT (ot | q, o<t )
+
+In other words, on correct trajectories, the gradient is weighted by log(πT /πθ ); on incorrect trajectories,
+it is weighted by log(πθ /πT ) with a negative sign.
+The empirical RLVR principle requires that correct trajectories receive positive rewards and incorrect
+trajectories receive negative rewards. However, the sign of log(πT /πθ ) is determined by whether πT > πθ
+or πT < πθ , which is independent of trajectory correctness. This creates two failure cases: correct
+trajectories can receive negative rewards when πT < πθ , and incorrect trajectories can receive positive
+rewards when πT > πθ . Both violate the RL principle.
+4.2. OPDVR: A Simple Gated Mechanism
+We propose On-policy Distillation with Verifiable Reward (OPDVR) to resolve this issue. The solution
+is extremely simple: apply a ReLU gate to enforce RLVR compliance on the sampled token while
+preserving the teacher’s distributional guidance.
+The reward can be written as:
+
+
+πT (ot | q, o<t )
+
+
+max
+0,
+log
+· (+1), trajectory correct,
+
+
+πθ (ot | q, o<t )
+ROPDVR (ot ) =
+
+
+
+πθ (ot | q, o<t )
+
+
+· (−1), trajectory incorrect.
+max 0, log
+πT (ot | q, o<t )
+
+The corresponding loss is:
+
+LOPDVR (θ) = −
+
+|o|
+X
+t=1
+
+ROPDVR (ot ) · log πθ (ot | q, o<t ).
+6
+
+On-policy Distillation with Verifiable Reward
+Student Policy
+Prompt �
+
+Student Policy ��
+
+Student Response
+
+� ∼ �� (⋅ ∣�)
+� = {�1 , …, �|�| }
+
+Teacher Signal
+
+OPDVR Gated Reward Mechanism
+
+Teacher Policy ��
+
+Verifier
+� ∈ {+�, − �}
+
+Distribution Discrepancy
+
+�� (�� ∣�, �<� )
+ℓ� = log
+.
+�� (�� ∣�, �<� )
+� = 1,2, …, |�|
+
+ReLU-gated token reward �OPDVR (�� )
+If � =+ � (correct trajectory)
+�� (�� ∣�, �<� )
+⋅ (+1)
+�� (�� ∣�, �<� )
+
+�OPDVR (�� ) = ��� 0,log
+
+Policy Optimization
+OPDVR Objective
+ℒOPDVR (�) =−
+
+�
+
+�OPDVR (�� )log �� (�� ∣�� )
+
+Compatible RL optimizer
+
+If � =− � (incorrect trajectory)
+�� (�� ∣�, �<� )
+�OPDVR (�� ) = ��� 0,log
+⋅ (−1)
+�� (�� ∣�, �<� )
+
+GRPO, REINFORCE
+
+Upgrade Student ��
+
+Figure 2: Training pipeline of OPDVR.
+This gated mechanism ensures that:
+• Correct trajectories receive non-negative rewards, and incorrect trajectories receive non-positive
+rewards, aligning the reward sign with trajectory correctness.
+• For tokens on correct trajectories, the reward magnitude is larger when the teacher is more confident
+than the student, i.e., log(πT /πθ ) is larger. This encourages the model to reinforce choices that are
+both correct and reliable according to the teacher.
+• For tokens on incorrect trajectories, the penalty magnitude is larger when the student is more
+confident than the teacher, i.e., log(πθ /πT ) is larger. This forces the model to suppress overconfident
+mistakes.
+4.3. Interpreting the ReLU Gating Mechanism as a Conditional Mask
+In this subsection, we interpret the ReLU gating mechanism in OPDVR as a conditional token mask :
+it selectively zeroes out gradient updates on tokens whose learning direction conflicts with the verifier
+signal. Standard sampled-token OPD lacks this mask, so it inevitably updates all tokens based solely on
+the teacher-student confidence ratio, regardless of trajectory correctness.
+To see this, recall the standard OPD gradient for a sampled token a:
+
+
+
+
+πθ
+πT
+−
+log
+gOPD =
+log
+∇θ log πθ (a)
+∇θ log πθ (a)
+πθ +
+πT +
+{z
+}
+{z
+}
+|
+|
+Term A: push up (teacher more confident)
+
+.
+
+(1)
+
+Term B: pull down (student more confident)
+
+The OPDVR gradient instead applies the ReLU gate conditioned on the verifier reward R ∈ {+1, −1}:
+
+Term A,
+R = +1,
+gOPDVR =
+(2)
+−Term B, R = −1.
+
+Thus, compared to standard OPD, OPDVR removes exactly two types of tokens whose updates conflict
+with the verifier:
+• Type I Conflicting Token (Correct Trajectory, πθ > πT ): When the trajectory is correct
+(R = +1), the student has already produced the right answer. If the student is more confident
+than the teacher on a specific token (πθ > πT ), then Term B is activated. Standard OPD applies
+a negative gradient, pulling down this correct token’s probability to match the teacher’s lower
+confidence. This update works against the verifier signal in two ways:
+1. The student’s higher confidence is consistent with the correct outcome.
+2. Reducing the student’s confidence on a correct answer introduces a distributional distortion
+that is not driven by task performance.
+7
+
+On-policy Distillation with Verifiable Reward
+
+• Type II Conflicting Token (Incorrect Trajectory, πT > πθ ): When the trajectory is incorrect
+(R = −1), the student has produced a wrong answer. If the teacher is more confident than the
+student on a specific token (πT > πθ ), then Term A is activated. Standard OPD applies a positive
+gradient, pushing up this incorrect token’s probability to align with the teacher. This update works
+against the verifier signal in two ways:
+1. The teacher’s high confidence does not accompany a correct trajectory here.
+2. Increasing the probability of tokens on an incorrect trajectory reinforces a reasoning pattern
+that the verifier has marked as wrong.
+By masking out these two token types, OPDVR preserves the student’s correct high-confidence predictions
+and withholds the teacher’s guidance on wrong answers. The teacher still controls the magnitude of the
+update via the log-ratio, but the verifier now determines the direction—reinforce or suppress—so that
+the distillation process never works against the task reward. We provide a theoretical analysis of
+OPDVR in Appendix A. Under a soft-value teacher assumption, we show that a single verifier-gated
+mirror update jointly improves task success and preserves teacher matching: task success does not
+decrease for any step size, and teacher KL does not increase for a modest step size. This provides a
+principled justification for why OPDVR can improve task performance without sacrificing distributional
+alignment.
+4.4. Group Relative Policy Distillation (GRPD)
+Having established that OPDVR transforms sampled-token OPD into a proper RLVR method with a
+binary verifier reward, a natural extension is to replace this coarse binary signal with a more nuanced,
+group-relative advantage estimate like GRPO (Guo et al., 2025; Shao et al., 2024).
+Recall from Section 3 that GRPO computes a group-relative advantage Âi,t for each token position t in
+response oi :
+Ri − mean({Rj }G
+j=1 )
+Âi,t =
+,
+std({Rj }G
+j=1 )
+
+where Ri ∈ {0, 1} is the verifier reward for response oi , and G is the group size. The key property of
+Âi,t is that it is positive for responses that are better than the group average, and negative for those
+that are worse—capturing relative performance within the sampled batch.
+We now apply the same ReLU gating logic, but with the binary correctness sign R replaced by the
+group-relative advantage Âi,t . The GRPD reward becomes:
+
+
+
+πT (oi,t | q, oi,<t )
+
+
+max 0, log π (o | q, o ) · (+1), Âi,t > 0,
+i,<t
+θ i,t
+
+
+RGRPD (oi,t ) =
+
+π
+(o
+|
+q,
+o
+i,t
+i,<t )
+θ
+
+max 0, log
+· (−1), Âi,t < 0.
+πT (oi,t | q, oi,<t )
+
+Equivalently, this can be written compactly as:
+
+
+
+πT (oi,t | q, oi,<t )
+RGRPD (oi,t ) = sign(Âi,t ) · ReLU sign(Âi,t ) · log
+πθ (oi,t | q, oi,<t )
+
+
+
+,
+
+where sign(Âi,t ) ensures the direction of the update is governed by the advantage sign.
+The corresponding loss is:
+G
+
+|oi |
+
+i=1
+
+t=1
+
+1 X 1 X
+LGRPD (θ) = −
+RGRPD (oi,t ) · log πθ (oi,t | q, oi,<t ).
+G
+|oi |
+8
+
+On-policy Distillation with Verifiable Reward
+
+Table 1: Results on same-architecture distillation (Qwen3-4B ← Qwen3-4B-RL). All models are evaluated
+with avg@16 accuracy.
+Method
+
+AIME24
+
+AIME25
+
+AMC
+
+MATH500
+
+Minerva
+
+OlympiadBench
+
+Avg.
+
+Student (Qwen3-4B)
+Teacher (Qwen3-4B-RL)
+
+24.0
+36.0
+
+15.8
+29.0
+
+60.8
+65.9
+
+80.9
+87.0
+
+27.6
+35.4
+
+42.9
+49.3
+
+42.0
+50.4
+
+Sampled-Token OPD
+Top-64 OPD
+OPD+GRPO
+RLSD
+ExOPD
+SG-OPD
+OPDVR (Ours)
+
+34.2
+34.6
+33.1
+28.7
+29.8
+31.6
+36.9
+
+26.0
+23.5
+24.2
+20.0
+26.9
+26.2
+28.1
+
+63.1
+62.0
+64.4
+62.1
+62.2
+61.2
+64.8
+
+85.5
+85.0
+85.2
+82.8
+86.6
+84.7
+84.7
+
+31.6
+32.2
+32.9
+31.2
+35.9
+35.2
+33.2
+
+46.5
+46.8
+46.5
+44.0
+46.6
+45.8
+47.0
+
+47.8
+47.4
+47.7
+44.8
+47.9
+47.5
+49.1
+
+Table 2: Results on cross-architecture distillation (Qwen3-1.7B-Base ← Qwen3-4B-Base-RL). All models
+are evaluated with avg@16 accuracy.
+Method
+
+AIME24
+
+AIME25
+
+AMC
+
+MATH500
+
+Minerva
+
+OlympiadBench
+
+Avg.
+
+Student (Qwen3-1.7B-Base)
+Teacher (Qwen3-4B-Base-RL)
+
+4.1
+10.6
+
+1.7
+13.1
+
+23.2
+40.3
+
+48.9
+74.2
+
+8.9
+17.2
+
+17.1
+30.0
+
+17.3
+30.9
+
+Sampled-Token OPD
+Top-64 OPD
+OPD+GRPO
+RLSD
+ExOPD
+SG-OPD
+OPDVR (Ours)
+
+6.5
+8.5
+8.3
+6.6
+7.0
+5.5
+8.5
+
+2.1
+3.3
+1.7
+2.9
+3.3
+2.8
+3.3
+
+24.8
+26.4
+23.2
+28.7
+25.9
+28.2
+30.3
+
+59.1
+60.1
+58.0
+59.3
+60.4
+59.7
+60.8
+
+11.5
+10.7
+10.2
+10.4
+12.3
+10.7
+11.6
+
+21.6
+21.4
+21.8
+21.6
+21.4
+22.3
+22.0
+
+20.9
+21.7
+20.5
+21.6
+21.6
+21.5
+22.8
+
+5. Experiments
+5.1. Main Experimental Settings
+We conduct experiments on both same-architecture and cross-architecture distillation settings to evaluate
+the effectiveness of our method.
+Same-architecture setting. We use Qwen3-4B-nonthinking as the student model and distill it from a
+teacher model of the same architecture, which is obtained by training Qwen3-4B with GRPO on the
+DeepMath dataset (He et al., 2026). Following Yang et al. (2026b), we use the filtered subset of the
+DeepMath dataset consisting of 57k samples with difficulty level ≥ 6.
+
+Cross-architecture setting. We use the DAPO-Math-17k dataset (Yu et al., 2026). The teacher
+model is Qwen3-4B-base, fine-tuned with GRPO for 3 epochs on the same dataset. The student model
+is Qwen3-1.7B-base. The distillation training runs for 3 epochs.
+Baselines. We compare against Sampled-Token OPD, Top-64 OPD, OPD+GRPO (Xiao et al., 2026),
+RLSD (Yang et al., 2026a), ExOPD (Yang et al., 2026b), and SG-OPD (Xu et al., 2026b). Implementation
+details of all baselines are provided in Appendix D.2.
+Benchmarks. We evaluate all models on six reasoning benchmarks: AIME24, AIME25, AMC,
+MATH500, Minerva, and OlympiadBench.
+5.2. Main Results
+Tables 1 and 2 report the main results on six reasoning benchmarks. As shown in both tables, OPDVR
+consistently outperforms all baselines in terms of average accuracy across both distillation settings. In
+the same-architecture setting, OPDVR achieves the highest average score of 49.1, outperforming the
+next best method (ExOPD, 47.9) by 1.2 points, and even surpasses the teacher model on AIME24
+9
+
+On-policy Distillation with Verifiable Reward
+
+Table 3: Results on Group Relative Policy Distillation (Qwen3-4B ← Qwen3-4B-RL). All models are
+evaluated with avg@16 accuracy.
+Method
+
+AIME24
+
+AIME25
+
+AMC
+
+MATH500
+
+Minerva
+
+OlympiadBench
+
+Avg.
+
+Student (Qwen3-4B)
+Teacher (Qwen3-4B-RL)
+
+24.0
+36.0
+
+15.8
+29.0
+
+60.8
+65.9
+
+80.9
+87.0
+
+27.6
+35.4
+
+42.9
+49.3
+
+42.0
+50.4
+
+GRPO
+OPD
+Distilled RL
+GRPD (Ours)
+
+28.3
+32.0
+33.1
+34.8
+
+20.8
+31.7
+28.9
+31.7
+
+62.3
+65.6
+66.6
+67.0
+
+83.9
+85.4
+86.3
+85.6
+
+28.9
+28.9
+30.3
+30.5
+
+44.6
+46.6
+46.8
+47.0
+
+44.8
+48.4
+48.7
+49.4
+
+Table 4: Ablation study on the gating mechanism. We compare OPD, OPDVR, and an inverse-gated
+variant where the ReLU gate is applied in the opposite direction.
+Method
+
+AIME24
+
+AIME25
+
+AMC
+
+MATH500
+
+Minerva
+
+OlympiadBench
+
+Avg.
+
+Student (Qwen3-4B)
+Teacher (Qwen3-4B-RL)
+
+24.0
+36.0
+
+15.8
+29.0
+
+60.8
+65.9
+
+80.9
+87.0
+
+27.6
+35.4
+
+42.9
+49.3
+
+42.0
+50.4
+
+OPD
+OPDVR (Ours)
+Inverse-Gated
+
+34.2
+36.9
+30.3
+
+26.0
+28.1
+21.2
+
+63.1
+64.8
+62.3
+
+85.5
+84.7
+83.6
+
+31.6
+33.2
+27.7
+
+46.5
+47.0
+42.8
+
+47.8
+49.1
+44.6
+
+(36.9 vs. 36.0). In the cross-architecture setting, OPDVR again achieves the best average score of
+22.8, outperforming the strongest baseline (Top-64 OPD, 21.7) by 1.1 points, with notable gains on
+AMC (30.3 vs. 28.7 for RLSD) and OlympiadBench (22.0 vs. 21.8 for OPD+GRPO), highlighting its
+robustness to both architectural differences and diverse baseline designs.
+5.3. Group Relative Policy Distillation
+To further validate the effectiveness of replacing the binary verifier reward with group-relative advantages,
+we instantiate OPDVR with GRPO-style advantage estimation (describe in Section 4.4) and evaluate
+it under the same-architecture setting. The teacher model is the same Qwen3-4B-Nonthinking model
+trained with GRPO on DeepMath. The student model is Qwen3-4B-nonthinking. To more cleanly
+evaluate the effectiveness of replacing binary rewards with group-relative advantages, we conduct this
+experiment on DAPO-Math-17K, distinct from the teacher’s DeepMath training data. The group size is
+set to G = 8. We compare GRPD against GRPO, standard sampled-token OPD and Distilled RL (Wang
+et al., 2026), a method that selectively applies OPD on positive advantages and GRPO on negative
+advantages.
+Table 3 reports the results. GRPD consistently outperforms all baselines across all six benchmarks.
+It achieves notable gains of 6.5 points on AIME24 and 10.9 points on AIME25 over GRPO, and
+surpasses Distilled RL by 1.7 points on AIME24 and 0.7 points on average, demonstrating that a unified
+group-relative advantage formulation yields stronger and more stable improvements than heuristic
+advantage-based switching between OPD and RLVR objectives.
+5.4. Ablation Study: Inverse-Gated Experiment
+To examine the effectiveness of the gating mechanism in OPDVR, we conduct an inverse-gated ablation
+under the same-architecture setting (Qwen3-4B ← Qwen3-4B-RL) on DeepMath, following the same
+experimental setup as the main experiments.. Recall that OPDVR keeps a token only when its update
+direction agrees with the verifier signal: on a correct trajectory (R=+1), tokens where the teacher is more
+confident than the student (πT > πθ ) are kept and tokens where the student is already more confident
+(πθ > πT ) are gated out; on an incorrect trajectory (R= − 1), the roles are reversed – tokens where the
+student is more confident than the teacher are kept, and tokens where the teacher is more confident are
+gated out. The inverse-gated variant swaps these two sets exactly: it keeps the tokens that OPDVR gates
+10
+
+On-policy Distillation with Verifiable Reward
+
+(+1.3)
+
+OPDVR
+0.75
+
+OPD
+
+Avg Accuracy (6 Benchmarks)
+
+Accuracy Reward
+
+Inverse-Gated
+
+0.70
+
+0.65
+
+0.60
+
+0.55
+
+0.50
+
+(-3.2)
+
+0.45
+0
+
+20
+
+40
+
+60
+
+80
+
+100
+
+Training Step
+
+OPD
+
+OPDVR(Ours)
+
+Inverse-Gated
+
+Figure 3: Ablation study on the gating mechanism. Left: training-time accuracy reward of OPD,
+OPDVR, and the inverse-gated variant. Right: average accuracy over six benchmarks.
+
+out (the student-more-confident tokens on correct trajectories and the teacher-more-confident tokens on
+incorrect trajectories), and gates out the tokens that OPDVR keeps, while keeping the masking ratio
+and everything else unchanged.
+Table 4 shows the final benchmark results, and Figure 3 tracks the accuracy reward on the training
+set. The three variants start from the same point and separate monotonically throughout training,
+yielding a consistent ordering OPDVR > OPD > Inverse-Gated in both the training curves and the
+final benchmarks. Reversing the gate falls below vanilla OPD on all six benchmarks, confirming the
+effectiveness of the gating mechanism. Notably, even the inverse-gated variant still improves over the
+initial model, indicating that the teacher’s distributional guidance remains useful—though its benefits
+are substantially hindered when the sign is misaligned with trajectory correctness
+5.5. Training Dynamics
+To understand how token-level gating shapes the distillation process, we track three quantities throughout
+training: the student policy entropy, the average response length, and the zero-gated token ratio, i.e.,
+the fraction of tokens whose distillation loss is masked by the gate. Figure 4 shows the dynamics of the
+same-architecture setting (Qwen3-4B ← Qwen3-4B-RL) and the cross-architecture setting (Qwen3-1.7BBase ← Qwen3-4B-Base-RL), respectively.
+
+The entropy and response-length trajectories of the sampled-token OPD baseline show no consistent
+pattern across settings; instead, they depend strongly on the teacher–student pair. In the samearchitecture setting, the entropy of both methods drifts mildly upward (from ∼0.33 to ∼0.40) while
+the response length inflates by more than four times, from roughly 1.6k to over 6.7k tokens. In the
+cross-architecture setting, the picture inverts: the student entropy collapses rapidly from ∼2.0 at the
+start of training and the response length stays nearly flat throughout. These quantities therefore do
+not follow a setting-independent trend – their evolution is dictated by the specific teacher and student
+models rather than by the distillation objective itself.
+In contrast, the zero-gated token ratio is consistent across both settings. It remains in a band around
+fifty percent during the entire course of training (≈0.48–0.50 for the 4B student and ≈0.40–0.44 for the
+1.7B student), never degenerating toward the trivial extremes of gating all or no tokens. This means
+that roughly half of the sampled tokens are zeroed by the ReLU gate at any point of training. Recalling
+the failure cases identified in Section 4, these are exactly the tokens whose implicit OPD reward pushes
+against the RLVR direction: on correct trajectories where the student already assigns higher probability
+11
+
+On-policy Distillation with Verifiable Reward
+
+OPDVR
+
+OPD
+
+6000
+
+Response Length
+
+Entropy
+
+0.40
+
+0.38
+
+0.36
+
+0.34
+
+Zero-Gated Token Ratio
+
+0.42
+
+5000
+
+4000
+
+3000
+
+2000
+
+0.53
+
+0.52
+
+0.51
+
+0.50
+
+0.49
+
+0.32
+0.48
+
+0
+
+40
+
+80
+
+120
+
+160
+
+200
+
+0
+
+40
+
+80
+
+Training Step
+
+120
+
+160
+
+200
+
+0
+
+40
+
+80
+
+Training Step
+
+120
+
+160
+
+200
+
+Training Step
+
+(a) Training dynamic of same-architecture distillation (Qwen3-4B ← Qwen3-4B-RL).
+
+OPDVR
+
+OPD
+
+1400
+
+Zero-Gated Token Ratio
+
+2.25
+1300
+
+Response Length
+
+2.00
+
+Entropy
+
+1.75
+
+1.50
+
+1.25
+
+1.00
+
+0.75
+
+1200
+
+1100
+
+1000
+
+900
+
+0.50
+
+0.44
+
+0.42
+
+0.40
+
+0.38
+
+0.36
+800
+
+0.25
+0
+
+20
+
+40
+
+60
+
+80
+
+100
+
+Training Step
+
+120
+
+140
+
+160
+
+0
+
+20
+
+40
+
+60
+
+80
+
+100
+
+120
+
+140
+
+160
+
+Training Step
+
+0
+
+20
+
+40
+
+60
+
+80
+
+100
+
+120
+
+140
+
+160
+
+Training Step
+
+(b) Training dynamic of cross-architecture distillation (Qwen3-1.7B-Base ← Qwen3-4B-Base-RL).
+
+Figure 4: Training dynamics
+than the teacher (πθ > πT ), and on incorrect trajectories where the teacher still outranks the student
+(πT > πθ ). The stable ratio indicates that such RLVR-violating tokens constitute a persistent fraction
+of the data throughout training – the gate consistently filters them out while distilling the remaining
+tokens with their full teacher–student log-ratio magnitude.
+
+6. Conclusion
+We revisited sampled-token OPD from an RLVR perspective and observed that its implicit reward is
+governed by the teacher-student probability ratio rather than trajectory correctness, which can lead to
+updates that can penalize tokens in correct trajectories or reward tokens in incorrect ones. To address
+this, we proposed OPDVR, which adds a simple ReLU gate on the sampled token to enforce RLVR
+compliance. This minimal modification combines OPD and RLVR without any hyperparameter or
+heuristic trade-off. Experiments across mathematical reasoning benchmarks demonstrate that OPDVR
+consistently outperforms standard OPD.
+More importantly, by reformulating OPD as an RLVR method, OPDVR becomes a general framework
+that can be readily integrated with any policy gradient algorithm, including REINFORCE, GRPO,
+and DAPO. We instantiate this with GRPO and present Group Relative Policy Distillation (GRPD),
+which further demonstrates the versatility and strength of our approach. The empirical success of
+both OPDVR and GRPD across multiple benchmarks confirms that aligning distillation signals with
+trajectory correctness is not only effective but also broadly applicable, offering a simple yet powerful
+recipe for future post-training methods.
+
+12
+
+On-policy Distillation with Verifiable Reward
+
+References
+Akhondzadeh, M. S., Lingam, V., Tejaswi, A., Ekbote, C., Sanghavi, S., and Bojchevski, A. Reward-gated
+on-policy distillation. arXiv preprint arXiv:2607.04037, 2026.
+Cai, Q., Ma, Y., Li, L., Li, P., Chen, Y., Guo, Q., Zou, Y., Gui, T., Feng, X., and Qin, B. Hˆ2 sd: Hybrid
+hindsight self-distillation. arXiv preprint arXiv:2607.18955, 2026.
+Fu, Y., Huang, H., Jiang, K., Liu, J., Jiang, Z., Zhu, Y., and Zhao, D. Revisiting on-policy distillation:
+Empirical failure modes and simple fixes. arXiv preprint arXiv:2603.25562, 2026.
+Guo, D., Yang, D., Zhang, H., Song, J., Zhang, R., Xu, R., Zhu, Q., Ma, S., Wang, P., Bi, X., et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint
+arXiv:2501.12948, 2025.
+Hammoud, H. A. A. K., Alhamoud, K., Hammoud, A., Bou-Zeid, E., Ghassemi, M., and Ghanem, B.
+Train long, think short: Curriculum learning for efficient reasoning. arXiv preprint arXiv:2508.08940,
+2025.
+He, Z., Liang, T., Xu, J., Liu, Q., Chen, X., Wang, Y., Song, L., Yu, D., Liang, Z., Wang, W., et al.
+Deepmath-103k: A large-scale, challenging, decontaminated, and verifiable mathematical dataset for
+advancing reasoning. In International Conference on Learning Representations, volume 2026, pp.
+138306–138322, 2026.
+Hou, B., Zhang, Y., Ji, J., Liu, Y., Qian, K., Andreas, J., and Chang, S. Thinkprune: Pruning long
+chain-of-thought of llms via reinforcement learning. arXiv preprint arXiv:2504.01296, 2025.
+Hou, W., Peng, S., Wang, W., Ruan, Z., Zhang, Y., Zhou, Z., Gao, M., Chen, Y., Wang, K., Yang,
+H., et al. Uni-opd: Unifying on-policy distillation with a dual-perspective recipe. arXiv preprint
+arXiv:2605.03677, 2026.
+Huang, C., Zhang, Z., and Cardie, C. Hapo: Training language models to reason concisely via historyaware policy optimization. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 40,
+pp. 31122–31130, 2026.
+Hubotter, J., Lubeck, F., Behric, L. D., Baumann, A., Bagatella, M., Marta, D., Hakimi, I., Shenfeld,
+I., Buening, T. K., Guestrin, C., and Krause, A. Reinforcement learning via self-distillation. ArXiv,
+abs/2601.20802, 2026. URL https://api.semanticscholar.org/CorpusID:285102353.
+Jaech, A., Kalai, A., Lerer, A., Richardson, A., El-Kishky, A., Low, A., Helyar, A., Madry, A., Beutel,
+A., Carney, A., et al. Openai o1 system card. arXiv preprint arXiv:2412.16720, 2024.
+Jiang, Y., Li, Y., Chen, G., Liu, D., Cheng, Y., and Shao, J. Rethinking entropy regularization in large
+reasoning models. arXiv preprint arXiv:2509.25133, 2025.
+Jin, W., Min, T., Yang, Y., Wei, D., Zhou, Y., Kadhe, S. R., Baracaldo, N., and Lee, K. Entropy-aware
+on-policy distillation of language models. arXiv preprint arXiv:2603.07079, 2026.
+Li, G., Yang, T., Fang, J., Song, M., Zheng, M., Guo, H., Zhang, D., Wang, J., and Chua, T.-S.
+Unifying group-relative and self-distillation policy optimization via sample routing. arXiv preprint
+arXiv:2604.02288, 2026a.
+Li, Y., Zuo, Y., He, B., Zhang, J., Xiao, C., Qian, C., Yu, T., Gao, H.-a., Yang, W., Liu, Z., et al.
+Rethinking on-policy distillation of large language models: Phenomenology, mechanism, and recipe.
+arXiv preprint arXiv:2604.13016, 2026b.
+Liu, W., Zhou, R., Deng, Y., Huang, Y., Liu, J., Deng, Y., Zhang, Y., and He, J. Learn to reason
+efficiently with adaptive length-based reward shaping. arXiv preprint arXiv:2505.15612, 2025.
+Oh, M., Song, S., Choi, G., Choi, Y., and Jo, Y. Kl for a kl: On-policy distillation with control variate
+baseline. arXiv preprint arXiv:2605.07865, 2026.
+13
+
+On-policy Distillation with Verifiable Reward
+
+Petrenko, A., Lipkin, B., Chen, K., Wijmans, E., Cusumano-Towner, M., Giryes, R., and Krähenbühl, P.
+Entropy-preserving reinforcement learning. arXiv preprint arXiv:2603.11682, 2026.
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O. Proximal policy optimization
+algorithms. arXiv preprint arXiv:1707.06347, 2017.
+Shao, Z., Wang, P., Zhu, Q., Xu, R., Song, J., Bi, X., Zhang, H., Zhang, M., Li, Y., Wu, Y., et al.
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint
+arXiv:2402.03300, 2024.
+Sheng, G., Zhang, C., Ye, Z., Wu, X., Zhang, W., Zhang, R., Peng, Y., Lin, H., and Wu, C. Hybridflow:
+A flexible and efficient rlhf framework. In Proceedings of the Twentieth European Conference on
+Computer Systems, pp. 1279–1297, 2025.
+Su, Z., Pan, L., Lv, M., Li, Y., Hu, W., Zhang, F., Gai, K., and Zhou, G. Ce-gppo: Coordinating entropy
+via gradient-preserving clipping policy optimization in reinforcement learning. ArXiv, abs/2509.20712,
+2025. URL https://api.semanticscholar.org/CorpusID:281526201.
+Sui, Y., Chuang, Y.-N., Wang, G., Zhang, J., Zhang, T., Yuan, J., Liu, H., Wen, A., Zhong, S., Zou, N.,
+et al. Stop overthinking: A survey on efficient reasoning for large language models. arXiv preprint
+arXiv:2503.16419, 2025.
+Trinh, T. H., Wu, Y., Le, Q. V., He, H., and Luong, T. Solving olympiad geometry without human
+demonstrations. Nature, 625(7995):476–482, 2024.
+Wang, C., Li, Z., Bai, J., Zhang, Y., Deng, H., Lan, G., and Wang, Y. Distilled reinforcement learning
+for llm post-training. arXiv preprint arXiv:2607.17247, 2026.
+Xiang, V., Blagden, C., Rafailov, R., Lile, N., Truong, S., Finn, C., and Haber, N. Just enough
+thinking: Efficient reasoning with adaptive length penalties reinforcement learning. arXiv preprint
+arXiv:2506.05256, 2025.
+Xiao, B., Xia, B., Yang, B., Gao, B., Shen, B., Zhang, C., He, C., Lou, C., Luo, F., Wang, G., et al.
+Mimo-v2-flash technical report. arXiv preprint arXiv:2601.02780, 2026.
+Xing, X., Wang, H., Gao, B., Li, Z., and Tang, Y. Trust region on-policy distillation. arXiv preprint
+arXiv:2606.01249, 2026.
+Xu, A., Lin, B., Xue, B., Wang, B., Xu, B., Wu, B., Zhang, B., Lin, C., Dong, C., Ling, C., et al. Deepseekv4: Towards highly efficient million-token context intelligence. arXiv preprint arXiv:2606.19348, 2026a.
+Xu, H., Wang, H., Gao, Y., Li, J., Zhang, X., and Yuan, X. Sg-opd: Sign-gated on-policy distillation via
+sign-consistency gating and phased teacher sampling. arXiv preprint arXiv:2606.09304, 2026b.
+Yang, A., Zhang, B., Hui, B., Gao, B., Yu, B., Li, C., Liu, D., Tu, J., Zhou, J., Lin, J., et al. Qwen2.
+5-math technical report: Toward mathematical expert model via self-improvement. arXiv preprint
+arXiv:2409.12122, 2024.
+Yang, A., Li, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Gao, C., Huang, C., Lv, C., et al.
+Qwen3 technical report. arXiv preprint arXiv:2505.09388, 2025a.
+Yang, C., Qin, C., Si, Q., Chen, M., Gu, N., Yao, D., Lin, Z., Wang, W., Wang, J., and Duan, N.
+Self-distilled rlvr. arXiv preprint arXiv:2604.03128, 2026a.
+Yang, K., Xu, X., Chen, Y., Liu, W., Lyu, J., Lin, Z., Ye, D., and Yang, S. Entropic: Towards stable
+long-term training of llms via entropy stabilization with proportional-integral control. arXiv preprint
+arXiv:2511.15248, 2025b.
+Yang, W., Liu, W., Xie, R., Yang, K., Yang, S., and Lin, Y. Learning beyond teacher: Generalized
+on-policy distillation with reward extrapolation. arXiv preprint arXiv:2602.12125, 2026b.
+14
+
+On-policy Distillation with Verifiable Reward
+
+Yu, Q., Zhang, Z., Zhu, R., Yuan, Y., Zuo, X., Yue, Y., Dai, W., Fan, T., Liu, G., Liu, L., et al. Dapo:
+An open-source llm reinforcement learning system at scale. Advances in Neural Information Processing
+Systems, 38:113222–113244, 2026.
+Zeng, A., Lv, X., Hou, Z., Du, Z., Zheng, Q., Chen, B., Yin, D., Ge, C., Huang, C., Xie, C., et al. Glm-5:
+from vibe coding to agentic engineering. arXiv preprint arXiv:2602.15763, 2026.
+
+A. Theoretical Analysis
+On-policy distillation supervises student-generated prefixes, and OPDVR adds a verifier gate to this
+feedback. We establish joint improvement of task success and teacher matching for the population mirror
+update of OPDVR.
+Setup. Consider a prefix process of horizon H with finite prompt and action sets, a fixed prompt
+distribution, and terminal verifier Y ∈ {0, 1}. Each state includes the time index. Fix student p
+and teacher T , both with full support. Define Qp (s, a) = Prp (Y = 1 | s, a), where all subsequent
+actions follow p, and J(p) = Prp (Y = 1). With z(s, a) = log[T (a | s)/p(a | s)], the gate is c(Y, z) =
+Y [z]+ − (1 − Y )[−z]+ , where [x]+ = max{x, 0}. Its conditional mean c̄(s, a) = E[c(Y, z(s, a)) | s, a] is
+
+c̄(s, a) = Qp (s, a)[z(s, a)]+ − 1 − Qp (s, a) [−z(s, a)]+ .
+(3)
+Assumption 1 (Soft-value teacher). At every reachable prefix s, there exists βs > 0 such that
+p
+
+T (a | s) =
+
+p(a | s)eβs Q (s,a)
+,
+Zs
+
+p
+
+Zs = Ea∼p(·|s) eβs Q (s,a) .
+
+(4)
+
+This is the form of a KL-regularized policy improvement (?). It is a condition on the current pair (p, T )
+and is not implied by higher aggregate teacher accuracy.
+Mirror update. Apply the standard KL mirror step (?, §5) simultaneously at all reachable prefixes,
+p(a | s)eηc̄(s,a)
+,
+(5)
+ηc̄(s,a′ )
+′
+a′ p(a | s)e
+holding the teacher and the pre-update quantities Qp , z, c̄ fixed. The next two results characterize this
+update and bound its effect on the two objectives.
+Proposition A.1 (KL-regularized characterization). Fix a reachable prefix s. Under Assumption 1, the
+teacher T (· | s) and the updated policy p+ (· | s) in Equation 5 are the unique maximizers over action
+distributions r,
+h
+i
+T (· | s) = arg max Er Qp (s, ·) − βs−1 DKL (r∥p(· | s)) ,
+(6)
+r
+h
+i
+p+ (· | s) = arg max Er c̄(s, ·) − η −1 DKL (r∥p(· | s)) .
+(7)
+p+ (a | s) = P
+
+r
+
+Theorem A.2 (Joint improvement). Under Assumption 1, the mirror update Equation 5 satisfies:
+(i) for every η > 0, task success does not decrease,
+J(p+ ) ≥ J(p);
+
+(8)
+
+(ii) if in addition η ≤ 1/2, teacher KL does not increase at any reachable prefix s,
+
+
+DKL p+ (· | s)∥T (· | s) ≤ DKL p(· | s)∥T (· | s) .
+
+(9)
+
+If Qp (s, ·) is nonconstant at a prefix visited with positive probability under p, the inequality in (i) is strict,
+and that in (ii) is strict at that prefix.
+A single verifier-gated on-policy step advances task accuracy and teacher matching together, not one at
+the expense of the other. Accuracy improves at any step size, and teacher matching is preserved for a
+modest step. This is the behaviour OPDVR targets. Proofs are in Appendix B.
+15
+
+On-policy Distillation with Verifiable Reward
+
+B. Proofs
+Equation 3 is immediate from E[Y | s, a] = Qp (s, a). Because z(st , at ) and the score ψt = ∇θ log pθ (at | st )
+of any smooth parameterization (p = pθ0 ) are determined by (st , at ), the tower property gives
+hX
+i
+hX
+i
+Eτ ∼p
+c(Y, z(st , at )) ψt = Eτ ∼p
+c̄(st , at ) ψt ,
+t
+
+t
+
+so the population signal analysed below is exactly the one the sampled update follows in expectation;
+Qp enters only through the analysis.
+B.1. Proof of Proposition A.1
+Fix a reachable prefix s and use the local notation p(a) = p(a | s), T (a) = T (a | s), Q(a) = Qp (s, a),
+z(a) = z(s, a), c̄(a) = c̄(s, a), p+ (a) = p+ (a | s), β = βs , and Z = Zs ; this suppresses only the
+fixed prefix, and full support with finiteness makes every sum finite and every KL divergence welldefined. The continuation policy in Q remains the pre-update student. Assumption 1 rearranges to
+Q(a) = β −1 log[T (a)/p(a)] + β −1 log Z, so that for every action distribution r,
+X
+X
+r(a)
+Er Q − β −1 DKL (r∥p) =
+r(a)Q(a) − β −1
+r(a) log
+p(a)
+a
+a
+
+
+X
+X
+T (a)
+r(a)
+r(a) log
+r(a) log
+= β −1
++ log Z − β −1
+p(a)
+p(a)
+(10)
+a
+a
+X
+T (a)
+= β −1 log Z + β −1
+r(a) log
+r(a)
+a
+
+= β −1 log Z − β −1 DKL (r∥T ).
+Since DKL (r∥T ) ≥ 0 with equality iff r = T , the teacher T uniquely maximizes Er Q − β −1 DKL (r∥p),
+P
+which is Equation 6. Next define W (u) = a p(a)euc̄(a) for u ≥ 0. The mirror update rearranges to
+c̄(a) = η −1 log[p+ (a)/p(a)] + η −1 log W (η), so that the same computation with (T, Z, β) replaced by
+(p+ , W (η), η) gives
+X
+X
+r(a)
+Er c̄ − η −1 DKL (r∥p) =
+r(a)c̄(a) − η −1
+r(a) log
+p(a)
+a
+a
+
+
++ (a)
+X
+X
+p
+r(a)
+−1
+=η
+r(a) log
++ log W (η) − η −1
+r(a) log
+p(a)
+p(a)
+(11)
+a
+a
++
+X
+p (a)
+= η −1 log W (η) + η −1
+r(a) log
+r(a)
+a
+= η −1 log W (η) − η −1 DKL (r∥p+ ).
+Hence p+ uniquely maximizes Er c̄ − η −1 DKL (r∥p), which is Equation 7; full support makes both
+maximizers well-defined.
+B.2. Proof of Theorem A.2
+All quantities p, T, Qp , z, c̄ are fixed at the current iterate. Set V p (s) = Ea∼p(·|s) Qp (s, a). Early
+termination is padded with absorbing transitions up to horizon H; at terminal states, V p (sH+1 ) =
+Y (sH+1 ). All logarithms are natural, and finiteness and full support justify the finite sums and
+differentiation used below. We reuse the local prefix notation of Appendix B.1; a monotonicity property
+and an interpolation path serve both parts (i) and (ii).
+Monotonicity of the gated coefficient. With the local prefix notation, set
+
+log Ep eβQ
+b=
+,
+z(a) = β Q(a) − b .
+β
+16
+
+(12)
+
+On-policy Distillation with Verifiable Reward
+
+Since Q ∈ [0, 1], we have b ∈ [0, 1]. Substituting Equation 12 into the gate gives c̄(a) = g(Q(a)), where
+
+β(1 − q)(q − b), q < b,
+g(q) =
+(13)
+βq(q − b),
+q ≥ b.
+
+The function is continuous at b. Away from this point,
+
+β(1 + b − 2q), q < b,
+′
+g (q) =
+β(2q − b),
+q > b.
+
+0 ≤ g ′ (q) ≤ 2β.
+
+(14)
+
+Thus g is nondecreasing. When c̄ is viewed as a function of z = β(q − b), its derivative lies in [0, 2].
+Continuity at the join point extends both properties across it, so c̄ is a nondecreasing, 2-Lipschitz
+function of z on the relevant interval.
+For any functions f, h and distribution µ on the action set, with independent a, a′ ∼ µ, expansion gives
+the pairwise covariance identity
+
+
+1
+(15)
+Covµ (f, h) = Ea,a′ ∼µ (f (a) − f (a′ ))(h(a) − h(a′ )) .
+2
+
+Monotonicity of g makes (Q(a) − Q(a′ ))(c̄(a) − c̄(a′ )) nonnegative. Monotonicity and the Lipschitz
+bound in z also imply
+2
+1
+(z(a) − z(a′ ))(c̄(a) − c̄(a′ )) ≥ c̄(a) − c̄(a′ ) .
+(16)
+2
+Applying Equation 15 to both products yields, for every µ,
+Covµ (Q, c̄) ≥ 0,
+
+Covµ (z, c̄) ≥
+
+1
+Varµ (c̄).
+2
+
+(17)
+
+The interpolation path. For the fixed prefix, introduce the interpolation parameter u, distinct from
+generation time t, and define
+pu (a) =
+
+p(a)euc̄(a)
+,
+W (u)
+
+0 ≤ u ≤ η,
+
+p0 = p,
+
+pη = p+ .
+
+(18)
+
+The quantities Q, z, c̄, T are held fixed along this path, and pu has full support
+P for every finite u. Since
+log pu (a) = log p(a) + uc̄(a) − log W (u) and ∂u log W (u) = W ′ (u)/W (u) = a pu (a)c̄(a) = Epu c̄,
+∂u log pu (a) = c̄(a) − ∂u log W (u) = c̄(a) − Epu c̄.
+
+Using ∂u pu (a) = pu (a) ∂u log pu (a), every fixed function f satisfies
+X
+X
+
+d
+Epu f =
+f (a) ∂u pu (a) =
+f (a) pu (a) c̄(a) − Epu c̄
+du
+a
+a
+
+(19)
+
+(20)
+
+= Epu (f c̄) − Epu f Epu c̄ = Covpu (f, c̄).
+
+If Q is constant, Assumption 1 gives T = p, c̄ = 0, and p+ = p, so parts (i) and (ii) hold with equality;
+otherwise mina Q(a) < b < maxa Q(a) forces 0 < b < 1, the derivative in Equation 14 is then strictly
+positive on each interval, so g is strictly increasing, and every pu has full support, giving Covpu (Q, c̄) > 0
+and Varpu (c̄) > 0.
+(i) Task success does not decrease. Taking f = Q in Equation 20 and applying Equation 17 give
+d
+du Epu Q = Covpu (Q, c̄) ≥ 0, so u 7→ Epu Q is nondecreasing on [0, η]; evaluating at the endpoints u = 0
+and u = η yields
+Ep+ (·|s) Qp (s, ·) ≥ Ep(·|s) Qp (s, ·) = V p (s).
+(21)
+Return to the full prefix notation. Let drt be the distribution of st under policy r, with the fixed prompt
+distribution. The terminal convention above and the Bellman relation give Qp (st , at ) = E[V p (st+1 ) |
+17
+
+On-policy Distillation with Verifiable Reward
+
+st , at ], so under τ ∼ p+ each Qp (st , at ) may be replaced by V p (st+1 ) in expectation; telescoping then
+gives the finite-horizon performance-difference identity (?; see also ?, §2),
+Eτ ∼p+
+
+H
+X
+t=1
+
+
+Qp (st , at ) − V p (st )
+
+= Eτ ∼p+
+
+H
+X
+
+t=1
+p
+
+
+V p (st+1 ) − V p (st )
+
+(22)
+
+
+= Eτ ∼p+ V (sH+1 ) − V p (s1 ) = J(p+ ) − J(p).
+
+The last equality uses the terminal convention Eτ ∼p+ V p (sH+1 ) = Eτ ∼p+ Y = J(p+ ), and the fact that s1
+follows the fixed prompt distribution independently of the policy, so Eτ ∼p+ V p (s1 ) = Es1 V p (s1 ) = J(p).
+Conditioning each summand on st yields
+J(p+ ) − J(p)
+=
+
+H
+X
+t=1
+
+E
+
+s∼dpt
+
++
+
+
+
+
+Ea∼p+ (·|s) Qp (s, a) − V p (s) .
+
+(23)
+
+All terms inside the expectation are nonnegative by Equation 21, proving J(p+ ) ≥ J(p) for every η > 0;
++
+the distribution here is the new visitation distribution dpt , so the conclusion concerns actual success
+after the simultaneous update. Moreover p+ has full support by Equation 5, so every prefix visited
+with positive probability under p is also visited under p+ ; if Qp (s, ·) is nonconstant at such a prefix,
+Equation 21 is strict there, the corresponding bracket in Equation 23 is strictly positive, and hence
+J(p+ ) > J(p).
+(ii) Teacher KL does not increase at any reachable prefix. Let Ks (u) = DKL (pu ∥T ) = Epu log pTu .
+Since T (a) = p(a)ez(a) , the log-density ratio is
+log
+
+pu (a)
+p(a)euc̄(a) /W (u)
+= log
+= −z(a) + uc̄(a) − log W (u).
+T (a)
+p(a)ez(a)
+
+(24)
+
+Differentiating Ks splits into a measure term and anintegrand term; by Equation
+ 20 the former is a
+covariance with c̄, and by Equation 19 the latter, Epu ∂u log pTu = Epu c̄ − Epu c̄ = 0, vanishes. Using
+Equation 24 and dropping the action-independent term log W (u),
+
+h
+pu 
+pu i
+Ks′ (u) = Covpu log , c̄ + Epu ∂u log
+= Covpu (−z + uc̄, c̄)
+T
+T 
+(25)
+= u Varpu (c̄) − Covpu (z, c̄) ≤ u − 12 Varpu (c̄),
+
+the last step by Equation 17. For 0 < η ≤ 1/2
+throughout [0, η], so
+ the derivative is nonpositive
+
+Ks (η) ≤ Ks (0), that is, DKL p+ (· | s)∥T (· | s) ≤ DKL p(· | s)∥T (· | s) . If Q is nonconstant, then
+Varpu (c̄) > 0, so Ks′ (u) < 0 for all 0 ≤ u < η and the decrease is strict, including when η = 1/2. This
+completes the proof of both parts of Theorem A.2. □
+
+C. Directional Alignment and Conflict Removal
+We now provide a formal characterization of the advantage of OPDVR over the sampled-token OPD
+objective. Throughout this section, let st = (q, o<t ) denote the state at step t, at = ot the sampled
+action, and define the token-level teacher-student log-ratio as
+rt = log
+
+πT (at | st )
+.
+πθ (at | st )
+
+As before, R ∈ {+1, −1} denotes the trajectory-level verifier reward.
+18
+
+(26)
+
+On-policy Distillation with Verifiable Reward
+
+C.1. Directional Alignment with the Verifier Gradient
+Let ut = ∇θ log πθ (at | st ) denote the policy gradient direction of the sampled token. The token-level
+update direction of sampled-token OPD is
+∆OPD,t = rt ut ,
+
+(27)
+
+∆OPDVR,t = R ReLU(Rrt ) ut ,
+
+(28)
+
+whereas the OPDVR update direction is
+with ReLU(x) = max(0, x).
+Recall that the pure verifier-driven RLVR update direction is ∆RLVR,t = Rut . The following proposition
+shows that OPDVR is always aligned with this verifier direction, while OPD may be anti-aligned.
+Proposition C.1 (Verifier alignment). For any token with ut ̸= 0, the OPDVR update is never in the
+opposite direction of the verifier gradient. Specifically,
+⟨∆OPDVR,t , ∆RLVR,t ⟩ ≥ 0.
+
+(29)
+
+⟨∆OPD,t , ∆RLVR,t ⟩ = rt R∥ut ∥2 ,
+
+(30)
+
+In contrast, sampled-token OPD satisfies
+
+which becomes negative whenever rt and R have opposite signs.
+Proof. Using Equation 28 and ∆RLVR,t = Rut , we have
+
+⟨∆OPDVR,t , ∆RLVR,t ⟩ = ⟨R ReLU(Rrt )ut , Rut ⟩
+= R2 ReLU(Rrt ) ∥ut ∥2
+
+= ReLU(Rrt ) ∥ut ∥2 ≥ 0.
+
+(31)
+
+⟨∆OPD,t , ∆RLVR,t ⟩ = ⟨rt ut , Rut ⟩ = rt R∥ut ∥2 ,
+
+(32)
+
+For sampled-token OPD, using Equation 27 gives
+which is negative when rt R < 0.
+
+The condition rt R < 0 corresponds exactly to the two conflict cases identified earlier: (i) a correct
+trajectory with πθ > πT , and (ii) an incorrect trajectory with πT > πθ . In both cases, OPD pushes the
+policy in a direction that reduces the verifier reward.
+C.2. Decomposition of the OPD Gradient
+The gated mechanism can be interpreted as explicitly removing the verifier-conflicting component from
+the OPD gradient.
+Proposition C.2 (Conflict removal). The sampled-token OPD update can be decomposed as
+∆OPD,t = ∆OPDVR,t + ∆conflict,t ,
+where
+∆conflict,t = rt 1(rt R < 0) ut .
+Moreover, the conflict term always has a non-positive projection onto the verifier gradient:
+⟨∆conflict,t , ∆RLVR,t ⟩ = −|rt | 1(rt R < 0) ∥ut ∥2 ≤ 0.
+
+(33)
+(34)
+(35)
+
+Proof. When rt R ≥ 0, we have R ReLU(Rrt ) = rt , so ∆OPDVR,t = rt ut and the conflict term vanishes.
+When rt R < 0, we have ReLU(Rrt ) = 0, so ∆OPDVR,t = 0 and the conflict term equals ∆OPD,t . The
+projection onto ∆RLVR,t follows directly.
+Thus OPDVR is not an arbitrary modification of OPD; it is precisely OPD with the harmful verifieropposing component removed.
+19
+
+On-policy Distillation with Verifiable Reward
+
+C.3. A Simplified Token-Level Analysis: OPDVR Can Strictly Outperform the Teacher
+To illustrate the mechanism while retaining the token-level structure of LLM generation, we consider a
+simplified single-token decision problem. Let s be a fixed prefix. At this prefix, the model must choose
+between two candidate next tokens: a1 denotes a correct key token that leads to a correct final answer,
+and a2 denotes an incorrect key token that leads to a wrong final answer. The trajectory-level verifier
+reward is therefore R(a1 ) = +1 and R(a2 ) = −1.
+Let πθ (a1 | s) = q and πT (a1 | s) = p. Assume the teacher is suboptimal, i.e., p < 21 , and that the initial
+student policy is already better than the teacher, i.e., q0 > p.
+
+Under sampled-token OPD, the expected loss reduces to the reverse KL divergence
+LOPD = DKL (πθ (· | s) ∥ πT (· | s)),
+
+(36)
+
+whose global minimizer is πθ (· | s) = πT (· | s). Hence the OPD optimum satisfies q = p, with expected
+verifier reward
+JOPD = 2p − 1.
+(37)
+Under OPDVR, the expected update for token a1 is
+
+
+
+
+p
+p
+R(a1 ) ReLU R(a1 ) log
+= ReLU log
+= 0,
+q0
+q0
+
+(38)
+
+because log(p/q0 ) < 0 since q0 > p. Similarly, for token a2 we have R(a2 ) = −1 and
+log
+
+1−p
+>0
+1 − q0
+
+(39)
+
+since q0 > p, so the OPDVR update for a2 is
+
+
+
+
+1−p
+1−p
+R(a2 ) ReLU R(a2 ) log
+= −ReLU − log
+= 0.
+1 − q0
+1 − q0
+
+(40)
+
+Thus the expected OPDVR gradient vanishes, and the policy remains at q0 . Consequently,
+JOPDVR = 2q0 − 1 > 2p − 1 = JOPD = Jteacher .
+
+(41)
+
+Therefore, OPDVR strictly outperforms both standard sampled-token OPD and the teacher policy.
+
+D. Implementation Details
+D.1. Hyperparameters
+We provide the detailed hyperparameter configurations used in our experiments in Table 5. All models
+are trained using the Verl (Sheng et al., 2025) framework with the settings specified below.
+Table 5: Hyperparameter settings.
+Hyperparameter
+
+Value
+
+Learning Rate
+Train Batch Size
+PPO Mini-Batch Size
+Max Response Length
+Max Prompt Length
+Rollout Temperature
+Evaluation Temperature
+Evaluation Top-p
+
+1e-6
+256
+256
+8192
+1024
+1.0
+0.7
+0.95
+
+20
+
+On-policy Distillation with Verifiable Reward
+
+D.2. Baselines Implementation Details
+OPD+GRPO (Xiao et al., 2026). We follow the original OPD objective and add a GRPO-based
+policy gradient loss with equal weighting (1:1) between the two terms. Specifically, the total loss is
+L = LOPD + LGRPO .
+
+RLSD (Yang et al., 2026a). We set the group size to 8. Since we compare against on-policy
+distillation methods, we replace the original privileged self-model teacher with the same teacher used by
+OPD to ensure a fair comparison.
+ExOPD (Yang et al., 2026b). Following the original paper, we set the extrapolation coefficient to
+1.25, which was reported as the best setting.
+SG-OPD (Xu et al., 2026b). We set the extrapolation and interpolation coefficients to 1.8 and 1.0,
+respectively, matching the best configuration reported in the original paper.
+
+E. Hardware Setup
+All experiments in this paper are conducted on NVIDIA GeForce RTX 5090 GPUs.
+
+21
+
+

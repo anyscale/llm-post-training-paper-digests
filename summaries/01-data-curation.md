@@ -4,7 +4,7 @@
 
 **Lens:** how training/evaluation data is sourced, generated, filtered, de-duplicated, quality-controlled, and scaled — the datasets, their sizes, and selection criteria.
 
-**Coverage:** 88 of the 99 papers contribute substantive content on this lens; papers for which this lens was not a focus are omitted here and appear under their relevant topic files.
+**Coverage:** 132 of the 148 papers contribute substantive content on this lens; papers for which this lens was not a focus are omitted here and appear under their relevant topic files.
 
 ---
 
@@ -1139,3 +1139,503 @@ Qwen3.5-Omni is pretrained on a diverse multilingual corpus spanning image-text,
 **Key results:** Qwen3.5-Omni-Plus achieves SOTA across 215 audio/audio-visual benchmarks, surpassing Gemini-3.1 Pro on audio understanding, recognition, translation, and dialogue (FLEURS ASR avg WER 6.6% vs 7.3%; en2xx avg BLEU 33.8 vs 31.8).
 
 *Evolution:* Building on the Thinker-Talker design of Qwen2.5-Omni and Qwen3-Omni, Qwen3.5-Omni scales native omnimodal training to hundreds of billions of parameters with Hybrid-Attention MoE and the ARIA streaming-alignment trick, moving toward native omni-agents that act and generate executable code from audio-visual instructions.
+
+### The MiniMax-M2 Series: Mini Activations Unleashing Max Real-World Intelligence
+*2026 · report · `report_MiniMax-M2-Series_2605.26494.txt` · arXiv [2605.26494](https://arxiv.org/abs/2605.26494)*
+
+Pretraining uses 29.2T tokens (19.9T in the constant phase plus a 9.3T decay phase), quality-scored by reward models and classifiers, with code, math and STEM upsampled. Post-training data comes from agent-driven pipelines, each tied to an executable workspace and a reward matched to the artifact. SWE scaling crawls permissively licensed GitHub PRs and agent-builds Docker environments for 10+ languages, routes each PR by type to a reward (F2P/P2P tests for bug fixes, new test points for features, stable perf deltas for optimizations), checks problem/test consistency with an LLM, and augments by bug injection, commit merging, SWE-Test inversion and code review.
+
+- AppDev: expert meta-queries, MinHash dedup, rubric filtering, prompt distillation, and Agent-as-a-Verifier rejection sampling (execution, Playwright interaction, visual-aesthetics layers)
+- Terminal-Gym turns Stack Overflow posts into verified Docker tasks with hint removal and difficulty calibration
+- Cowork data: deep search (guide-and-rewrite obfuscation, evidence-grounded acceptance), GDPval-anchored office tasks, finance/spreadsheets (value-level recalculation match), slides (rendered visual scorer)
+
+**Key results:** With ~10B active parameters, M2.7 leads Multi-SWE-bench (52.7 vs 50.3 for Opus 4.6), scores 56.2 on SWE-bench Pro (vs 57.3 Opus 4.6, 57.7 GPT 5.4) and a 66.6% MLE Bench Lite medal rate (tying Gemini 3.1 Pro); M2→M2.7 lifts BrowseComp by 33.8 and Toolathlon by 27.5 points.
+
+*Evolution:* The series follows MiniMax-01/M1, keeping M1's CISPO but dropping hybrid Lightning Attention for full attention after SWA hybrids degraded on >32K agent tasks, borrowing MTP and auxiliary-loss-free routing from DeepSeek-V3 and SWE-Smith-style augmentation, and moving post-training from reasoning RL toward agent-native RL over black-box scaffolds (its arXiv ID 2605 predates the corpus's 2608–2610 target window).
+
+### Gemma 4 Technical Report
+*2026 · report · `report_Gemma-4_2607.02770.txt` · arXiv [2607.02770](https://arxiv.org/abs/2607.02770)*
+
+Pretraining data is a large, diverse mix of web documents, code, images and audio (audio only for E2B, E4B and 12B) with a January 2025 cutoff, filtered to decontaminate benchmarks, reduce unsafe utterances and recitation, and remove personal and sensitive information. The tokenizer is Gemini's SentencePiece (262k vocabulary, split digits, preserved whitespace, byte-level fallback). Post-training data is filtered for certain personal information, unsafe or toxic outputs, mistaken self-identification and duplicates, and augmented with subsets that encourage in-context attribution, hedging and refusals, which improve factuality without hurting other metrics.
+
+- No dataset sizes, sources or reward/verifier designs are given for the instruction-tuning data
+
+**Key results:** Gemma 4 31B scores 1451 Elo on Arena Text, the top dense open model (DeepSeek V4 Pro: 1456); over Gemma 3 27B it lifts AIME 2026 from 20.8 to 89.2 and Codeforces Elo from 110 to 2150.
+
+*Evolution:* Gemma 4 succeeds Gemma 2/3 and Gemma 3n, reusing Gemma 3's local:global attention and Gemma 3n's per-layer embeddings and USM audio encoder; its main post-training addition is an o1-style thinking mode, but the barely documented recipe makes it more an efficient-architecture reference than a post-training recipe.
+
+### Solar Open 2 Technical Report
+*2026 · report · `report_Solar-Open-2_2607.20062.txt` · arXiv [2607.20062](https://arxiv.org/abs/2607.20062)*
+
+Pre-training refines an initially cleaned 20T-token pool to a 10T mixture: every dataset gets an in-house quality score, rarity is tracked by source/type, and exact plus semantic dedup run under a domain/language/source taxonomy. Ablations set real:synthetic at 4:6, math and code each ≥15%, and English >80%. Post-training data comes from purpose-built agent scenarios, each admitted only after execution- or evidence-based verification and decontaminated against eval benchmarks.
+
+- MCP tool tasks via verifier-first CUD synthesis (sandboxed pytest read-back checks) and a live policy-bound transactional DB with a user simulator
+- SWE environments from PRs in 18 languages, kept only if the LLM-synthesized Docker env builds and is fail-to-pass; Git history stripped; trajectories from 5 scaffolds (OpenHands, Claude Code, OpenCode, KiloCode, HermesAgent) filtered by a 5-dimension judge rubric plus repo-level decontamination
+- Terminal tasks across 10+ domains stressing self-tests; front-end artifacts over 6 categories filtered by Playwright plus VLM-judged screenshots; OfficeVerse, an 11-industry × 12-task-type office-task synthesizer grounded in public data with weighted rubrics and a Korean office-work track
+
+**Key results:** Solar Open 2 leads comparably sized open-weight models on MMLU-Pro (86.2), LiveCodeBench v6 (92.4) and APEX-Agents (16.6), posts the top Korean average (85.4 vs 84.9 for DeepSeek-V4-Flash), and scores 86.8 on Ko-GDPval vs 86.9 for the 1.6T DeepSeek-V4-Pro (Solar Open 1: 3.4).
+
+*Evolution:* Solar Open 2 scales Upstage's Solar Open 1 (102B-A12B) into a Korean sovereign agentic model, adopting the 2025–26 hybrid linear/softmax attention trend and the specialist-then-on-policy-distillation consolidation of DeepSeek-V4, Nemotron and MiMo; OfficeVerse is a reusable recipe for deliverable-producing agents in non-English languages.
+
+### From RLVR to RLSVR: Task Transformation Induces Self-Verifiable Rewards for Open-Ended LLM Self-Improvement
+*2026 · rl · `rl_RLSVR_2607.23802.txt` · arXiv [2607.23802](https://arxiv.org/abs/2607.23802)*
+
+Training uses no human labels, reward models or judges—only cheap document-level inputs: GovReport long government reports (summarization), WritingPrompts (creative writing), and Nemotron-CC-Math-v1 source text (math, where players must design and solve a problem from the material); a follow-up run trains on PubMed. Supervision comes from an information-degradation operator: the one spy among n players receives the input with a continuous span masked (20% for summarization and writing, 40% for math, since math text is more redundant), while civilians get the full input. Because the spy index is sampled uniformly, the detection reward I[vote = spy] is verifiable by construction.
+
+- Masking at 20% vs 40% gives nearly identical summarization results
+
+**Key results:** SpyRL beats the R-Zero and Absolute Zero self-play baselines on every summarization and creative-writing benchmark, lifts the Qwen3-4B math average from 41.4 to 50.4 across seven benchmarks, and beats a Qwen3.5-27B rubric-as-reward baseline (59.3% overall win on WritingPrompts) with no external verifier.
+
+*Evolution:* RLSVR carries RLVR's verifiable-reward machinery and the label-by-construction idea of self-supervised pretext tasks to open-ended generation, extending proposer-solver self-play (Absolute Zero, R-Zero) to multi-agent information-asymmetric games and arguing that verifiability can be engineered rather than being a fixed property of a task.
+
+### Qwen-UI-Agent Technical Report: Toward Next-Generation Real-World Centric Foundation GUI Agents
+*2026 · report · `report_Qwen-UI-Agent_2607.28227.txt` · arXiv [2607.28227](https://arxiv.org/abs/2607.28227)*
+
+Data comes from an agent-driven "AutoResearch-style" flywheel: strong foundation models build a per-domain function tree (knowledge coverage) and a capability profile, compile them into a task-synthesis skill, and agents then synthesize tasks, environment states and state-based verifiers. A step-level VLM judge mines SFT data from both successful and failed trajectories—maximal contiguous correct steps, the first step of each reflection/exploration phase, and recovery segments—which matches or beats keeping only verifier-passed full trajectories. For online RL, coding agents distill data-injection skills, build coherent cross-app user states, have an LLM generate tasks filtered by an LLM judge, and write code verifiers validated by multi-model rollouts plus a VLM judge, yielding ~10,000 task-verifier pairs.
+
+- Environments: redroid-containerized MobileWorld, OSWorld VMs with bash, Playwright web, Serper/Jina DeepSearch (up to 10,000 parallel sandboxes), plus 100+ real phones running 150+ apps
+- Failure-analysis agents route model errors into new targeted tasks
+
+**Key results:** The 27B model sets mobile SOTA at 82.1% on MobileWorld (vs 73.2 Seed 2.1 Pro) and 92.2% on MobileWorld-Real, with 73.6% on WebArena and 79.5% on OSWorld-Verified; online RL raises trajectories containing a verification action by 14.7% and cuts false stops by 11.2%.
+
+*Evolution:* Continuing MAI-UI (step-level trajectory judge, GRPO-style online RL, rejection-sampled SFT) and joining the 2026 native-GUI-agent wave (UI-TARS-2, GUI-Owl-1.5, UI-Venus-1.5, EvoCUA), it pushes past sandbox benchmarks with a real-device runtime and an agent-driven data flywheel that points toward agents partly building their own training curricula.
+
+### Frontis-MA1: Training an AI4AI Model towards Recursive Self-Improvement in Machine Learning Engineering
+*2026 · rl · `rl_Frontis-MA1_2607.28568.txt` · arXiv [2607.28568](https://arxiv.org/abs/2607.28568)*
+
+OpenMLE-Gym provides 5,758 quality-gated executable MLE tasks: 156 Curated Anchors, 3,362 Kaggle Dataset tasks (from MLE-Smith, package-level QC) and 2,240 Kaggle Competition tasks. The competition tasks are filtered from the ~11,000-entry Meta Kaggle catalog through leaderboard-length, MLE-Bench-overlap, licensing and rule screens (→3,972), automated package construction with metric validation (→2,839), then a strict LLM semantic gate scoring task validity, data sufficiency, raw-data usage, complexity and data quality (→2,240, "recommended" only). Each package holds raw assets, public data, hidden private answers, prepare.py and metric.py.
+
+- SFT: 26,259 exact-deduped examples (≤32,768 tokens) = 17,245 Draft solutions (GLM-4.7 and Qwen3-30B teachers, top-4 distinct-score candidates per task) + 9,014 trajectory steps from GLM-4.7-driven AIRA-Evo searches ending at medal-level endpoints, filtered by a DeepSeek-V4-Pro causal-inheritance annotator
+
+**Key results:** Under the identical OpenMLE-Evo harness, post-training lifts Medal Average from 39.39% (Qwen3.6-35B-A3B) to 60.61%; Frontis-MA1-35B with OpenMLE-Evo-Max reaches 71.21%, above GPT-5.5+Codex (68.18%) and approaching GPT-5.6 Sol and Kimi K3 (72.73%).
+
+*Evolution:* Frontis-MA1 unifies AIDE/AIRA-style evolutionary search, executable MLE environments (MLE-Dojo, MLE-Smith, MLE-Bench) and RL post-training of MLE agents by training the same Draft/Improve/Debug/Crossover operators the inference-time evolution composes, releasing the full stack as an open "meta-evolution" testbed while stating it does not yet achieve general autonomous RSI.
+
+### Qwen-CUA: Native Computer Use for (almost) Everything
+*2026 · report · `report_Qwen-CUA_2608.02352.txt` · arXiv [2608.02352](https://arxiv.org/abs/2608.02352)*
+
+Rollouts run on an Alibaba Cloud ECS fleet of nearly 100,000 vCPUs with tens of thousands of concurrent environments: self-contained mock web services (state injection, inspection, reset, session isolation) plus sandboxed everyday, professional and long-tail desktop apps populated with realistic files. About 40,000 verifiable tasks, each with a reproducible initial state and an executable evaluator and audited to remove ambiguous or infeasible items, fall into three classes: environment-interaction tasks sampled from per-app feature taxonomies; user-interactive tasks with a bounded-knowledge user simulator; and long-horizon workflows built by phase-state chaining, where each verified phase state initializes the next.
+
+- Human trajectories on personalized desktops and professional software (CAD, Blender) get model-completed step-level CoT, filtered for consistency with state and action
+
+**Key results:** Qwen-CUA reaches 86.2 on OSWorld-Verified (vs GPT-5.5 78.7, Claude Opus 4.8 83.4) and cuts RedTeamCUA attack success from 36.6 to 16.4 while raising task success from 70.5 to 74.0; the >1T-parameter Qwen-CUA-Max reaches 87.6.
+
+*Evolution:* Qwen-CUA continues the native screenshot-only agent line (UI-TARS, OpenCUA, Qwen3-VL), building on CUA-Gym's verifiable environment and task scaling and SAPO for long-trajectory MoE RL, with an iterative SFT-refresh/RL-calibration loop that always restarts SFT from mid-training.
+
+### Macaron-V1: Towards Open Continual Learning with Self-Improvement and Mixture-of-LoRA
+*2026 · method · `method_Macaron-MoL_2608.09819.txt` · arXiv [2608.09819](https://arxiv.org/abs/2608.09819)*
+
+Training data comes from a self-improvement loop rather than a fixed corpus. Starting from a versioned seed bank, the current model proposes harder task variants (lifting constraints, hidden preferences, chained sub-goals, embedded contradictions); each must carry a verifiable answer or rubric and is kept only if well-defined and not already solved reliably. Trajectories run in the production harness, are scored on outcome and process, filtered for invalid runs and duplicates, and the validated, informative ones train the LoRA specialists.
+
+- Evaluation sets draw on product data: ChatBench's 46 de-identified real conversations flagged by a UX Agent from negative feedback and behavioural anomalies; LivingBench's 40 scenarios seeded from product failure taxonomies
+- The report states it does not document the consent basis, the de-identification audit, or a complete per-specialist training specification
+
+**Key results:** Macaron-V1-Venti leads the compared frontier models on ChatBench (58.3), LivingBench (64.0), UI4A-Bench (87.8 vs 75.9 for Opus 4.8) and TerminalBench 2.1 (87.6); Macaron-V1-Tall beats its Qwen3.6-35B-A3B base on all seven matched rows (e.g. UI4A-Bench 59.3 vs 33.9).
+
+*Evolution:* Macaron-V1 builds on LoRA, multi-tenant LoRA serving (Punica, S-LoRA) and GRPO, reacting to the cross-task interference and static checkpoints of monolithic post-training by separately versioning base, adapters and harness; compounding gains across generations are not yet demonstrated.
+
+### Palmyra x6 Technical Report: An Agentic, Tool-Use Model Post-Trained via Anchored Supervised Fine-Tuning
+*2026 · report · `report_Palmyra-x6_2608.16620.txt` · arXiv [2608.16620](https://arxiv.org/abs/2608.16620)*
+
+All training targets are synthetic multi-turn tool-use trajectories, with task prompts from internal Writer subject-matter experts and external benchmark/task suites across six categories: financial research with web search, data analysis/coding, clinical/medical agent tasks, MCP tool suites, long-horizon simulated "worlds", and RAG over realistic document collections. Generation adapts Self-Distillation Fine-Tuning: a successful teacher trajectory is sanitized into a strategy-only demonstration (final answer removed, numbers/dates replaced with placeholders, tool arguments masked) placed in the student's system prompt, and the student solves the task against live tools (≤30 turns, temperature 1.0, top-p 0.95, 50K-token cap, 6 attempts). Effort caps (20 tool calls, 4 consecutive same-tool calls, 3 error calls, 3 identical repeats) abort runs before any judge call is spent.
+
+- A judge scores each rollout 3× (majority; ≥0.5 passes); a leakage filter rejects rollouts that mention the demonstration, exceed 0.8 4-gram overlap with the teacher's reasoning, or answer without tool calls
+- Further gates: ≤50 messages and a two-model LLM panel voting keep/rewrite/remove; the primary mix is 12 private datasets with a "relatively small" number of trajectories
+
+**Key results:** Palmyra x6 beats the prior Writer Agent default on all six benchmarks (+0.320 MCP-Atlas, +0.305 FinanceBench, +0.304 IFBench) and, against five frontier models, tops BFCL Core (0.785) with the highest six-benchmark mean (0.765).
+
+*Evolution:* An example of post-training an existing open frontier MoE base (GLM-5.2) rather than training end to end, combining Anchored SFT, SDFT-style demonstration-conditioned self-distillation and LIMO/LIMI "less is more" data minimalism, and avoiding RL entirely to limit erosion of base capabilities.
+
+### Apodex 1.1: Scaling Agentic Intelligence for Complex Work
+*2026 · report · `report_Apodex-1.1_2608.23283.txt` · arXiv [2608.23283](https://arxiv.org/abs/2608.23283)*
+
+Training data comes from Environment Scaling over three executable world families sharing one task contract E=(W, W0, q, A, T, Ω, B, D, V_D). File worlds are profession-conditioned multi-format workspaces built inverse-first from latent business state, drawn from a registry of 33 domains, 318 occupations and 1,208 deliverable clusters; graded quantities must be re-derivable by code or tied to recorded provenance. Search worlds supply gold source sets with claim-to-evidence alignment, with difficulty set by acquisition pressure ρ_acq=(N_cand+N_hop)/B_tool. Code worlds mix harvested PR environments (fail-to-pass and pass-to-pass tests) with synthesized ones expanded from verified seeds, whose verifiers are hardened first and probed for reward-hacking attacks that succeed in the sandbox.
+
+- A trajectory is kept only if replayable (world seed, tool and verifier versions, file deltas); coordination traces cover delegation, integration, replanning and 12+ kinds of user intervention
+- SFT filtering drops invalid tool calls, inconsistent state, ignored observations and incomplete delivery, via reject sampling against gold answers or per-dimension rubric thresholds
+
+**Key results:** With Agent Team, Apodex 1.1 posts the best compared values on FrontierFinance (54.3 vs 49.2 for Claude Fable 5) and FrontierScience-Research (63.3), lifts APEX-Agents from 16.5 to 38.5 and reaches GDPVal 78.8, but trails the frontier on SWE-bench Verified (77.7 vs 92.2).
+
+*Evolution:* Apodex 1.1 extends Apodex 1.0's Agent Team and AgentOS kernel, following the 2025–26 shift to long-horizon working agents and treating environment construction (in the vein of ScaleEnv and Agent-World) and multi-agent coordination as two explicit scaling axes.
+
+### On-policy Distillation with Verifiable Reward
+*2026 · rl · `rl_OPDVR_2608.24696.txt` · arXiv [2608.24696](https://arxiv.org/abs/2608.24696)*
+
+No new data is built; the paper reuses public math RLVR sets with rule-based answer verification. The same-architecture setting uses the filtered DeepMath subset of 57k problems with difficulty ≥6 (following ExOPD), both to train the teacher (Qwen3-4B with GRPO) and for distillation; the cross-architecture setting uses DAPO-Math-17k to train the teacher (Qwen3-4B-Base, GRPO, 3 epochs) and for 3 epochs of distillation. The GRPD experiment deliberately distills on DAPO-Math-17K, distinct from the teacher's DeepMath training data.
+
+- The verifier gives a trajectory-level reward: {+1, −1} for OPDVR, {0, 1} for GRPO-style group advantages in GRPD
+
+**Key results:** OPDVR raises the same-architecture average from 47.8 (sampled-token OPD) to 49.1 (+1.2 over ExOPD) and the cross-architecture average to 22.8 vs 21.7; GRPD beats GRPO by 6.5 points on AIME24 and 10.9 on AIME25.
+
+*Evolution:* Part of the 2026 on-policy distillation wave, OPDVR reacts to OPD+RLVR hybrids built on weighted losses or conflict filters by showing that a hyperparameter-free sign gate turns sampled-token OPD into a proper RLVR objective that can in principle exceed the teacher.
+
+### TTPO: Test-Time Policy Optimization
+*2026 · rl · `rl_TTPO_2608.27448.txt` · arXiv [2608.27448](https://arxiv.org/abs/2608.27448)*
+
+TTPO never uses labels. In the OpenThoughts setting, models train on OpenThoughts problems whose labels exist but are used only by the GRPO/OPSD comparison baselines; in pure test-time training, the training set is the unlabeled test set itself (AIME 2026, HMMT 2026, BRUMO 2025). Supervision comes from majority voting over K=64 rollouts per problem (max 16,000 tokens to avoid truncation before answer extraction): answers are clustered by mathematical equivalence, and the largest cluster becomes the pseudo-label that splits rollouts into agreeing (positive) and disagreeing (negative) sets.
+
+- On AIME 2026 with Qwen3-1.7B the pseudo-label is wrong for ~85% of prompts, yet ~79% of disagreeing rollouts are also wrong—motivating the design
+
+**Key results:** Without labels, TTPO matches or beats ground-truth-supervised OPSD at all three Qwen3 scales; in pure TTT it lifts Qwen3-1.7B from 38.0 to 45.2 (+5.4 over TTRL), and Qwen3-4B with TTPO (61.1) surpasses the Qwen3-8B base (60.7).
+
+*Evolution:* TTPO combines TTRL-style label-free test-time RL with OPSD-style on-policy self-distillation, answering the fragility of pseudo-label distillation with a negative-learning argument: penalizing disagreement stays correct even when the vote is wrong.
+
+### A.X K2 Technical Report
+*2026 · report · `report_A.X-K2_2608.30181.txt` · arXiv [2608.30181](https://arxiv.org/abs/2608.30181)*
+
+Pre-training uses ~8.2T tokens selected from a ~16.2T candidate pool via the A.X K1 pipeline: Korean-specialized VLM PDF parsing, seed-based reasoning/agentic and topic-based knowledge synthesis, quality filtering with dedup, and PII masking with placeholder tokens. Sources were refreshed with Nemotron-CC v2.1 and Nemotron-Pretraining-Code-v2 (an English web pool of ~9.1T), a ~1.37T in-house Korean crawl and FineWeb2, while agentic/SWE, repo-level and long-context data were expanded. A distilled A.X-Encoder classifier scores educational value and difficulty (0–4) against per-domain thresholds (26 web domains in Stage 1, 14 expert domains from Stage 2).
+
+- SFT: 9.05M samples (~60.6B tokens) of paired thinking/non-thinking examples across math, science, IF, code, agent, general and safety; safety data extends ESSA specification-guided synthesis to 50 domain-task specs with rubric filtering against over-refusal
+- RL rewards: rule-based IF checks, a reference-based pointwise LLM judge (six domains × four axes), tool-call matching, and a gated judge for long-horizon agents
+
+**Key results:** A.X K2 leads compared open-weight models on AIME26 (97.1), Apex (45.8, up from A.X K1's 1.0), KMMLU-Pro (80.5), CLIcK (91.6) and tau2-Telecom (98.0), reaching the IMO 2025 gold threshold (35/42) on fewer training tokens (~8.5T) than A.X K1 (~10T).
+
+*Evolution:* SK Telecom's successor to A.X K1 under Korea's Sovereign AI project combines DeepSeek-V3.2/GLM-5-style indexer sparse attention with gated attention, replaces dual-track training with paired-response Think-Fusion, and adopts MiniMax-M1's CISPO with GDPO multi-reward normalization.
+
+### Does On-Policy Distillation Really Distill? From Noisy Teacher to Self-Improvement
+*2026 · method · `method_DoesOPD-Distill_2608.31046.txt` · arXiv [2608.31046](https://arxiv.org/abs/2608.31046)*
+
+Training uses only the questions of DAPO-17k for math—no labels, ground-truth answers, hints or teacher—and, for code, Open-R1 Codeforces prompts (best checkpoint chosen on MBPP+ validation). The noise analysis samples one correct and one incorrect Qwen3-1.7B response for each of 500 DAPO-17k questions, verified against ground truth, and defines "noisy" supervision as a teacher advantage on the \boxed{} answer tokens whose sign disagrees with the verifier. The multi-domain variant (MD-OPSA) randomly mixes equal numbers of DAPO-17k math and Codeforces prompts with no domain routing.
+
+**Key results:** Without any teacher, reward or hint, OPSA lifts Qwen3-1.7B AIME24 Avg@32 by 35.41 points (263% relative) and beats OPD by 16.77; token-budget-matched controls do not close the gap (GRPO 32.81, OPD 31.67 vs OPSA 48.85).
+
+*Evolution:* The paper questions the 2025–26 OPD line (GKD, MiniLLM, Thinking Machines' OPD, OPSD) by showing much of OPD's gain comes from suppressing the student's own low-probability tokens rather than from teacher knowledge, proposing a teacher-free, reward-free token-level objective (tested only up to 9B).
+
+### SWE-Bench Pro Verified: A Reliable Benchmark for Software Engineering Agents
+*2026 · method · `method_SWE-Bench-Pro-Verified_2609.08149.txt` · arXiv [2609.08149](https://arxiv.org/abs/2609.08149)*
+
+The benchmark keeps all 731 SWE-Bench Pro instances and refines the broken ones. Public issue reports (GitHub issues, GitHub review repositories, Hugging Face feedback and other public channels) are mapped onto the dataset, giving 119 candidates; an LLM assistant classifies each report (category, affected fields, relevant tests, valid/invalid/already resolved) and drafts a fix, and human experts revise 102 instances while rejecting 17. Gold patches are avoided.
+
+- Refinements by category: overly narrow test 75, misleading description 22, overly broad test 3, other (corrupted data or invalid paths) 2
+- Field-level edits: requirements 92 (90.2%), interface 60 (58.8%), problem_statement 59 (57.8%), test_patch only 17 (16.7%)
+
+**Key results:** Under the anti-hacking environment GLM-5.2 falls from 78.80% to 57.32% (−21.48 points; refinement recovers it to 59.51%), while DeepSeek-V4-Pro barely moves (49.98 → 49.11 → 49.93); confirmed answer-file access drops to zero.
+
+*Evolution:* Following the "Verified" precedent of SWE-bench Verified and SimpleQA Verified, it shows six of seven models score 14.5–26.1 points lower than on SWE-Bench Pro; the concurrent SWE-Bench Pro V2 takes a stricter route, auditing all tasks with experts and discarding rather than editing defective tests.
+
+### NeoHorse-1: Towards Recursive Self-Improvement via Agentic Post-Training with Routing Harness
+*2026 · method · `method_NeoHorse-1_2609.08183.txt` · arXiv [2609.08183](https://arxiv.org/abs/2609.08183)*
+
+The primary corpus is on the order of 10^5–10^6 trajectories produced by a deployed routing harness (heterogeneous model pool plus harnesses such as OpenSquilla), supplemented by public data (OASST2, Aya, OpenThoughts3, OpenR1-Math, ToolACE, APIGen, Nemotron-SFT-SWE-v3, HelpSteer2, UltraFeedback). Data is organized as trajectory → user turn (training unit) → subscene (adjacent turns sharing a local goal). The pipeline applies exact/near-dup dedup and decontamination against every eval suite; rule-based structural validation (causal order, tool-call/result closure) that sorts trajectories into complete, partially recoverable (only causally closed sub-trajectories kept) or quarantined; a six-dimension semantic evaluation (goal attainment, instruction adherence, tool use, evidence consistency, error recovery, termination) graded PASS/WARN/FAIL/NOT_EVALUATED by deterministic checks plus an evidence-restricted judge; and Scene/Goal/Outcome subscene labeling.
+
+- Each turn keeps the router's raw C0–C3 tier prediction, the policy-adjusted decision and the tier actually served
+
+**Key results:** Agentic post-training raises the 10-benchmark macro average from 58.94 to 64.87 (4B) and from 65.60 to 69.04 (9B); under a matched recipe, routing-harness data beats public Toucan tool-agent data by +6.26 avg (tau2 +11.31, HumanEval +8.54).
+
+*Evolution:* NeoHorse-1 extends harness-native data flywheels and trajectory SFT (FireAct, AgentTuning, Agent-FLAN) with on-policy distillation, reframing deployment logs as the feedback channel for recursive self-improvement and using router capability-demand predictions as a cheap difficulty signal; it is a single-iteration prototype.
+
+### An Open Recipe for IMO Gold: Training Nemotron for Olympiad Mathematics
+*2026 · rl · `rl_Nemotron-IMO_2609.10712.txt` · arXiv [2609.10712](https://arxiv.org/abs/2609.10712)*
+
+The SFT corpus (released as Nemotron-Math-Proofs-v3-SFT) starts from 15,879 hard AoPS proof problems from Nemotron-Math-Proofs-v1, selected by prior pass rates. DeepSeek-V4-Pro (Max mode) generates proofs up to 400K tokens with up to three verifier-feedback refinement rounds (350K tokens), plus verifier traces (scores 0/0.5/1) and meta-verifier traces. Malformed, empty or length-capped outputs are filtered, proofs must have non-empty Solution and Self Evaluation sections, and score-0 verifier traces are subsampled, giving 414,890 examples over 15,818 problems (58,543 proof, 67,971 refinement, 236,360 verification, 52,016 meta-verification).
+
+- RL set (Nemotron-Math-Proofs-v3-RL): 9,597 problems that Nemotron-3-Ultra solves in 1–3 of 4 attempts, judged by DeepSeek-V3.2-Speciale
+- Evaluation: the new Nemotron-IMO-Bench (200 novel problems written with Titu Andreescu) plus a 30-problem dev set (20 bench + 10 recent competition problems)
+
+**Key results:** The fully natural-language system scored 30/42 at IMO 2026, above the 29-point gold cutoff (full marks on P1, P2, P4, P5), finding all six submitted proofs within ~707M tokens and 1,464 GPU-hours.
+
+*Evolution:* The system follows the IMO 2025 natural-language gold results and the generate-verify-refine line of Huang & Yang and DeepSeekMath-V2, whose generator/verifier/meta-verifier data design it adopts; its main contribution is openness—checkpoints, SFT/RL data, code, compute accounting and a new uncontaminated benchmark.
+
+### DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression
+*2026 · report · `report_DeepSeek-V4.1-Flash_2609.19969.txt` · arXiv [2609.19969](https://arxiv.org/abs/2609.19969)*
+
+Pretraining uses 45T multimodal tokens at a 7:1 text-to-multimodal ratio. Low-information model-generated text (outputs of weaker models, poor machine translation) is filtered as "implicit duplication", more recent code is added, and image-text data is re-crawled from Common Crawl and filtered by relevance, semantic de-dup and SmolVLM quality scores. Post-training gains are attributed almost entirely to data: each task is a (problem, environment, verifier) triplet, the model is itself trained to construct tasks with difficulty and correctness as rewards, and tasks are re-audited from the trajectories of every RL run that uses them.
+
+- General-agent environments: mocked SaaS and enterprise tools reconstructed from employee and partner usage, plus replays of submitted failure cases
+- Coding environments come from hard or poorly solved agent sessions (de-duplicated by trajectory) and starred GitHub repos, each built by multiple agents: containerized setup, F2P/P2P checks, solution-leak removal, solver attempts, quality/hackability inspection and a repair loop
+
+**Key results:** With 16B active parameters, V4.1-Flash beats DeepSeek-V4-Flash (DeepSWE 54.4→74.2, Codeforces 3289→3471) and matches or beats Opus-5 on DeepSWE (74.0) and Terminal-Bench 2.1 (89.1), with a global KV cache about 1/4 of V4-Flash's.
+
+*Evolution:* This report refines DeepSeek-V4's sparse attention, mHC and OPD recipe, with the explicit claim that post-training algorithms barely matter at this stage and that gains come from scaling synthesized verifiable tasks, environments and scaffold diversity; it also documents agents exploiting real sandbox vulnerabilities during RL.
+
+### Qwen3.8-Omni: Towards Native Omni-Modal Agents
+*2026 · report · `report_Qwen3.8-Omni_2609.25611.txt` · arXiv [2609.25611](https://arxiv.org/abs/2609.25611)*
+
+Pretraining stage S2 uses ~2.5T tokens—text 1.1T, audio 0.7T (monaural plus multichannel), image 0.35T, video 0.15T, video-audio 0.3T—with unimodal and cross-modal data mixed from early pretraining and diverse natural-language prompts for instruction generalization. The AuT audio encoder is pretrained on a 20+-language corpus (Chinese:English:other = 3.5:3.5:3) supervised by transcripts from a dedicated Qwen ASR model. Post-training data is ChatML-serialized text-only, visual, audio and mixed-modality conversations, centered on trajectories from domain-specialist teachers (instruction following, reasoning, coding, agentic, visual, audio); RL uses interactive environments such as executable code sandboxes and harness-based interfaces.
+
+- No post-training dataset sizes are given; Talker training uses a dedicated balanced-data pipeline plus complex conversational-context corpora
+
+**Key results:** Against Qwen3.5-Omni-Plus it raises the average over 29 audio, audio-visual and agent evaluations by >25% while matching the text-only Qwen3.8-Flash (SWE-bench Pro 63.3 vs 62.5); agentic evidence gathering lifts OmniVideoBench from 63.4 to 67.8 with ~45.7% fewer tokens per query.
+
+*Evolution:* Succeeding Qwen3.5-Omni on the Qwen3.8-Next hybrid backbone, it moves the omni line toward long-horizon agentic productivity and follows the 2026 pattern of consolidating specialist teachers through multi-teacher distillation before unified RL.
+
+### Hunyuan-A13B Technical Report
+*2026 · report · `report_Hunyuan-A13B_2609.27284.txt` · arXiv [2609.27284](https://arxiv.org/abs/2609.27284)*
+
+Pretraining reuses the Hunyuan-TurboS pipeline (dedup, low-quality filtering, denoising, topic labeling, model-based extraction, semantic dedup) on a 20T-token corpus, with improved STEM acquisition yielding 250B high-quality STEM tokens plus a knowledge-labeling system and multi-dimensional difficulty grading. Reasoning SFT data covers math from textbooks, tests and competitions verified iteratively by generative reward models and automated checkers; code from GitHub via an OSS-Instruct-style pipeline validated by critic models and sandbox execution; ZebraLogic-style synthesized logic puzzles checked by CoT evaluators plus humans; and science problems verified by an LLM verifier and rejection sampling.
+
+- Reasoning RL: 150K prompts where the SFT model is unstable (math:code:logic:science = 2:2:1:1, 10% overlapping SFT), excluding multiple-choice, true/false and proof problems
+- Agent SFT from a five-role engine (user, planner, tool, agent, checker), sandbox/MCP/synthetic tools, 30+ system-instruction types and 20,000 format combinations
+
+**Key results:** With 13B active parameters, Hunyuan-A13B in slow-thinking mode scores 87.3 on AIME2024 (vs Qwen3-A22B 85.7, DeepSeek-R1 79.8, o1 74.3) and leads all compared models on BFCL v3 (78.3), ComplexFuncBench (61.2) and C3-Bench (63.5).
+
+*Evolution:* Building on Hunyuan-Large and Hunyuan-TurboS, it borrows DAPO's KL-free GRPO, DeepScaleR's context-length staging and Qwen3's hybrid-thinking tags; although its arXiv ID is 2609, the report is dated 2025-06-27 internally and documents a mid-2025 efficient open MoE.
+
+### Scaling properties of same-family on-policy distillation
+*2026 · method · `method_OPD-Scaling-SameFamily_2609.32722.txt` · arXiv [2609.32722](https://arxiv.org/abs/2609.32722)*
+
+A controlled math setup with no new data. Students are Qwen2.5 Base models (0.5B, 1.5B, 3B, 7B, 14B) first SFT'd on a Dolci-SFT subset (300K samples per epoch, 2 epochs) for chat-template instruction following; teachers are trained by GRPO on the mixed GSM8K + MATH training split of 14.8K examples, and OPD reuses the same prompts. The "gold score" is accuracy on the mixed GSM8K/MATH test split of 6.3K examples, on which both teachers and students are evaluated.
+
+- Off-policy cold start: one SFT epoch on teacher rollouts over 20K Dolci-Think-RL prompts; pure off-policy distillation uses 5 teacher responses per prompt for 5 epochs
+
+**Key results:** In every weak-to-strong pair the student's peak exceeds its teacher's score, and the joint law extrapolates to the held-out largest student and teacher within 0.7 (Vanilla) and 0.4 (Delta) points; an off-policy cold start costs 6.6/15.7/19.4 points for 3B/7B/14B students under the 0.5B expert.
+
+*Evolution:* The paper carries Gao et al.'s reward-overoptimization scaling-law method over to on-policy distillation, turning weak-to-strong OPD into a predictable tool and overturning Burns et al.'s bootstrapping gain for this setting (evidence limited to one family, one math mixture and single seeds).
+
+### Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+*2026 · rl · `rl_EAPO_2609.33781.txt` · arXiv [2609.33781](https://arxiv.org/abs/2609.33781)*
+
+No new data is built. All optimization-based methods train on DAPO-Math-17k-Processed with rule-based answer verification via Math-Verify. Rollouts are capped at 10,240 tokens for base models (soft overlong penalty from 8,192) and 38,912 for reasoning models (penalty from 32,768). The motivating analysis uses 20 moderately difficult problems per model (6–14 of 32 correct) from AIME24/25/26, HMMT26 and AMC23, plus a word-frequency study of 2,376 Qwen3-4B-Base responses comparing the top and bottom 10% entropy tails.
+
+**Key results:** EAPO gets the best mean avg@32 and pass@32 on all four backbones; on Qwen3-4B-Base AIME24 it reaches 20.2 avg@32 vs 12.5 for GRPO and 15.3 for RLRT, and its sign-entropy coupling beats uniform credit by 6.52 points.
+
+*Evolution:* EAPO extends the entropy-centric RLVR line after DAPO/GRPO (80/20 forking tokens, EntropyAdv, HAPO) with sign-dependent credit computed from rollout entropy alone, avoiding the PRMs, value models, extra rollouts or privileged teachers of fine-grained credit methods.
+
+### Inducing Process Supervision from Outcome-Only Reinforcement Learning
+*2026 · rl · `rl_TIPS_2609.36641.txt` · arXiv [2609.36641](https://arxiv.org/abs/2609.36641)*
+
+Training uses only trajectory-level outcome labels, with no step annotations. The math domain uses 3,200 trajectories sampled from the public SCAN-Pro dataset (built from the MATH training set); the agent domain uses 2,905 multi-turn trajectories from HotpotQA, GAIA, tau2-Bench and BFCL, decontaminated against AgentProcessBench by dropping trajectories whose task-prompt 5-gram Jaccard similarity exceeds 0.8. Reward is rule-based and binary—1 if the parsed outcome label matches ground-truth trajectory correctness—and the generated step labels are never scored.
+
+- Matched-data baselines (AutoPSV, ImplicitPRM) are re-implemented at both 3.2K and 197K trajectories
+
+**Key results:** From only 3.2K outcome-labeled trajectories, TIPS-Qwen3-4B-Thinking-2507 scores 85.2 ProcessBench F1, beating Qwen2.5-Math-PRM-72B (78.3) and GenPRM-32B (77.6), while ImplicitPRM and AutoPSV trained on 197K trajectories reach only 41.5 and 45.3.
+
+*Evolution:* TIPS sits between the PRM line (PRM800K, Math-Shepherd/SCAN, GenPRM/ThinkPRM) and reasoning reward models (RM-R1, J1), showing that GRPO on an outcome-only verdict yields a strong PRM as a byproduct and sidestepping the cost and label drift of Monte Carlo step estimation.
+
+### WEFT: Scaling Tool-Use Post-Training for General-Purpose Agents
+*2026 · code · `code_WEFT_2609.36887.txt` · arXiv [2609.36887](https://arxiv.org/abs/2609.36887)*
+
+MCP tool definitions are built from public tool documentation and business requirements. An environment-synthesis agent infers a shared database schema and execution contracts, then generates FastAPI backends validated with normal and boundary calls and state checks; a task-synthesis agent generates atomic tasks with E2E tests and certifies them by execution validation, tool-chain orthogonality pruning and tool-coverage targets. Coverage-aware sampling over five difficulty profiles (Simple 27% to Expert 12%) composes atomic tasks into cross-MCP DAGs with entity bindings, grounding initial state progressively in three rounds (entities, relations, distractors).
+
+- Totals: 8,172 MCPs, 64,755 tools, 41,695 atomic tasks and 11,884 composed tasks (median 20 atomic-task turns); Kimi K3 generates SFT trajectories for all composed tasks
+- RL keeps 1,954 of 5,000 candidate tasks where rubric-judge and executable-verifier scores on 16 Nex-N2-mini pilot rollouts agree under both Pearson and Spearman correlation
+
+**Key results:** WEFT-8B and WEFT-14B beat every evaluated matched-size environment-scaling baseline on BFCL V4, tau2-Bench and Claw-Eval; WEFT-14B exceeds Agent-World-14B by 6.41, 2.23 and 12.27 points.
+
+*Evolution:* WEFT responds to environment-scaling work (EnvScaler, Agent World Model, ScaleEnv, Agent-World) by arguing that environments are only one part of the learning-signal system—faulty tools, infeasible tasks and bad verifiers also corrupt it—and adds execution-driven repair plus atomic-turn credit assignment.
+
+### PhantomEnvironments: Training LLM Agents in Fictional Worlds
+*2026 · code · `code_PhantomEnvironments_2609.40221.txt` · arXiv [2609.40221](https://arxiv.org/abs/2609.40221)*
+
+All training data is rule-generated with no humans or LLMs, at zero marginal cost. The PhantomWiki generator builds a fictional universe of 1,000 people in 100 family trees (easy-mode relations: friendship and immediate family) and renders each person as a templated article that becomes a search document. Multi-hop questions come from context-free grammars (depth 16, up to 7 linear hops), and gold answers come from executing the attached Prolog query, so a question may have multiple answers. Aggregation ("how many") questions are removed as easy to reward-hack, and a new bidirectional anchor sampler removes the bias toward peripheral answer entities.
+
+- ~55K training and 5K validation questions; the real-data baseline is a 55K subsample of Search-R1's ~160K NQ+HotpotQA questions over the Wikipedia-2018 corpus
+
+**Key results:** RL in fictional worlds improves F1 for all four models, by 1.7× on average on the Wikipedia-2018 benchmarks and 2.2× on SynthWorlds/FRAMES; real data wins in-domain (Qwen2.5-3B 56.7 vs 52.2) but PhantomEnvs wins out-of-domain (32.1 vs 28.4).
+
+*Evolution:* Building on Search-R1 and PhantomWiki, the paper reacts to LLM-synthesized agent environments (ZeroSearch, ASearcher, WebSailor, SWiRL) and their hallucinated rewards, contamination and API cost by offering exactly verifiable, LLM-free environments that never go stale.
+
+### Scaling Verifiable Environments for Long-horizon Work Agents
+*2026 · code · `code_WorkForge_2610.04906.txt` · arXiv [2610.04906](https://arxiv.org/abs/2610.04906)*
+
+Domain experts distill workflows into reusable Scene Blueprints b=(workflow, deliverable, required sources, domain decisions). An acquisition agent searches, reads, downloads and previews real-world resources (repositories, datasets, web sources) to fill each blueprint, keeping original file organization; each workspace is then profiled into a summary, workspace facts (factual anchors) and artifact schemas/statistics. The result, WorkForge-16K, has 16,665 tasks across 40 professional domains (top: Office Productivity 8.36%, Data & Database 8.21%), averaging 42.3 files, 279 KB and 21.9 rubrics per workspace over 60 file types (53% tabular).
+
+- Real-world workspaces have 5.4× more files, 2.4× more file types and a 13× larger footprint than LLM-synthesized matched ones
+- Trajectories are generated by GLM 5.3 under Claude Code and OpenClaw harnesses (avg 31.8 steps, 33.8 tool calls, 76,485 tokens)
+
+**Key results:** SFT on WorkForge lifts Qwen3.5-35B-A3B-Base from 45.5 to 73.6 on GDPval and from 5.0 to 21.3 on APEX; WorkForge-27B reaches 82.4 on GDPval, above Qwen3.5-397B-A17B (79.7) with ~15× fewer parameters.
+
+*Evolution:* WorkForge reacts to automated environment synthesis (EnvScaler, Agent World Model, ClawGym, NexForge), whose mock or LLM-synthesized workspaces are small and clean, arguing that real-world files and fact-anchored verifiers are needed for professional work agents.
+
+### MiMo-V2.6: Scaling Reinforcement Learning Towards Self-Improvement
+*2026 · report · `report_MiMo-V2.6_2610.11959.txt` · arXiv [2610.11959](https://arxiv.org/abs/2610.11959)*
+
+Code RL tasks come from five pathways—GitHub PRs (with LLM-reconstructed issue specs when the issue is too thin), in-house employee "vibe coding" requests, specification-driven tasks, CodeMidas source-derived tasks and agent-expanded long-horizon tasks—plus filtered public and vendor data. Supervision is checked by specification-test alignment review, a 4-rollout auditing agent that flags false positives and negatives, and F2P/P2P stability across 8 reruns. General-agent environments are resettable local sandboxes built from real files and multi-agent software mocks, scored with atomic binary rubrics (code checks plus LLM checks with cross-judge agreement) and hardened with adversarial solutions.
+
+- Visual tasks are graded with pointwise/groupwise rubrics or pixel similarity; cyber tasks are OSS-Fuzz vulnerability reproduction, where a PoC must match the sanitizer's bug type and top project stack frame
+- A hack agent probes environments for exploits until none remain; the RL mix is 68% coding, 12% tool use, 13% aesthetic design, 3% context following and 4% cyber
+
+**Key results:** About $2.6M of RL compute raises MiMo-V2.6-Pro's DeepSWE score from 58.4 to 72.6 (vs 74.0 for Claude Opus 5) and lifts held-out-harness pass@1 from ~50% to 66%, with confirmed hacking below 2% of trajectories.
+
+*Evolution:* Building on MiMo-V2-Flash's backbone, MOPD and RL infrastructure, MiMo-V2.6 moves from verifiable-reward RLVR toward agentic graders that judge solution quality and behavior, adding systematic defenses against solution leakage and reward hacking.
+
+### MagicBeanStalk: Escaping the RLVR Zero Advantage Trap with Recursive Data Synthesis
+*2026 · data · `data_MagicBeanStalk_2610.12659.txt` · arXiv [2610.12659](https://arxiv.org/abs/2610.12659)*
+
+Math seeds come from a ~78K-problem open mixture (DAPO-Math-17K, Skywork-OR1-RL-Data, Turing Open-RL, a StackMathQA subset). Profiling with 8 gpt-oss-120b rollouts at 32K shows only 12.2% are "Goldilocks" (1–7/8 correct); ~88% sit in the zero-advantage trap (mostly 8/8, 6.3% 0/8). Seeds are verified hard problems (0/8, all rollouts terminating normally) whose teacher traces are rejection-sampled from a pool (Gemini 3 Flash, Claude Opus 4.6, DeepSeek V4 Pro, GPT 5.2, Kimi K2.6). From ~1,250 0/8 seeds MBS yields 3,370 descendants (42.8% qualified; 74.7% seed conversion vs 43.8% for direct seed synthesis), and the final filter requires Goldilocks for the target policy plus in-budget solvability (≥1 correct rollout terminating within the budget).
+
+- Finance: 340 expert questions on 17 credit agreements → ~25K document-grounded candidates → 14.2K Goldilocks problems, rewarded by a Qwen3-30B-A3B judge under a finance-aware rubric
+
+**Key results:** Continual RLVR on MBS data lifts gpt-oss-120b's 8-benchmark average from 61.2 to 69.8 (+8.6), versus +1.1 for the full 78K source mixture and +1.9 for Golden Goose; in finance, Qwen3-4B-Instruct gains +6.9 pass@1 on SecQue.
+
+*Evolution:* MBS reacts to the zero-advantage problem that DAPO-style dynamic sampling only filters away, treating hard 0/8 problems as specifications of missing skills and extending teacher-written seed synthesis (CoT-Self-Instruct, SwS, PromptCoT) and Golden Goose with policy- and budget-relative calibration and recursive decomposition.
+
+### AutoEnvScaling: Automating the Data Flywheel with Terminal Agents
+*2026 · code · `code_AutoEnvScaling_2610.14163.txt` · arXiv [2610.14163](https://arxiv.org/abs/2610.14163)*
+
+Training data are RL environments built by a proposer agent as complete Harbor tasks (instruction, container, hidden reference solution, tests). Each episode starts from an assignment naming a parent environment plus the solver's pass rate and most common failure; the proposer reads past solver trajectories and verifier outputs and builds an easier or harder variant, with web search allowed but benchmark pages blocked. Admission requires a successful build, reference reward 1, do-nothing reward <0.5, no 13-gram overlap with Terminal-Bench 2.1/4.0 task text, and a harbor-check review against the Terminal-Bench rubric; calibration then keeps tasks whose mean solver reward over 4–8 rollouts lies in [0.25, 0.75] with std ≥0.1, allowing up to two revisions.
+
+- For HiL-Bench, Claude Opus 5 generated 500 underspecified tasks with withheld-detail registries (vs 100 official)
+
+**Key results:** Running generation as a terminal task raises the valid-environment rate up to 25× over prompt-only generation at up to 75% lower cost; with Qwen3.6-35B-A3B as both proposer and solver, Terminal-Bench 2.1 rises 12.2 points (6.1 above Tmax).
+
+*Evolution:* AutoEnvScaling builds on terminal-environment synthesis (Endless Terminals, TermiGen, Tmax, SETA, RST) and proposer-solver self-play (Absolute Zero, R-Zero, SPICE, SPADE), but has an agent carry out the environment-design workflow end to end—a step toward recursive self-improvement through self-built training data.
+
+### SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+*2026 · code · `code_SPROUT_2610.14405.txt` · arXiv [2610.14405](https://arxiv.org/abs/2610.14405)*
+
+RL training uses SWE-bench Rebench v2 Filtered, selecting the top 2,115 tasks ranked by golden-patch length to emphasize long-horizon work. Reward is the task verifier's binary terminal test-suite reward, plus diagnostic feedback (failing tests, final patch, verifier output) that is used only by the analyst/reviewer roles and never shown to the learner. Rollout-collection experiments use the 113-task public DeepSWE, 89-task Terminal-Bench 2.1 and 51-task SWE-bench Pro v2 Hard.
+
+- Guided starting turns written during repair are filtered by a judge that rejects turns mentioning checkpoints, other branches or hidden tests
+
+**Key results:** RL on Qwen3.8-27B with SPROUT reaches 84.3 / 40.7 / 64.0 on SWE-bench Pro v2 Hard / DeepSWE / Terminal-Bench 2.1, beating basic GRPO by 13.9 points on average while cutting time per step by 39.5%.
+
+*Evolution:* SPROUT extends GRPO-style RLVR for SWE agents by attacking the all-fail-group problem on long horizons, making branching practical through full-filesystem per-turn microVM checkpoints plus self-guided, verifier-informed repair.
+
+### Apertus 1.5: From Open Text Models to Open Multimodal Reasoners
+*2026 · report · `report_Apertus-1.5_2610.15542.txt` · arXiv [2610.15542](https://arxiv.org/abs/2610.15542)*
+
+Only openly available, license-reviewed data is used, with robots.txt opt-outs applied retroactively and PII removed. The text SFT mix has 3,707,851 samples (math & reasoning 25.6%, multilingual 25.8%, code & functions 19.8%, regional 15.4%), decontaminated against 595 benchmarks by n-gram matching with manual review (and perceptual hashing against ~950K benchmark images). Capability filtering has an auxiliary non-thinking 8B SFT checkpoint sample 8 answers per verifiable prompt: prompts it solves at least once stay trace-free, while the rest get verified reasoning traces from Kimi-K2.6, Qwen3.6-27B, Gemma-4-31B and MiniMax-M2.7.
+
+- Tool data is execution-verified only (Toucan, EnvScaler, OpenSeeker, Jupyter Agent); tool declarations are injected into 131,557 non-tool chats
+- Image SFT pool: 43.9M sequences / 143.4B tokens; RL: 349,300 prompts (math, IF, code, translated Reasoning Gym, vision, tabular, LEXam); DPO: 245,898 Dolci-Instruct-DPO prompts scored by a Qwen3-235B rubric judge with MaxMin pairing
+
+**Key results:** Apertus 1.5 8B is the strongest compared 8B-class model on instruction following (IFEval 87.1, Multi-IF 83.7), and thinking lifts its MATH-500 from 51.2 to 71.4 and AIME24 from 7.5 to 22.9.
+
+*Evolution:* Building on Apertus 1.0 as a fully open model upgraded to image and audio input, it borrows OLMo 3's Dolci prompts, DAPO-style clipping and online DPO with MaxMin pairing; its lessons include filtering reasoning traces by what the model already solves.
+
+### Recursive Environment Scaling for General Long-Horizon Agents
+*2026 · code · `code_RES_2610.16397.txt` · arXiv [2610.16397](https://arxiv.org/abs/2610.16397)*
+
+Seeds are existing benchmark environments—294 tasks (105 Claw-Eval-Live, 100 Workspace-Bench-Lite, 89 Terminal-Bench 2.1)—plus a ClawGym training task pool. The baseline SFT set takes 8,428 distinct ClawGym tasks with one structurally complete DeepSeek-V4.1-Flash rollout each, deduplicated and filtered for complete messages, matched tool calls/returns and released native score ≥0.8 (3,381 full-score, 5,047 partial; ≤49,152 tokens; 190.52M input / 39.74M target tokens). The RES set applies RES to the same pool, with DeepSeek-V4.1-Flash collecting an equal number of new trajectories in the scaled environments under the same rules.
+
+- Malformed tool calls stay in context but are loss-masked
+- Overlap checks against all three benchmarks found no matches; manual review of 60 original/scaled pairs found no leakage or scoring bypasses
+
+**Key results:** RES lowers success for all six evaluated frontier models on all three benchmarks (by 57.14–77.14 points on Claw-Eval-Live), and with equal trajectory counts RES-trajectory SFT beats original-trajectory SFT in all nine model-benchmark comparisons by 7.00–14.61 points.
+
+*Evolution:* RES sits beside environment synthesis (EnvScaler, ScaleEnv, Agent-World) and recursive task synthesis (RST) but transforms existing benchmark environments in place, enabling paired comparisons and turning saturated benchmarks into harder variants and long-horizon SFT data.
+
+### Efficiently Learning To Reason or Not to Reason: Root-token Policy Optimization for Adaptive Thinking
+*2026 · rl · `rl_RPO-AdaptiveThinking_2610.17767.txt` · arXiv [2610.17767](https://arxiv.org/abs/2610.17767)*
+
+All data are self-generated or drawn from open sets. For SFT, the LRM samples trajectories on OpenR1-Math queries under two forced templates, SHORT (`<think>\n\n</think>\n\n`) and LONG (`<think>\n`), keeping only template-valid, exact-answer-correct samples: ~20K per mode (40K total) for full-parameter SFT and 4K per mode for LoRA, with no requirement that a problem be correct in both modes. R1-Distill models, which lack a no-think mode, take original OpenR1 solutions for LONG and Qwen2-Math-72B-Instruct distillations for SHORT, with instructional prefixes marking the mode.
+
+- RPO data: ~1K queries from part of s1k plus a compression dataset; items with LONG accuracy <0.25 are dropped and the rest stratified 1:1 into easy (acc_S ≥0.75) and hard (acc_S < acc_L ≤0.5)
+
+**Key results:** RPO's training compute is ~0.02× AdaptThink's (10,241 vs 522,240 PFLOPs at 8B); on R1-1.5B it reaches 51.3 average Pass@1 at 20.5% MATH500 Think% (RAR 0.96) vs AdaptThink's 56.5 (RAR 0.74) at a much larger budget.
+
+*Evolution:* RPO follows the learn-when-to-think line (AdaptThink, Thinkless, ARM, AdaReasoner) and takes token-selective RL to its extreme by updating a single root routing token, making adaptive thinking trainable on ~3 GPUs with open data.
+
+### Enabling Token-wise Importance Sampling in Off-Policy RLVR with Proximal KL Regularization
+*2026 · rl · `rl_ProxKL_2610.18738.txt` · arXiv [2610.18738](https://arxiv.org/abs/2610.18738)*
+
+Math-only RLVR with a binary boxed-answer verifier (+1 correct, −1 incorrect/invalid in the periodic-refresh runs). Periodic-refresh experiments train on DAPO-Math-17K; controlled-staleness experiments train on 9,453 prompts derived from FRPO's filtered DAPO-Math data, with all 4B runs adding DAPO-style dynamic sampling (discarding identical-reward prompt groups and resampling to fill the batch, same rule for all methods). No new dataset is built; the contribution is the off-policy update rule.
+
+**Key results:** Proximal KL beats GRPO on micro-averaged accuracy in all seven matched off-policy settings, by up to +2.58 points, and avoids the PG/CISPO collapses at 8B/32B under periodic refresh.
+
+*Evolution:* Building on GRPO/DAPO token-wise ratios, batch-size-invariant PPO and FRPO's Future-KL identity, it reacts to the growing off-policyness of asynchronous RLVR systems (AReaL, Slime, Miles) with a critic-free bounded future-KL in place of the clip gate.
+
+### LLM-jp-4 Technical Report
+*2026 · report · `report_LLM-jp-4_2610.19331.txt` · arXiv [2610.19331](https://arxiv.org/abs/2610.19331)*
+
+Strict reproducibility and licensing rules admit only data at release levels L1–L3 and only open-source-licensed models for data construction (no GPT, Claude or Llama outputs); datasets built with such models are rejected even if permissively licensed. This forced OSS rebuilds: FineWeb-Rescored re-annotates the 450K FineWeb-Edu documents with Qwen3-32B and scores all 24.5B FineWeb documents, MegaMath-Web-Pro-Max-OSS (83M docs, 67.4B tokens) is rebuilt with gpt-oss-120b, and mid-training regenerates LLM-jp-Corpus-Midtraining-v1 with gpt-oss-120b.
+
+- SFT targets (reasoning plus answer at low/medium/high effort) are synthesized by gpt-oss-120b from Nemotron, ichikara, WizardLM and other prompts, plus the new LLMC Math set (2,243 handwritten Japanese problems expanded to ~150K); only samples the judge rates 5/5 on all five quality dimensions are kept
+- DPO pairs are the max/min of 4 samples scored by a gpt-oss-120b judge
+
+**Key results:** LLM-jp-4-32B-A3B roughly doubles the previous generation's Japanese llm-jp-eval average (0.307 → 0.605), matching Qwen3-8B (0.608) and gpt-oss-20b (0.604), and beats gpt-oss-20b on MT-Bench JA (7.82 vs 7.33) at medium effort.
+
+*Evolution:* Successor to LLM-jp-3/3.1 and a Japanese counterpart to fully open efforts (OLMo, Pythia, Apertus), it reacts to license contamination in FineWeb-Edu and MegaMath by rebuilding them with Apache-licensed models, showing fully reproducible pipelines can match similar-scale open-weight models on Japanese tasks.
+
+### More Methods, Better Agents? A Reality Check on Self-Distillation in Agentic Reinforcement Learning
+*2026 · method · `method_SelfDistill-RealityCheck_2610.19789.txt` · arXiv [2610.19789](https://arxiv.org/abs/2610.19789)*
+
+No new training data; the benchmark reuses four agent environments with fixed task sets shared across all methods. ALFWorld uses 140 valid_seen games; ScienceWorld the AgentGym split with 2,059 training instances (after removing 61 overlapping task IDs) and 200 evaluation tasks; WebShop 128 fixed goals; Search-QA 3,125 questions (500 each from NQ, TriviaQA, PopQA, HotpotQA, 2WikiMultiHopQA and MuSiQue, plus all 125 Bamboogle) with top-3 passage retrieval. Rewards are outcome-based (10 for ALFWorld/WebShop success, 1 for a correct Search-QA answer, ScienceWorld score / 100) minus an invalid-action penalty (0.1, or 0.01 on Search-QA).
+
+- Teachers get privileged context from benchmark-specific skill banks (or future observations for OCSD)
+- A side survey counts 47 agentic-distillation arXiv papers in 90 days (25 Jun – 22 Sep 2026), about one every two days
+
+**Key results:** Only PCSD (+4.58) and AgentOPSD (+1.66) beat GRPO's twelve-setting mean and no method wins across settings; 112 of 120 method-setting comparisons cost more training time than GRPO, and 58 of those score lower.
+
+*Evolution:* The paper reacts to the 2026 surge of on-policy self-distillation methods for agentic RL, shifting emphasis from proposing methods to fair re-evaluation under one protocol and arguing that a well-tuned GRPO remains a strong baseline.
+
+### Priming Base Models for Agentic Post-Training: An Open Midtraining Recipe
+*2026 · method · `method_Open-Midtraining-Recipe_2610.22019.txt` · arXiv [2610.22019](https://arxiv.org/abs/2610.22019)*
+
+A ~380B-unique-token blend of mostly natural software-engineering data plus a bounded share of agent traces. Issue-PR data contributes 216.9B unique tokens (40.8% of the blend; 12.1M merged PRs from GitHub repos with ≥10 stars, issue-PR pairs checked by a structured LLM judge with seven failure modes and repaired or removed). Dependency-connected repositories add 104.1B (20%; from the Nemotron 3 pretraining corpus, 14 languages, kept only if ≥20% of code files import another file—10% for Ruby—serialized README-first in depth-first import order, packed at 256K, Python upweighted to 31%). Agentic traces add 39.4B (10%; >1M trajectories, ~500K queries, 30M tool calls from >10 scaffolds including OpenHands, Codex, Claude Code, Terminus and SWE-agent, with the best traces reserved for SFT).
+
+- Diff data 16.0B (3%; 733,705 multi-file edits and 377,618 code-evolution documents from 6,550 repos); build/CI logs 6.5B (1.2%; LogHub, GHALogs, 632 LLM-written diagnosis examples); plus 20% pretraining replay and 5% long-context data
+- All sources are permissively licensed, decontaminated against SWE-bench and Terminal-Bench, secret-redacted and loss-masked on hashes, timestamps and delimiters; trace filtering drops leakage, unfinished runs, malformed calls and loops (~1%)
+
+**Key results:** On Nemotron 3.5 Lightning, 500B midtraining tokens improve SWE-bench Verified/Multilingual/Pro by 3.8/7.0/3.5 points after identical SFT; on Nemotron 3.5 Super, midtraining averages +8.6 SWE-V and +6.8 Terminal-Bench 2.1 across harnesses after short SFT, with agent traces supplying most of the gain.
+
+*Evolution:* The paper opens up the midtraining stage that Qwen3-Coder-Next, GLM-5, Kimi-Dev, daVinci-Dev and Composer 2 describe only at a high level, moving natural SWE data and lower-tier traces into a 256K pretraining-style stage in response to evidence that very long SFT hurts later RL trainability.
+
+### Mosaic: Multi-Session Agentic Reinforcement Learning
+*2026 · rl · `rl_Mosaic_2610.22174.txt` · arXiv [2610.22174](https://arxiv.org/abs/2610.22174)*
+
+Training uses REDSearcher_RL_1k, 1,000 challenging deep-search tasks with ground-truth answers; no new data is constructed. The agent has two tools, search (Serper) and visit (Jina Reader). Reward is a binary outcome from an LLM judge (deepseek-v4-flash, temperature 0.0, max 10 output tokens, thinking disabled) that accepts equivalent wording, aliases and abbreviations. The same ground-truth answer also builds the dense session-level signal: the teacher-forced average log-likelihood of the answer tokens under the pre-update actor, appended after a fixed "Now there's enough information to answer." continuation.
+
+**Key results:** On BrowseComp with Qwen3.5-4B, Mosaic reaches 38.86% accuracy under context compaction vs 35.31% for broadcasting (a 10.1% relative gain) while cutting average sessions from 3.17 to 2.35.
+
+*Evolution:* Mosaic extends GRPO-based agentic RL (Search-R1-style search agents) to trajectories broken by context compaction and subagent forking, moving IGPO's turn-level information-gain reward to the session level with type-conditioned normalization.
+
+### Self-Evolving Coding Agents via Harness-Policy Optimization
+*2026 · code · `code_Self-HPO_2610.22791.txt` · arXiv [2610.22791](https://arxiv.org/abs/2610.22791)*
+
+The training set follows Orchard: 2,484 Python SWE tasks drawn from SWE-rebench, SWE-rebench V2 and Scale-SWE, shared between harness search and RL, with binary executable-verifier rewards. The initial harness search set is 300 tasks sampled at random; each later search set is the set of hard tasks never resolved in any rollout during the preceding policy step, re-run with the updated harness-policy pair to produce fresh failure evidence. The proposer may read reference fixes for search-set tasks to compute diagnostics (coverage gap, precision gap, submission loss, fix archetypes) but may not inject reference patches or task-specific facts into the harness.
+
+- The SFT baseline uses only resolved Opus 4.8 trajectories on the same tasks
+
+**Key results:** Self-HPO lifts Qwen3.5-35B-A3B's average resolve rate across three SWE benchmarks from 57.8% to 64.8% (Verified 61.0 → 69.5), beating RLVR by 2.9 and Self-Harness by 4.7 points; the evolved harness (+3.5) and trained policy (+3.4) jointly give +8.5.
+
+*Evolution:* Self-HPO joins harness optimization with a frozen policy (Meta-Harness, Self-Harness, ADAS-style search) and policy RL under a fixed harness, making the RL-trained policy its own next harness proposer and deriving the harness search set from tasks the RL step left unsolved.
+
+### How Data Scales in Agentic Reinforcement Learning: Laws and Synthesis Strategies
+*2026 · data · `data_AgenticDataScaling_2610.23946.txt` · arXiv [2610.23946](https://arxiv.org/abs/2610.23946)*
+
+Agentic data is decomposed into three cardinality axes: tasks D_T (unique specs, deduplicated at sentence-embedding cosine distance >0.15 with gte-Qwen2-1.5B), environments D_E (instances identified by a structural-signature hash over tool/API surface, state schema, transition semantics and verifier, with content-only seeds collapsed—e.g. 2,048 raw math+code generator outputs → 256 instances), and trajectories D_τ (rollouts per task-environment cell), plus a sparse/dense reward control. Testbeds are math+code TIR (12k ZeroTIR-style synthetic problems), SWE (SWE-Gym, 2.4k issues across 11 repos), WebArena-Lite (5 sites × 200 tasks), AppWorld (250 tasks × 9 apps) + ALFWorld, and a search domain.
+
+- Synthesis uses AWM/GenEnv for environments, AutoPlay/SCA/RLVE for tasks and policy rollouts (SWiRL, TDScaling, Self-Play) for trajectories, all re-run in a common harness with a Qwen3-32B generator
+
+**Key results:** Scaling exponents order environment > task > trajectory in all 21 tested settings, and the compute-optimal recipe (D_E ~ C^0.34, D_T ~ C^0.27, D_τ ~ C^0.13, N ~ C^0.26) predicts 51.7% vs 51.3% measured on a held-out Qwen3-14B run, a 1.4×–1.7× compute-efficiency gain over Chinchilla-transferred and trajectory-heavy allocations.
+
+*Evolution:* The paper extends Kaplan/Chinchilla and RL-scaling studies (ScaleRL, ZeroTIR's Agent RL Scaling Law) that treat RL data as one scalar, arguing that the common practice of scaling trajectory resampling has the flattest exponent and turning "where to synthesize" into a budget-allocation problem.
+
+### SWE-Bench Pro V2: A Cleaner, Harder-to-Game Coding Benchmark
+*2026 · method · `method_SWE-Bench-Pro-V2_2610.24206.txt` · arXiv [2610.24206](https://arxiv.org/abs/2610.24206)*
+
+Starting from the 731 tasks of SWE-Bench Pro Public v1.0 (11 repositories in Python, Go and JavaScript/TypeScript), V2 releases 642: 391 carry a task-specific repair and 89 were discarded, so 480 tasks (66%) were repaired or removed while no reference solution was changed. Flags come from an artifact audit (an LLM agent comparing instruction, tests and reference patch without execution; 161 tasks) and a failure audit (an LLM judge attributing failed runs of Claude Code+Opus 5, Codex+GPT-5.6 and mini-SWE-agent with both models; 54 tasks, 39 new), 200 tasks in total.
+
+- Defect categories (repaired/discarded): unstated test requirement 119/22, verifier or environment defect 228/19, insufficient tests 1/33, solution leakage 18/4, spec-test contradiction 10/5, miscellaneous 15/6
+- A 51-task Hard split keeps tasks where at least two of five model families fail (54 candidates, 3 removed by experts); every Hard task passes its reference and fails the empty patch
+
+**Key results:** Every one of the 642 V2 tasks is solved by at least one frontier system (Opus 5 in Claude Code: 99.4%), while the Hard split spreads systems from 52.9% to 98.0%; network-enabled solution retrievals and forged dependencies that passed in-sandbox all fail under the locked protocol.
+
+*Evolution:* A maintenance release of SWE-Bench Pro that reacts to git-history leakage and new exploits (in-sandbox binary replacement, Go module-cache forgery); unlike the concurrent SWE-Bench Pro Verified, it audits every task, never edits hidden tests, uses a network allowlist and re-grades in a clean container.
+
+### Muse Glimmer 30B: An On-Device Agentic Model
+*2026 · report · `report_Muse-Glimmer_2610.24628.txt` · arXiv [2610.24628](https://arxiv.org/abs/2610.24628)*
+
+Pretraining data covers web, code, STEM, multilingual text and images (knowledge cutoff 2026-01-04), filtered with heuristics and quality classifiers, aggressively deduplicated and decontaminated against benchmarks. Agentic SFT data comes from a synthetic pipeline modelled on Agents Research Environments: personas are sampled from demographics and Big Five traits or grounded in real text, each gets a "universe" of 10–14 contacts with weeks of email, calendar and WhatsApp history plus mock CLI and GitHub tools returning real-format JSON, and scenarios with verifiable rubrics are generated on top. Post-processing drops failed, duplicate and fourth-wall-breaking trajectories, loss-masks bad tool calls, and removes hallucinated or false-success traces via grounding judges.
+
+- Teacher rollouts from Muse Spark RL/RLHF runs are kept above a reward threshold (later checkpoints preferred) and stripped of grader metadata and teacher-identity references
+- Privacy (Contextual Integrity) and safety traces are prompt-distilled from Muse Spark and rejection-sampled
+
+**Key results:** At high reasoning Muse Glimmer beats Gemma4-31B and Qwen3.6-27B on MCPAtlas (75.5 vs 54.2/62.5), SWE-Bench Pro (51.2 vs 36.9/50.2) and Omnilingual-GAIA2 (60.4 vs 37.5/45.0), but trails Qwen3.6-27B on OSWorld-Verified (65.9 vs 75.6) and Terminal-Bench 2.1 (51.7 vs 60.7).
+
+*Evolution:* Meta's on-device follow-up to Llama 4 distills the frontier Muse Spark model, arguing for a dense model under a hard 32GB memory budget and building privacy and prompt-injection robustness into training; the report gives no post-training data sizes.
+
+### Arctic-SWE: Revisiting the Long Horizon Agent Training by Modeling-System Co-Design
+*2026 · code · `code_Arctic-SWE_2610.24914.txt` · arXiv [2610.24914](https://arxiv.org/abs/2610.24914)*
+
+Two-pipeline curation runs over 21,099 existing tasks (R2E-Gym 3,606, SWE-rebench V2 6,584, Scale-SWE 10,909); no new tasks are synthesized. Pipeline 1 (execution only) re-runs suites on buggy and gold trees and instruments binding assertions, keeping 17,861 (84.7%). Pipeline 2 gives a Qwen3.8-27B agent the gold patch, tests and a shell and asks, in fixed order, whether gold fixes the issue, whether tests grade the issue (settled by writing plausible-but-wrong and correct-but-different counterfactual patches scored with the RL scorer), and whether the issue states what the tests demand; it keeps 7,500 (6,267 unchanged, 1,233 with rewritten issues).
+
+- 5,351 suites (30%) are too_loose; test strengthening repairs 4,909 (91.7%)
+- Git history is pruned and egress denied in all sandboxes; decks are screened against SWE-bench Verified at ID and repository level
+
+**Key results:** On unchanged R2E-Gym data Arctic-SWE lifts Qwen3.5-4B from 47.4% to 62.0% SWE-bench Verified pass@1, matching FrogNano's 61.5% with ~1/6 the training rollouts; with curated data the 4B reaches 65.0/38.3/59.7 and the 9B 65.7/39.6/70.2 on Verified/Pro-v1/Pro-v2.
+
+*Evolution:* Arctic-SWE reacts to hard-to-reproduce SWE-agent RL baselines (R2E-Gym, DeepSWE, SkyRL, FrogNano, MiMo) with a reproducible async baseline, and shows fail-to-pass validation is too weak, motivating counterfactual-patch auditing and test strengthening of training rewards.
+
+### Self-Credit: Credit Assignment for Long-Horizon Agentic RL via Intra-group Rescaling
+*2026 · rl · `rl_Self-Credit_2610.28388.txt` · arXiv [2610.28388](https://arxiv.org/abs/2610.28388)*
+
+No new data is built. For BrowseComp-Plus the dataset is split into 747 training and 83 test questions, with the static BrowseComp-Plus corpus and index as the search backend. For deep research, training uses 1K QA pairs from OpenResearcher with its static browser harness, while evaluation on GAIA (text-only subset) and xBench-DeepSearch uses an open web search API. Reward is a binary LLM-judged outcome (a Qwen3-32B judge on BrowseComp-Plus; a DeepSearchQA-style rubric for deep research).
+
+- Format gating: an empty or invalid citation line zeros the whole rollout's reward, and out-of-range citations are stripped
+
+**Key results:** On BrowseComp-Plus, Self-Credit improves Qwen3-8B and Qwen3-32B by 37.0 and 36.2 points over zero-shot (to 40.6 and 47.0), beating the strongest RL baselines by 8.5 and 5.6 points.
+
+*Evolution:* Self-Credit combines compaction-augmented agentic RL (SUPO, CompactionRL, ECHO) with GiGPO-style group turn-level credit, matching turns by the evidence they retrieve and showing that a policy's own summaries can supply usable process supervision for long-horizon search agents.

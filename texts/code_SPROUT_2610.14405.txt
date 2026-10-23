@@ -1,0 +1,2394 @@
+October 9, 2026
+
+SPROUT: Scaling Agentic Reinforcement Learning
+for Long-Horizon Software Engineering
+Mengyang Liu1,2
+Xuning He1
+1
+
+arXiv:2610.14405v1 [cs.SE] 9 Oct 2026
+
+4
+
+Weiming Wang1
+
+Xue Jiang5
+
+Haixin Nan3
+
+Yu Wu1
+
+Peize Li4
+
+Shihong Huang1
+
+Yihong Dong1,B
+
+Shanghai Jiao Tong University 2 Amazon 3 Nanjing University
+King’s College London 5 Peking University
+
+ABSTRACT
+
+Reinforcement learning (RL) has driven substantial progress in coding agents by relying on
+verified successful trajectories as learning signals. However, such trajectories are scarce in
+long-horizon software engineering tasks, where a minor error can invalidate the entire rollout.
+Repeatedly restarting from the initial state is commonly used yet inefficient, and resetting
+only the context with working directory misses state changes such as installed dependencies.
+Therefore, branching from intermediate steps to preserve earlier progress requires restoring
+both the agent context and execution environments. In this paper, we present SPROUT
+(SnaPshot-based RollOUT), an agentic RL rollout framework that scales long-horizon coding
+tasks by resuming and branching from intermediate states. Specifically, SPROUT was built
+on top of a lightweight infrastructure that checkpoints both the filesystem and the agent
+context after each assistant turn. A verifier-guided backtracking policy then selects where to
+resume a failed attempt and how to proceed. Extensive experiments on long-horizon coding
+tasks show that SPROUT achieves up to 23.6% improvement over pass@k across various
+LLMs, while using 32–52% of their tokens. For RL training of Qwen3.8-27B, SPROUT stably
+outperforms standard GRPO by 13.9 points on three long-horizon coding benchmarks while
+cutting the time per training step by 39.5%. SPROUT thus makes RL on long-horizon coding
+tasks both more effective and cheaper to scale.
+Code / Project Page
+Correspondence: dongyh@sjtu.edu.cn
+
+1 Introduction
+Coding agents are becoming capable of completing increasingly long tasks in real software environments, such as resolving issues in large repositories (Jimenez et al., 2024; Yang et al., 2024b; Huang
+et al., 2026a). For such tasks, reinforcement learning with verifiable rewards (RLVR) has become the de
+facto training paradigm (Shao et al., 2024a; He et al., 2026a; Wu et al., 2026): the agent attempts a task
+in an executable environment, a verifier such as the task’s test suite checks the final result, and the
+policy is updated from these outcomes. Such training is especially expensive on long-horizon tasks. A
+single attempt may read a large, unfamiliar codebase, install dependencies, build artifacts, and run
+test suites, and it can take hours to finish.
+The longer the task, the harder it is to learn from. The verifier reward is usually binary, so an attempt
+receives credit only if its final solution passes. Over a long attempt, one wrong decision anywhere, such
+* Work done during research internships at RISE-X Lab, School of Computer Science, Shanghai Jiao Tong University.
+† Work conducted outside of the authors’ roles at Amazon.
+
+B: Corresponding author.
+
+1
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+
+78.6
+
+71.7
+
+100
+
+67.3
+
+80
+
+100
+
+0
+
+Resolve rate (%)
+
+Claude Sonnet 5
+80
+72.6
+
+60
+
+78.8
+
+85.8
+
+60
+
+62.8
+
+50
+
+100
+
+Tokens (% of Pass@4)
+Pass@1
+
+Pass@4
+
+0
+
+50
+
+5
+
++9.8 pp
+
+74.5
+
++24.7 pp
+
+−39.5% 3
++7.1 pp
+
+40
+
+68.1
+
+20
+
+100
+
+4
+
+3.77 h
+
+64.0
+
+62.7
+
+Tokens (% of Pass@4)
+Shepherd
+
+SPROUT
+
+60
+
+42.5
+
+46.9
+
+0
+
+80
+
+−54%
+
+40
+
+40
+
+100
+
+GPT 5.6 Luna
+
+−48%
+82.3
+
+80
+
+50
+
+GRPO
+
+84.3
+
+78.8
+72.3
+
+37.2
+
+50
+
+100
+
+−68%
+92.0
+
+40
+
+0
+
+Base (no RL)
+
+98.2
+
+−52%
+
+60
+
+(b)
+
+Kimi K3
+
+40.7
+37.2
+33.6
+
+49.4
+
+2.28 h
+
+39.3
+
+SWE-bench DeepSWE TerminalPro v2 Hard
+Bench 2.1
+
+2
+
+Time per
+RL step
+
+Time per RL step (h)
+
+80
+
+Qwen3.8 27B
+
+Resolve rate (%)
+
+Resolve rate (%)
+
+(a)
+
+1
+
+SPROUT
+
+Figure 1. SPROUT: branch from checkpoints instead of restarting. Resuming a failed rollout from the step where
+
+it went wrong beats resampling it from scratch, at inference time and in RL. (a) DeepSWE, four models: SPROUT
+beats Pass@4 on every model while spending 48–68% fewer tokens; Shepherd and entropy-based branching do
+not. (b) RL with Qwen3.8-27B: training on SPROUT rollouts improves over GRPO by 7–25 pp on three mainstream
+agentic benchmarks. Each RL step is 40% faster and cheaper than sampling from the beginning.
+
+as an incorrect patch after hours of correct setup, is enough to make the reward zero, and successful
+attempts become rare as the horizon grows. In group-relative methods such as GRPO (Shao et al.,
+2024a), a task whose attempts all fail has zero advantage for every attempt and contributes no gradient.
+The expensive rollouts spent on the hardest tasks thus produce no learning signal, even when most of
+their steps were correct.
+Two strategies are commonly used to obtain more positive signal. The first samples more attempts per
+task (Brown et al., 2024b; Li et al., 2022), which multiplies an already high cost: every new attempt
+redoes its exploration and setup from scratch and can repeat the same mistake. The second branches
+from intermediate steps of earlier attempts. In a coding environment, this requires three things. The
+restored environment must match the agent’s context at the branch point, including the files the agent
+edited, the packages it installed, and the artifacts it built anywhere in the system. Checkpoints must
+be cheap enough to take at every step, since any step may turn out to be the right place to branch. The
+branch point itself must also be chosen well. Existing methods miss at least one of these requirements.
+Tree search and reflection methods (Yao et al., 2023a; Zhou et al., 2024; Shinn et al., 2023), as well
+as CBPO (Wang et al., 2026a), branch only within the conversation. Among RL methods that restore
+sandbox states, Shepherd (Yu et al., 2026) versions only the agent’s workspace, BPO (He et al., 2026a)
+snapshots containers only at a few selected steps, and both rely on layered container snapshots with
+hard limits on depth. Full virtual machine snapshots are complete but must store guest memory at
+every step, making the storage requirement unacceptable on long horizon tasks. To choose branch
+points, BPO uses policy entropy without consulting the verifier, and Shepherd delegates the choice to
+a stronger external model. Their RL experiments focused on tasks normally take 8 - 25 steps, leaving
+long horizon unexplored.
+In this paper, we present SPROUT (SnaPshot-based RollOUT), an agentic RL rollout framework
+that scales long-horizon coding tasks by resuming and branching from intermediate states. Sprout
+is composed of three components: 1) a restorable execution layer runs each attempt in a microVM
+(Agache et al., 2020) and take a snapshot of its filesystem incrementally after every assistant turn,
+pairing each checkpoint with the matching agent context. 2) a verifier-guided backtracking policy
+decides where to branch (Figure 3): the actor itself reviews failed trajectories with the verifier’s
+feedback, chooses where to resume, and proposes the first action of the new continuation, so the
+recovered trajectories do not import knowledge from a stronger model. 3) a GRPO-based training
+procedure learns from the branched rollouts and distills the guidance used during search into the base
+policy.
+We evaluate SPROUT on various mainstream long-horizon agentic coding benchmarks, i.e., DeepSWE,
+2
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+
+(a) Independent rollouts
+
+Parallel attempts can all fail
+
+Repeated exploration + setup
+
+Same task
+
+Different failed continuations
+
+Rollout 1
+
+ls
+
+rg
+
+pip install
+
+edit
+
+Rollout 2
+
+ls
+
+rg
+
+pip install
+
+rg
+
+edit
+
+Rollout 3
+
+ls
+
+rg
+
+pip install
+
+edit
+
+test
+
+(b) SPROUT
+
+Restore progress. Explore new continuations.
+
+R=0
+
+test
+test
+
+Repeated execution
+
+2
+
+No positive reward
+
+1
+
+Lower continuation cost
+
+2
+
+Positive feedback
+
+R=0
+R=0
+
+edit
+
+1
+
++ token cost
+
+All-zero rewards
+
+New continuations
+Saved at each turn boundary
+
+Same task
+
+Turn 1
+ls
+
+Turn 2
+
+T1
+
+rg
+
+pip install
+
+edit
+
+test
+
+R=1
+
+edit
+
+test
+
+R=0
+
+Corrective start turn
+
+T2
+
+Original failed continuation
+
+Agent context
+
+edit
+
+Each checkpoint pairs
+Agent context
+
++
+
+test
+
+R=0
+
+Reuse saved progress
+without re-execution
+
+Reward contrast
+
+Environment snapshot
+
+Figure 2. SPROUT reuses failed rollouts for efficient exploration. (a) Independent rollouts repeat costly prefixes.
+(b) Guided by verifier feedback, the same agent policy resumes from paired context and VM checkpoints to
+explore new continuations.
+
+Terminal-Bench 2.1, and SWE-bench Pro v2 Hard. Compared with a single attempt per task, SPROUT
+raises the resolve rate on DeepSWE from 72.3% to 98.2% with Kimi K3, from 46.9% to 82.3% with
+Claude Sonnet 5, and from 42.5% to 85.8% with GPT 5.6 Luna, exceeding four independent attempts
+while using 32–52% of their tokens. For RL, we train Qwen3.8-27B with SPROUT on a subset of
+SWE-bench Rebench v2. Relative to the base model, training raises the resolve rate from 62.7% to
+84.3% on SWE-bench Pro v2 Hard, from 37.2% to 40.7% on DeepSWE, and from 49.4% to 64.0% on
+Terminal-Bench 2.1, ahead of standard GRPO on the same tasks (74.5%, 33.6%, and 39.3%) while
+cutting the 39.5% of the time per training step.
+
+2 Related Work
+Long-Horizon Coding Agents. Coding agents solve software engineering tasks by interleaving
+reasoning with tool calls in interactive environments (Yao et al., 2022; Dong et al., 2024; Wang et al.,
+2024). Frameworks such as Mini-SWE-agent (Yang et al., 2024a), OpenHands (Wang et al., 2025),
+OpenCollab (Hsu et al., 2026), and Claude Code (Anthropic, 2025) let them navigate repositories, edit
+code, and validate changes through execution, and benchmarks such as SWE-bench Verified (OpenAI,
+2024), SWE-bench Pro (Deng et al., 2025), DeepSWE (Huang et al., 2026b), and Terminal-Bench
+2.1 (Merrill et al., 2026) evaluate them on increasingly long-horizon tasks. A single attempt can span
+tens to hundreds of tool calls and fail on a single error, after which it is usually discarded and
+resampled from scratch, redoing progress such as understanding the repository and localizing the
+root cause. SPROUT instead resumes failed attempts from intermediate states and reuses their prior
+progress.
+Tree Search and Backtracking. Repeated sampling increases task coverage but restarts every sample
+from the initial state (Brown et al., 2024a; Jiang et al., 2025). Tree-search methods instead expand
+and backtrack over intermediate states (Yao et al., 2023b; Hao et al., 2023; Zhou et al., 2023), much
+as Go-Explore first returns to a visited state and then explores (Ecoffet et al., 2021), while reflection
+methods correct errors in later attempts using verbal or tool feedback (Shinn et al., 2023; Gou et al.,
+2024). In software engineering, SWE-Search (Antoniades et al., 2025) applies Monte Carlo tree search
+to issue resolution, and Shepherd (Yu et al., 2026) delegates the choice of where to intervene over
+reversible traces to a stronger external model. Because agents edit files, install packages, and build
+artifacts, branching only within the conversation, as tree search and reflection methods do, leaves the
+environment inconsistent with the agent’s context, and Shepherd versions only the agent’s workspace.
+SPROUT restores the full filesystem together with the matching agent context and lets the actor itself,
+rather than a stronger model, use verifier feedback to choose where to branch and how to continue.
+3
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+full, partial, no support; – not applicable. Consistent:
+the agent context and the environment are restored to the same step. Full scope: the restored environment covers
+the whole disk, not only a workspace. Per-step: every tool call of a long trajectory yields a restorable checkpoint.
+Compact: checkpoints keep incremental disk changes, snapshot is cheap enough for taking snapshot for each tool
+call. Failure-aware: branching uses verifier feedback on the failed attempt. Self-guided: the trained policy, not a
+stronger model, makes the branching decisions.
+Table 1. Comparison with representative approaches.
+
+State restoration
+Method
+
+Consistent
+
+Branch selection
+
+Full scope
+
+Per-step
+
+Compact
+
+Failureaware
+
+Self-guided
+
+–
+
+–
+
+–
+
+Docker
+
+–
+
+–
+
+MicroVM snapshots
+
+–
+
+–
+
+Retry with feedback
+Reflexion
+Branching for RL
+TreeRL / CBPO
+
+–
+
+BPO
+Shepherd
+Checkpointing substrates
+
+SPROUT (ours)
+
+Stateful Sandboxing and Agentic RL. In sparse-reward agent tasks, groups whose attempts all fail
+are common and yield no gradient under group-relative methods such as GRPO (Shao et al., 2024b).
+Several RL methods therefore branch from intermediate states, including VinePPO (Kazemnejad et al.,
+2024) for advantage estimation, TreeRL (Hou et al., 2025) for process supervision, SPARK (Wu et al.,
+2026) at critical states identified by the agent’s own decision signals, CBPO (Wang et al., 2026b) for
+contrastive branching, and BPO (He et al., 2026b) with container snapshots. However, most of these
+methods branch only within the conversation, which in coding environments leaves the environment
+inconsistent with the agent’s context, while BPO can resume only from a few steps selected by policy
+entropy without consulting the verifier, so neither approach supports consistent branching from an
+arbitrary tool boundary. Among checkpointing mechanisms (Wang and Zheng, 2026; Li et al., 2025;
+Xu et al., 2025), layered container snapshots (Merkel et al., 2014) have hard limits on depth and full
+microVM snapshots (Agache et al., 2020) must store guest memory at every step. SPROUT checkpoints
+the full filesystem incrementally after every tool call and pairs each checkpoint with the matching agent
+context, so any tool boundary can be restored with low storage overhead and without re-executing the
+prefix, enabling more efficient exploration to obtain learning signals.
+
+3 SPROUT
+SPROUT is a rollout framework for long-horizon agentic tasks, it allows resuming execution from any
+recorded intermediate state of an earlier attempt and explore alternative continuations from that state.
+We first formulate the rollout collection problem and give an overview of the framework. We then
+describe the execution layer that enables resumption and the verifier-guided backtracking policy that
+determines where to resume and how to continue. Finally, we present policy optimization with the
+resulting rollouts.
+3.1 Problem Formulation
+
+A software engineering task x = (q x , e0 ) consists of a description q x and an initial environment e0 .
+The agent interacts with the environment in turns. In turn t, the actor policy πθ produces an assistant
+message at consisting of reasoning followed by a sequence of tool calls ( a1t , . . . , ant t ). The harness
+executes these calls in order and returns their results ot+1 = (ot1+1 , . . . , otn+t 1 ) as the observation of the
+turn. After t completed turns, the agent is at boundary t with joint state st = (et , ht ), where et is the
+environment after all tool calls of the preceding turn have completed and ht is the context retained by
+4
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+the agent harness. Each turn follows
+at ∼ πθ (· | ht ),
+
+(et+1 , ot+1 ) ∼ Px (· | et , at ),
+
+ht+1 = Update(ht , at , ot+1 ),
+
+(1)
+
+where Px is the transition and observation distribution induced by executing all tool calls of at , and
+Update is the harness’s context-management procedure. Boundaries lie between turns rather than
+between individual tool calls. Within a turn, the actor has already committed to all of its calls, so an
+environment state reached partway through the turn has no matching agent context from which the
+policy could continue. A completed attempt with T turns is a trajectory τ = (h0 , a0 , o1 , . . . , a T −1 , o T ),
+and τ≤t denotes its prefix up to and including ot . The task verifier returns
+
+( R x (τ ), d x (τ )) = V x (τ ),
+
+R x (τ ) ∈ {0, 1},
+
+(2)
+
+where R x is the binary terminal reward and d x (τ ) is diagnostic feedback such as failing tests. We call
+a trajectory with R x (τ ) = 1 a positive trajectory.
+3.2 Framework Overview
+
+The central capability of SPROUT is local access: a search procedure can return to an earlier joint state
+and resume execution from it (Weisz et al., 2021; Yin et al., 2022). During an attempt τi , the framework
+records a handle ci,t at each turn boundary t, pairing the environment checkpoint with the matching
+agent context. A valid handle instantiates a branch state
+e′ = Restore(ci,t ),
+
+h′ = Recover(ci,t ),
+
+s ′ = ( e ′ , h ′ ),
+
+(3)
+
+where Restore brings a fresh sandbox to the checkpointed environment and Recover returns the context
+at the same boundary, so e′ and h′ both correspond to the executed prefix τi,≤t . A new continuation η
+sampled from s′ yields the attempt
+τ ′ = τi,≤t ⊕ η.
+(4)
+The prefix is inherited rather than re-executed: its t turns remain part of τ ′ , and only η requires new
+execution.
+This interface separates execution from search. The execution layer makes recorded states available for
+isolated continuations, and a replaceable search policy decides which states to revisit and whether
+to give guidance when start the continuation; randomized branching, heuristic selection, and tree
+search all fit the same interface. An archive A x stores the resulting execution tree for task x, including
+checkpoint handles, parent links, contexts, and verifier feedback, and T x denotes the multiset of its
+completed attempts. New outcomes in the archive inform further search, and completed attempts are
+organized into training groups.
+3.3 Restorable Execution States
+
+Consistent Continuation Boundary. Local access requires the environment and the agent context to
+describe the same point of an attempt. Boundary t of τi is eligible, t ∈ E (τi ), if a filesystem checkpoint
+was taken after all tool calls of turn t completed and the conversation prefix can be recovered up to
+and including the observation ot . Search branches only from eligible boundaries, so every continuation
+starts from the observations and execution state of its selected prefix. Any guidance for a new
+continuation is stored separately from that prefix.
+Filesystem restoration under the harness contract. Each attempt runs in its own microVM (Agache
+et al., 2020), so a checkpoint covers the whole guest filesystem, including dependencies and build
+artifacts outside the working directory. Our harness executes every tool call as a synchronous shell
+command and disallows background processes, so by the end of a turn no process started by the agent
+is still running, and all state that persists across turns lives on disk. Restore therefore boots a fresh
+microVM from the saved filesystem and reinitializes the tool runtime, and guest memory never needs
+to be captured. Together with the recovered context, this gives the continuation the full state of its
+prefix under the stated harness constraints.
+5
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+(a) Checkpoint each turn
+
+(b) Review, restore & explore
+
+Original rollout
+t1
+
+t2
+
+Actor self-review
+
+t3
+
+t4
+
+Diagnose
+
+failure
+
+Task
+
+(c) Learn from rollouts
+same policy, different role prompts
+
+Choose checkpoint
+
+Write start turn
+
+Branch plan
+
+Saved rollout
+
+Verifier feedback
+
+Agent
+context
+Environment
+snapshot
+
+Rollouts + rewards
+Training group
+Original
+
+Branch C4
+
+C1
+
+C2
+
+C3
+
+C4
+Branch C2
+
+Restore pair
+C1
+
+C2
+
+C3
+
+C4
+
+test
+
+Corrective start turn
+
+New exploration
+
+Paired at the same turn boundary
+
+edit
+
+test
+
+RL update
+
+One turn can include multiple tool calls
+Corrective start turn
+
+Turn 1
+
+ls
+
+rg
+
+Before I edit, I need to check
+for an empty-input guard.
+
+18: def first(items):
+19return items[0]
+
+> rg -n -A1 "def first" src/core.py
+
+Any saved checkpoint can be restored
+
+Policy optimization
+
+Tool result
+
+Missing empty-input guard
+
+Recovered trajectory
+
+Actor policy
+Next rollout batch
+
+Agent context
+
+Start turn
+
+New continuation
+
+Figure 3. SPROUT workflow: checkpoint, branch, and learn. (a) After each turn, the execution layer saves a
+
+filesystem checkpoint paired with the matching agent context, so any eligible boundary can be restored in a fresh
+sandbox. (b) When all root attempts fail, the actor, prompted as analyst and reviewer, reads the failures together
+with verifier feedback, selects boundaries, and writes a starting turn for each branch. Each branch restores its
+paired state, executes the starting turn, and continues under the actor policy. (c) Roots and branches, with their
+verified rewards, form training groups; the review context is removed from the learner’s input.
+
+Incremental checkpoints and isolated branches. After each turn, the execution layer records the
+changes to the VM disk as an incremental block-level OverlayBD layer. Consecutive checkpoints share
+all unchanged content, so the storage a checkpoint adds grows with the blocks written during the turn
+rather than with the size of the environment. Each restored branch writes to its own copy-on-write
+layer over the saved history, so several continuations can inherit the same progress without affecting
+one another or their parent. Incremental storage and isolated writes together make it practical to
+checkpoint every turn of a long trajectory.
+3.4 Verifier-guided Backtracking Policy
+
+Restoration makes earlier states available; the search policy decides which of them are worth continuing
+from. We instantiate it with verifier-guided backtracking, in which the actor πθ also analyzes failures
+and plans branches under separate role prompts. The roles share parameters, and only the analysis
+and planning roles see feedback from completed attempts, so no separate analyst or reviewer model is
+involved.
+From failure evidence to branch decisions. For each newly failed attempt τi , the policy writes
+an analysis zi of why the attempt failed, which of its progress can be reused, and which eligible
+boundaries could plausibly lead to a successful continuation. These candidates are hypotheses about
+where recovery is possible; they need not identify the first incorrect turn. In round r, a reviewer prompt
+reads the archive, now including these analyses, and plans up to Kr branches:
+
+{(i j , t j , a′j )}Kj=1 ∼ πθ (· | review, x, A x ),
+
+K ≤ Kr ,
+
+t j ∈ E (τi j ).
+
+(5)
+
+Each decision specifies a parent attempt i j , a boundary t j , and a starting turn a′j that replaces the
+parent’s turn t j . Like any actor turn, a′j consists of reasoning in the actor’s voice followed by one or
+more tool calls. Because the parent is chosen per branch, the reviewer can return to an older attempt
+instead of extending a dead end, or build on a failed branch from an earlier round. The archive also
+records earlier starting turns and their outcomes, which helps the reviewer avoid directions that have
+already failed.
+Executing and evaluating a continuation. For each decision, the framework restores (e′j , h′j ) from ci j ,t j
+in a fresh sandbox and executes the tool calls of a′j in order, exactly as in an ordinary turn, obtaining
+6
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
++ +
+the observation o ′j . Let s+
+j = ( e j , h j ) denote the joint state at the resulting boundary t j + 1, after the
+harness applies its context update. The actor then continues without further guidance:
+
+η j ∼ ρθ (· | s+
+j ),
+
+τj′ = τi j ,≤t j ⊕ ( a′j , o ′j ) ⊕ η j ,
+
+(6)
+
+where ρθ (· | s) is the distribution over continuations obtained by running πθ from s until termination.
+The verifier grades the completed attempt, and the archive records its outcome together with its parent,
+boundary, and starting turn. A failed continuation thus contributes both reusable execution progress
+and new diagnostic evidence to the next round.
+In our rollout-collection experiments, we apply this procedure to tasks whose initial attempt fails, with
+R = 2 rounds of K1 = 4 and K2 = 3 branches. Search stops as soon as a branch passes or after the last
+round. Because the procedure uses diagnostic feedback beyond the binary reward, these experiments
+measure exploration in a setting where such feedback is available, not unassisted agent performance.
+3.5 Policy Optimization with Branched Rollouts
+
+Training reuses the same restoration and repair mechanisms to construct groups. During search, the
+reviewer sees diagnostics that never appear in the actor’s ordinary context. Training aims to transfer
+the resulting corrective behavior into the actor while accounting for the prefixes that trajectories in a
+group share.
+Constructing training groups. Each task receives a fixed-size group: two independent roots and
+K = 3 retained children per root, for eight evaluated attempts. This specializes the collection framework
+to a single layer of children. If at least one root succeeds (TT or TF), the reviewer selects one usable
+boundary per root, and that root’s children continue from it without an injected starting turn. If
+both roots fail (FF), the reviewer uses verifier feedback to rank boundaries and attaches a corrective
+direction to each. A starting turn is then written from each visible prefix and its direction, filtered by a
+judge, and executed in the restored environment before the actor continues. A boundary is usable only
+if it is eligible and its prefix leaves room for the continuation within the context budget. Algorithm 1
+(Appendix B) specifies the oversampling, independent-rollout fallbacks, and task replacement that
+keep every group at eight attempts.
+Learning without the review context. For a guided branch, the learner sees the retained prefix, the
+starting turn, and the executed continuation, but not the diagnostic analysis or the corrective direction.
+The policy is therefore trained to produce corrective turns from the context it has during ordinary
+execution. Removing the review context from the learner’s input does not remove its influence on how
+the sample was generated. We therefore treat the objective below as a clipped surrogate that distills
+guided behavior into the actor, not as on-policy optimization over samples from the unassisted actor.
+Credit assignment and shared prefixes. In training, T x denotes the eight retained attempts of task x.
+Depending on the outcomes of the two roots, we assign
+
+
+τ is a child in an FF group,
+ R x ( τ ),
+A(τ ) = R x (τ ) − R̄ x
+(7)
+
+
+, otherwise,
+σx
+where R̄ x and σx are the mean and standard deviation of rewards over T x , and the normalized
+advantage is set to zero when σx = 0. Successful FF children thus receive an advantage of one, and
+failed FF children receive zero.
+A token mask M (τ ) selects the action tokens each attempt contributes to the loss. Roots contribute
+the tokens of all their turns, and TT and TF children contribute only the turns generated after their
+branch boundaries. Within an FF family, the first successful child contributes its full trajectory, and
+later successful children omit the prefix they share with it. A recovered success therefore reinforces the
+progress it inherited, while successful siblings do not credit the same prefix repeatedly. Observation
+tokens are always excluded.
+7
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+The policy maximizes
+
+
+
+1
+min (wk (θ ) A(τ ), clip(wk (θ ), 1 − ϵ, 1 + ϵ) A(τ )) ,
+|
+M
+(τ )| k∈∑
+τ ∈T x
+M(τ )
+
+J (θ ) = Ex  ∑
+
+(8)
+
+where yk is the k-th token of τ in the learner’s context, wk (θ ) = πθ (yk | y<k )/πθold (yk | y<k ), attempts
+with empty masks are skipped, and no KL penalty is used. For guided branches, wk is not an
+importance weight with respect to the diagnostic-conditioned procedure that generated the sample.
+This is the surrogate described above, and Section 4.2 evaluates its effect on the trained actor.
+
+4 Experiments
+We evaluate SPROUT with Kimi K3 (Team, 2026), Qwen3.8-27B (Qwen Team, 2026), DeepSeek V4.1
+Flash (DeepSeek-AI, 2026), Claude Sonnet 5 (Anthropic, 2026), and GPT-5.6 Luna (OpenAI, 2026) on
+DeepSWE (Huang et al., 2026b), Terminal-Bench 2.1 (Merrill et al., 2026), and SWE-bench Pro v2 Hard
+(Deng et al., 2025). We compare SPROUT with independent sampling (pass@k), entropy-based branch
+sampling, and Shepherd (Yu et al., 2026). We measure task resolve rate, recovery rate, execution steps,
+and total tokens for rollout collection, and further evaluate RL training performance. Detailed setups
+and further experiments are provided in Appendices A-E.
+Table 2. Main experimental comparison on DeepSWE. Resolve rate, recovery rate, total execution steps, and total
+
+tokens (M). A dash (–) indicates that Entropy-based sampling is unavailable. Best values are bolded, excluding
+Pass@1 (Base).
+Pass@1
+
+Model
+
+Metric
+
+Qwen3.8 27B
+
+Resolve rate (%) ↑
+
+37.2
+
+71.7
+
+Recovery (%) ↑
+
+0.0
+
+54.9
+
+Steps ↓
+
+16,708
+
+Kimi K3
+
+Entropy-
+
+Shepherd
+
+SPROUT
+
+71.7
+
+67.3
+
+78.6
+
+54.9
+
+47.9
+
+64.8
+
+64,136
+
+45,549
+
+55,280
+
+23,174
+
+based
+
+Tokens (M) ↓
+
+1921
+
+8673
+
+8589
+
+9026
+
+4123
+
+72.3
+
+92.0
+
+–
+
+78.8
+
+98.2
+
+Recovery (%) ↑
+
+0.0
+
+71.2
+
+–
+
+23.2
+
+93.6
+
+Steps ↓
+
+13,001
+
+52,003
+
+–
+
+20,668
+
+16,065
+
+Tokens (M) ↓
+
+1154
+
+4614
+
+–
+
+2272
+
+1492
+
+57.5
+
+82.3
+
+–
+
+86.7
+
+90.3
+
+0.0
+
+58.3
+
+–
+
+68.8
+
+77.1
+
+Steps ↓
+
+14,533
+
+58,372
+
+–
+
+30,143
+
+20,230
+
+Tokens (M) ↓
+
+1459
+
+6109
+
+–
+
+3624
+
+2538
+
+Resolve rate (%) ↑
+
+46.9
+
+78.8
+
+–
+
+72.6
+
+82.3
+
+Recovery (%) ↑
+
+0.0
+
+60.0
+
+–
+
+48.3
+
+66.7
+
+Steps ↓
+
+15,362
+
+61,450
+
+–
+
+33,395
+
+28,592
+
+Tokens (M) ↓
+
+1872
+
+7487
+
+–
+
+4328
+
+3897
+
+Resolve rate (%) ↑
+
+42.5
+
+68.1
+
+–
+
+62.8
+
+85.8
+
+Recovery (%) ↑
+
+0.0
+
+44.6
+
+–
+
+35.4
+
+75.4
+
+Steps ↓
+
+6,020
+
+24,081
+
+–
+
+13,886
+
+8,634
+
+Tokens (M) ↓
+
+352
+
+1409
+
+–
+
+985
+
+652
+
+Recovery (%) ↑
+
+GPT 5.6 Luna
+
+Pass@4
+
+Resolve rate (%) ↑
+
+DeepSeek V4.1 Flash Resolve rate (%) ↑
+
+Claude Sonnet 5
+
+(Base)
+
+4.1 Sampling Results
+
+Table 2 compares task resolution and resource consumption across sampling methods. Overall,
+SPROUT achieves high task coverage while substantially reducing execution and inference costs.
+On DeepSWE, SPROUT matches or exceeds Pass@4 across all four models, using 53.5–69.1% fewer
+execution steps and 47.9–67.7% fewer tokens. The improvement is particularly clear with GPT 5.6
+Luna: the resolve rate increases from 68.1% to 85.8%, while token usage decreases from 1,409M to
+652M. With Kimi K3, SPROUT reaches a 98.2% resolve rate using only 32.3% of the tokens required by
+Pass@4. It also improves over Shepherd by 9.7–23.0 percentage points across the four models while
+consistently using fewer steps and tokens. Recovery rates of 64.8–93.6% further show that failureguided backtracking can resolve a substantial fraction of initially unsuccessful tasks. SPROUT also
+8
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+Table 3. Experimental comparison across benchmarks for Qwen3.8 27B. Resolve rate, recovery rate, total
+
+execution steps, and total tokens (M). Best values are bolded, excluding Pass@1.
+Benchmark
+
+DeepSWE
+
+TerminalBench 2.1
+
+Pass@1
+
+Metric
+
+Pass@4
+
+(Base)
+
+Entropybased
+
+Shepherd
+
+SPROUT
+78.6
+
+Resolve rate (%)
+
+37.2
+
+71.7
+
+71.7
+
+67.3
+
+Recovery (%)
+
+0.0
+
+54.9
+
+54.9
+
+47.9
+
+64.8
+
+Steps
+
+16708
+
+64136
+
+45549
+
+55280
+
+23174
+
+Tokens (M)
+
+1921
+
+8673
+
+8589
+
+9026
+
+4123
+
+Resolve rate (%)
+
+49.4
+
+66.3
+
+76.4
+
+79.8
+
+89.9
+
+Recovery (%)
+
+0.0
+
+33.3
+
+53.3
+
+60.0
+
+80.0
+
+Steps
+
+1943
+
+10890
+
+10374
+
+10638
+
+6685
+
+Tokens (M)
+
+27.65
+
+319.9
+
+112.8
+
+103.9
+
+123.7
+
+Resolve rate (%)
+
+62.7
+
+88.2
+
+90.2
+
+78.4
+
+94.1
+
+0.0
+
+68.4
+
+73.7
+
+42.1
+
+84.2
+
+6939
+
+25184
+
+11953
+
+11841
+
+9139
+
+550.8
+
+1918.5
+
+1238.9
+
+1004.0
+
+771.3
+
+SWE-bench Pro Recovery (%)
+v2 Hard
+Steps
+Tokens (M)
+
+compares favorably with alternative adaptive sampling strategies. With Qwen3.8-27B, it achieves a
+78.6% resolve rate and a 64.8% recovery rate, compared with 71.7% and 54.9% for entropy-based
+sampling, while reducing token usage from 8,589M to 4,123M. Its largest improvement over Pass@4 is
+obtained with Qwen3.8-27B on Terminal-Bench 2.1 (Table 3), where the resolve rate increases from
+66.3% to 89.9%. This gain of 23.6 percentage points is achieved with 38.6% fewer execution steps and
+61.3% fewer tokens, together with an 80.0% recovery rate. As a result, SPROUT maintains competitive
+task coverage at much lower cost, demonstrating that SPROUT effectively uses failure feedback to
+identify recovery points and achieve a strong balance between task resolution and sampling cost.
+Table 4. Training comparison. Benchmark columns report success rates in percent. Red annotations show SPROUT
+
+minus Basic GRPO in percentage points (pp) for success rates, and the relative reduction for time per step.
+Method
+
+SWE-bench Pro v2 Hard
+
+DeepSWE
+
+Terminal-Bench 2.1
+
+Time per step (↓)
+
+62.7
+74.5
+84.3 (↑ 9.8 pp)
+
+37.2
+33.6
+40.7 (↑ 7.1 pp)
+
+49.4
+39.3
+64.0 (↑ 24.7 pp)
+
+n/a
+3.77 h
+2.28 h (↓ 39.5%)
+
+Base (no RL)
+Basic GRPO
+SPROUT
+
+4.2 RL training
+
+We train Qwen3.8-27B on SWE-bench Rebench v2 Filtered, fine-tuning all parameters, and compare
+against standard GRPO on the same tasks (Table 4). Training with SPROUT improves the base model
+on all three benchmarks: from 62.7% to 84.3% on SWE-bench Pro v2 Hard, from 37.2% to 40.7%
+on DeepSWE, and from 49.4% to 64.0% on Terminal-Bench 2.1. These gains are 21.6, 3.5, and 14.6
+percentage points, respectively. Compared with Basic GRPO, SPROUT’s success rates are 9.8, 7.1, and
+24.7 percentage points higher on the same three benchmarks, stably outperforming with an average of
+13.9 points. SPROUT also reduces time per training step from 3.77 to 2.28 hours, a 39.5% reduction.
+Table 5. Ablations of SPROUT on DeepSWE using GPT-5.6 Luna. Each variant changes one component and
+
+keeps the rest of the collection procedure fixed. Res. is the resolve rate (%) and ∆ the change relative to SPROUT.
+Branches, Steps (tool calls), and Tok. (M) count the branching stage only, excluding the root run.
+Variant
+
+Change
+
+Res. ↑
+
+∆
+
+Branches ↓
+
+Steps ↓
+
+Tok. ↓
+
+SPROUT (tool-call hint)
+
+full method
+
+85.8
+
+–
+
+325
+
+2,839
+
+261.9
+
+no injected guidance
+
+49.6
+
+−36.2
+
+183
+
+1,755
+
+209.8
+
+binary outcome only
+
+53.1
+
+−32.7
+
+153
+
+2,296
+
+274.2
+
+Continuation guidance
+Rollback, no hint
+Branch selection
+Reward-only review
+
+9
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+4.3 Ablations
+
+Table 5 isolates the components of SPROUT; each variant changes one component and keeps the rest
+of the collection procedure fixed. Continuation guidance. Rollback, no hint resumes from the selected
+checkpoint without any injected guidance, which measures what the reviewer’s starting turn adds
+beyond restoration alone. Branch selection. Reward-only review hides the verifier’s diagnostics and keeps
+only the binary outcome, which measures how much the diagnostic feedback contributes to choosing
+where and how to branch. Both components matter. Without the injected hint, the resolve rate falls
+from 85.8% to 49.6%. Hiding the verifier’s diagnostics lowers it to 53.1%. The reviewer’s guidance and
+the verifier’s diagnostics therefore both raise the success of branching and make the search cheaper.
+8×1
+4×2
+
+90
+
+2×4
+
+4×1
+
+Resolve rate (%)
+
+80
+
+70
+
+2×2 4+3 (reported)
+
+2×1
+
+78.8%, 33% fewer tokens
+
+1×4
+1×2
+
+1×8
+
+1×32
+
+1×16
+
+Pass@8 (77.9%)
+
+1×1
+Pass@4
+
+60
+
+SPROUT, k rounds × 1 branch
+SPROUT, 1 round × k branches
+Independent sampling, Pass@k
+Pass@8 resolve rate
+SPROUT as reported: 2 rounds, 4 then 3 branches
+8 branches split across rounds (8×1, 4×2, 2×4, 1×8)
+4 branches split across rounds (4×1, 2×2, 1×4)
+
+Pass@2
+
+50
+Pass@1
+
+40
+
+0.5
+
+1.0
+
+1.5
+
+2.0
+
+2.5
+
+Total tokens (billions)
+
+Figure 4. Branch scaling and round allocation. Resolve rate on DeepSWE using GPT-5.6 Luna, where labels
+
+denote review rounds × branches per round and all methods share the same settings.
+
+4.4 Scaling: Depth vs. Breadth
+
+We compare single-round branching with iterative review-and-branch using GPT-5.6 Luna on DeepSWE (Figure 4). A configuration R × B allows up to R review rounds with B branches per round. All
+configurations reuse the same baseline rollout for each task; the baseline resolves 52 tasks, leaving
+61 for branching. An analyst summarizes each newly failed trajectory with its verifier verdict, and
+a reviewer combines the accumulated analyses to select B checkpoints and write continuations. The
+actor resumes from the corresponding snapshots and conversation prefixes. Each round executes all B
+branches, and the search stops at the end of the first round with a verifier pass. For single-round scaling, we randomly permute each failed task’s 32 accepted branches once and retain the first B branches
+for B ∈ {1, 2, 4, 8, 16, 32}, yielding nested subsets without replacement. Token totals include the shared
+baseline once and the actor, analyst, and reviewer calls attributed to each setting; single-round subsets
+include the selected actors and all recorded usage of the original 32-branch analyst/reviewer once.
+Depth improves token efficiency. Breadth saturates quickly: one branch lifts the baseline from 46.0%
+to 68.1%, but widening from 1 × 4 to 1 × 32 raises the resolve rate only from 75.2% to 77.9% while
+recorded tokens grow from 0.57B to 1.85B. Across the comparisons at maximum branch counts of 2, 4,
+and 8, allocating more rounds increases the resolve rate and reduces accounted token use. With an
+eight-branch maximum, 1 × 8, 2 × 4, 4 × 2, and 8 × 1 resolve 76.1%, 85.8%, 89.4%, and 91.2%, using
+745.2M, 673.6M, 566.7M, and 525.7M tokens, respectively. The two extremes recover 34 and 51 of the
+61 initially failed tasks. Even 2 × 1 reaches 80.5% with 465.5M tokens, exceeding 1 × 16 at 77.0% and
+1.10B tokens. These results compare the fixed single-round subsets with the recorded multi-round
+runs.
+Sequential depth limits intra-task parallelism. The token-efficiency advantage of depth comes with
+sequential dependencies: each review round requires trajectories and verifier feedback from the
+10
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+preceding round. Branches within a single round can, in principle, execute concurrently, potentially
+reducing per-task latency. Intermediate configurations such as 2 × 4 and 4 × 2 therefore trade off
+feedback depth against intra-task parallelism. Our current implementation executes branches within
+each round sequentially, so the reported results characterize the success–token trade-off and do not
+measure the latency achievable with parallel branching.
+
+5 Conclusion
+In this paper, we have proposed SPROUT (SnaPshot-based RollOUT), a framework that addresses
+the scarcity of verified positive trajectories in long-horizon agent learning by resuming failed rollouts
+from any intermediate snapshot. Combining copy-on-write filesystem checkpointing, step-aligned
+conversation restoration, and verifier-guided backtracking, it lets agents backtrack to an earlier state
+and reuse the trajectory up to that point rather than re-executing it from scratch. Across multiple
+models and coding benchmarks, SPROUT matches or exceeds repeated independent sampling at
+a fraction of the token cost, and in RL training it improves the base policy on all benchmarks
+while outperforming GRPO with shorter training steps. By transforming failed rollouts into costeffective starting points for exploration, SPROUT provides a practical foundation for collecting positive
+supervisory signals and scaling autonomous agent capabilities.
+
+References
+Alexandru Agache, Marc Brooker, Alexandra Iordache, Anthony Liguori, Rolf Neugebauer, Phil Piwonka, and
+Diana-Maria Popa. Firecracker: Lightweight virtualization for serverless applications. In 17th USENIX
+symposium on networked systems design and implementation (NSDI 20), pages 419–434, 2020.
+Anthropic. Claude code: An agentic coding tool. https://docs.anthropic.com/en/docs/agents-and-tools/
+claude-code, 2025. Accessed: 2025.
+Anthropic. Introducing claude sonnet 5. https://www.anthropic.com/news/claude-sonnet-5, June 2026.
+Antonis Antoniades, Albert Örwall, Kexun Zhang, Yuxi Xie, Anirudh Goyal, and William Wang. Swe-search:
+Enhancing software agents with monte carlo tree search and iterative refinement. In International Conference on
+Learning Representations, volume 2025, pages 64485–64515, 2025.
+Bradley Brown, Jordan Juravsky, Ryan Ehrlich, Ronald Clark, Quoc V Le, Christopher Ré, and Azalia Mirhoseini.
+Large language monkeys: Scaling inference compute with repeated sampling. arXiv preprint arXiv:2407.21787,
+2024a.
+Bradley Brown, Jordan Juravsky, Ryan Ehrlich, Ronald Clark, Quoc V. Le, Christopher Ré, and Azalia Mirhoseini.
+Large language monkeys: Scaling inference compute with repeated sampling. arXiv preprint arXiv:2407.21787,
+2024b.
+DeepSeek-AI. Deepseek-v4.1-flash technical report. https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/
+blob/main/DeepSeek_V41_Tech_Report.pdf, 2026. Technical report.
+Xiang Deng, Jeff Da, Edwin Pan, Yannis Yiming He, Charles Ide, Kanak Garg, Niklas Lauffer, Andrew Park, Nitin
+Pasari, Chetan Rane, et al. Swe-bench pro: Can ai agents solve long-horizon software engineering tasks? arXiv
+preprint arXiv:2509.16941, 2025.
+Yihong Dong, Xue Jiang, Zhi Jin, and Ge Li. Self-collaboration code generation via ChatGPT. ACM Transactions on
+Software Engineering and Methodology, 33(7):1–38, 2024. doi: 10.1145/3672459.
+Yihong Dong, Xue Jiang, Yongding Tao, Huanyu Liu, Kechi Zhang, Lili Mou, Rongyu Cao, Yingwei Ma, Jue Chen,
+Binhua Li, Zhi Jin, Fei Huang, Yongbin Li, and Ge Li. RL-PLUS: countering capability boundary collapse of
+llms in reinforcement learning with hybrid-policy optimization. In ACL (1), pages 43029–43053. Association for
+Computational Linguistics, 2026.
+Adrien Ecoffet, Joost Huizinga, Joel Lehman, Kenneth O Stanley, and Jeff Clune. First return, then explore. Nature,
+590(7847):580–586, 2021.
+Zhibin Gou, Zhihong Shao, Yeyun Gong, Yujiu Yang, Nan Duan, Weizhu Chen, et al. Critic: Large language
+models can self-correct with tool-interactive critiquing. In International Conference on Learning Representations,
+volume 2024, pages 57734–57811, 2024.
+Shibo Hao, Yi Gu, Haodi Ma, Joshua Hong, Zhen Wang, Daisy Wang, and Zhiting Hu. Reasoning with language
+
+11
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+model is planning with world model. In Proceedings of the 2023 conference on empirical methods in natural language
+processing, pages 8154–8173, 2023.
+Bowei He, Yankai Chen, Xiaokun Zhang, and Xue Liu. Branching policy optimization: Sandbox-native language
+agent reinforcement learning. arXiv preprint arXiv:2607.14171, 2026a.
+Bowei He, Yankai Chen, Xiaokun Zhang, and Xue Liu. Branching policy optimization: Sandbox-native language
+agent reinforcement learning. arXiv preprint arXiv:2607.14171, 2026b.
+Zhenyu Hou, Ziniu Hu, Yujiang Li, Rui Lu, Jie Tang, and Yuxiao Dong. Treerl: Llm reinforcement learning with
+on-policy tree search. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics
+(Volume 1: Long Papers), pages 12355–12369, 2025.
+Chun-Wah Hsu, Kai Gong, Yu Wu, Xianhe Chen, Mengyang Liu, Jie Li, Hanyu Li, Zhixuan Liu, Naisheng
+Tang, Jiaying Chi, Ziheng Fan, Xuning He, Xiaokang Yang, Xue Jiang, and Yihong Dong. Opencollab: A
+multi-agent coding framework with programmable collaboration and controllable runtime, 2026. URL https:
+//arxiv.org/abs/2609.38345.
+Wenqi Huang, Charley Lee, Leonard Tng, and Serena Ge. DeepSWE: Measuring frontier coding agents on original,
+long-horizon engineering tasks. arXiv preprint arXiv:2607.07946, 2026a.
+Wenqi Huang, Charley Lee, Leonard Tng, and Serena Ge. Deepswe: Measuring frontier coding agents on original,
+long-horizon engineering tasks. arXiv preprint arXiv:2607.07946, 2026b.
+Xue Jiang, Yihong Dong, Yongding Tao, Huanyu Liu, Zhi Jin, and Ge Li. ROCODE: integrating backtracking
+mechanism and program analysis in large language models for code generation. In ICSE, pages 334–346. IEEE,
+2025.
+Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan.
+SWE-bench: Can language models resolve real-world GitHub issues? In International Conference on Learning
+Representations (ICLR), 2024.
+Amirhossein Kazemnejad, Milad Aghajohari, Eva Portelance, Alessandro Sordoni, Siva Reddy, Aaron Courville,
+and Nicolas Le Roux. Vineppo: Refining credit assignment in rl training of llms. arXiv preprint arXiv:2410.01679,
+2024.
+Abhishek Vijaya Kumar, Bhaskar Kataria, Byungsoo Oh, Emaad Manzoor, and Rachee Singh. Tvcache: A stateful
+tool-value cache for post-training llm agents. arXiv preprint arXiv:2602.10986, 2026.
+Yang Li, Siqi Ping, Xiyu Chen, Xiaojian Qi, Zigan Wang, Ye Luo, and Xiaowei Zhang. Agentgit: A version control
+framework for reliable and scalable llm-powered multi-agent systems. arXiv preprint arXiv:2511.00628, 2025.
+Yujia Li, David Choi, Junyoung Chung, Nate Kushman, Julian Schrittwieser, Rémi Leblond, Tom Eccles, James
+Keeling, Felix Gimeno, Agustin Dal Lago, et al. Competition-level code generation with AlphaCode. Science,
+378(6624):1092–1097, 2022.
+Dirk Merkel et al. Docker: lightweight linux containers for consistent development and deployment. Linux j, 239
+(2):2, 2014.
+Mike Merrill, Alexander Shaw, Nicholas Carlini, Boxuan Li, Harsh Raj, Ivan Bercovich, Lin Shi, Jeong Shin,
+Thomas Walshe, E Kelly Buchanan, et al. Terminal-bench: Benchmarking agents on hard, realistic tasks in
+command line interfaces. In International Conference on Learning Representations, volume 2026, pages 40903–40986,
+2026.
+OpenAI. Introducing SWE-bench Verified. https://openai.com/index/introducing-swe-bench-verified/, 2024.
+Accessed: 2024.
+OpenAI. Gpt-5.6 luna. https://developers.openai.com/api/docs/models/gpt-5.6-luna, 2026.
+Qwen Team. Qwen3.8-Max: A new bar for coding and cowork. https://qwen.ai/blog?id=qwen3.8, August 2026.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K.
+Li, Yang Wu, et al. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300, 2024a.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang,
+YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300, 2024b.
+Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language
+agents with verbal reinforcement learning. Advances in neural information processing systems, 36:8634–8652, 2023.
+Kimi Team. Kimi K3: open frontier intelligence. CoRR, abs/2607.24653, 2026. doi: 10.48550/ARXIV.2607.24653.
+URL https://doi.org/10.48550/arXiv.2607.24653.
+Cong Wang and Yusheng Zheng. Fork, explore, commit: Os primitives for agentic exploration. arXiv preprint
+12
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+arXiv:2602.08199, 2026.
+Xingyao Wang, Yangyi Chen, Lifan Yuan, Yizhe Zhang, Yunzhu Li, Hao Peng, and Heng Ji. Executable code
+actions elicit better llm agents. arXiv preprint arXiv:2402.01030, 2024.
+Xingyao Wang, Boxuan Li, Yufan Song, Frank F Xu, Xiangru Tang, Mingchen Zhuge, Jiayi Pan, Yueqi Song, Bowen
+Li, Jaskirat Singh, et al. Openhands: An open platform for ai software developers as generalist agents. In
+International Conference on Learning Representations, volume 2025, pages 65882–65919, 2025.
+Ying Wang, Changlin Qiu, Bang Lin, Linbo Jin, Wen Jiang, Zhe Sun, and Jingli Yang. Contrastive branch policy
+optimization. arXiv preprint arXiv:2608.24300, 2026a.
+Ying Wang, Changlin Qiu, Bang Lin, Linbo Jin, Wen Jiang, Zhe Sun, and Jingli Yang. Contrastive branch policy
+optimization. arXiv preprint arXiv:2608.24300, 2026b.
+Gellert Weisz, Philip Amortila, Barnabás Janzer, Yasin Abbasi-Yadkori, Nan Jiang, and Csaba Szepesvári. On
+query-efficient planning in mdps under linear realizability of the optimal state-value function. In Conference on
+Learning Theory, pages 4355–4385. PMLR, 2021.
+Jinyang Wu, Shuo Yang, Yuhao Shen, Shuai Zhang, Zhengqi Wen, and Jianhua Tao. Spark: Strategic policy-aware
+exploration via dynamic branching for long-horizon agentic learning. In Proceedings of the 64th Annual Meeting
+of the Association for Computational Linguistics (Volume 1: Long Papers), pages 23981–24004, 2026.
+Jiakai Xu, Tianle Zhou, Eugene Wu, and Kostis Kaffes. Toward systems foundations for agentic exploration. arXiv
+preprint arXiv:2510.05556, 2025.
+John Yang, Carlos Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press.
+Swe-agent: Agent-computer interfaces enable automated software engineering. Advances in Neural Information
+Processing Systems, 37:50528–50652, 2024a.
+John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir
+Press. SWE-agent: Agent-computer interfaces enable automated software engineering. In Advances in Neural
+Information Processing Systems (NeurIPS), volume 37, pages 50528–50652, 2024b.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: Synergizing
+reasoning and acting in language models. arXiv preprint arXiv:2210.03629, 2022.
+Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Thomas L. Griffiths, Yuan Cao, and Karthik Narasimhan.
+Tree of thoughts: Deliberate problem solving with large language models. In Advances in Neural Information
+Processing Systems (NeurIPS), volume 36, pages 11809–11822, 2023a.
+Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Tom Griffiths, Yuan Cao, and Karthik Narasimhan. Tree of
+thoughts: Deliberate problem solving with large language models. Advances in neural information processing
+systems, 36:11809–11822, 2023b.
+Dong Yin, Botao Hao, Yasin Abbasi-Yadkori, Nevena Lazić, and Csaba Szepesvári. Efficient local planning with
+linear function approximation. In International Conference on Algorithmic Learning Theory, pages 1165–1192.
+PMLR, 2022.
+Simon Yu, Derek Chong, Ananjan Nandi, Dilara Soylu, Jiuding Sun, Christopher D Manning, and Weiyan
+Shi. Shepherd: Enabling programmable meta-agents via reversible agentic execution traces. arXiv preprint
+arXiv:2605.10913, 2026.
+Andy Zhou, Kai Yan, Michal Shlapentokh-Rothman, Haohan Wang, and Yu-Xiong Wang. Language agent tree
+search unifies reasoning acting and planning in language models. arXiv preprint arXiv:2310.04406, 2023.
+Andy Zhou, Kai Yan, Michal Shlapentokh-Rothman, Haohan Wang, and Yu-Xiong Wang. Language agent tree
+search unifies reasoning, acting, and planning in language models. In International Conference on Machine
+Learning (ICML), 2024.
+
+13
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+
+A Experimental Setup and Supplementary Experiments
+Benchmarks and models. We use the 113-task public DeepSWE, the 89-task Terminal-Bench 2.1, and
+the 51-task SWE-bench Pro v2 Hard. Sampling experiments use Kimi K3, Qwen3.8-27B, Claude Sonnet
+5, DeepSeek V4.1 Flash, and GPT 5.6 Luna with fixed model weights. Kimi K3 runs with reasoning
+effort set to max, and all other models run with reasoning effort set to high. In SPROUT, the actor also
+performs failure analysis and branch selection under separate role prompts, with the same reasoning
+effort as its actor role.
+Execution environment. All runs use mini-swe-agent (Yang et al., 2024b) with a sandbox shell as the
+environment interface. Shell calls are synchronous, and background processes are disabled. SPROUT
+checkpoints the full filesystem after each turn and pairs it with the corresponding agent context. Each
+branch resumes in an isolated sandbox. DeepSWE attempts run offline with 2 CPUs, 8 GB of memory,
+and a time limit of 10,800 seconds.
+Baselines. Independent sampling performs four fresh attempts per task. Pass@1 is the mean resolve
+rate across the four passes, and Pass@4 is the fraction of tasks solved in at least one pass. We also
+evaluate Shepherd (Yu et al., 2026) with its own fork-selection procedure and an entropy-based variant,
+which selects branch points using policy entropy and is only evaluated with Qwen3.8-27B that can
+expose token log-probabilities in our setup.
+Collection protocol. For each model and benchmark, a single-attempt pass over all tasks provides
+the parent attempts. SPROUT branches from the failed parents, restoring each selected checkpoint
+together with its step-aligned agent context, and a task counts as solved if its parent or any of its
+branches passes the verifier.
+Reported metrics. The sampling comparison reports resolve rate, recovery rate, total execution
+steps, and total tokens. The resolve rate counts tasks with at least one verified success. Token totals
+combine input and output tokens and are expressed in millions.We report normalized recovery as
+( Rmethod − RPass@1 )/(1 − RPass@1 ), measuring the fraction of the remaining performance gap beyond
+Pass@1 recovered by each method.
+Table 6. RL hyperparameters and training configuration.
+
+Parameter
+
+Value
+
+Model
+Fine-tuning
+Prompts per update
+Rollouts per prompt
+Nominal global batch size
+Maximum context length
+Sampling temperature
+Thinking mode
+Reasoning effort
+Optimizer
+Learning rate
+Learning-rate schedule
+KL penalty coefficient
+Hardware
+Tensor parallelism
+Context parallelism
+Microbatching
+Microbatch token cap per GPU
+
+Qwen3.8-27B
+Full parameters
+32
+8
+256 rollouts
+128K tokens
+1.0
+Enabled
+xhigh
+Adam
+2 × 10−6
+Constant
+0
+8× NVIDIA B300
+2
+4
+Dynamic
+32,768
+
+14
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+RL training. We fine-tune Qwen3.8-27B on SWE-bench Rebench v2 Filtered and select the top 2,115
+tasks ranked by golden patch length and construct groups of eight evaluated attempts, comprising
+two independent roots and three children per root. The rollout orchestration is detailed in Appendix B.
+Basic GRPO uses the same training set and samples eight independent rollouts per prompt. SPROUT
+RL and basic GRPO share the same training configuration, detailed in Table 6, and report the score
+under the official evaluation protocol.
+Additional evaluation with OpenCollab. We additionally evaluate Qwen3.8-27B using OpenCollab
+(Base) (Hsu et al., 2026) on the DeepSWE benchmark, following the experimental settings of Table 2.
+SPROUT achieves resolve rates of 73.45% with 112.8% relative improvement compared with basic
+rollout.
+Algorithm 1 SPROUT training iteration for one task x
+Require: policy πθ (also acting as analyst, reviewer, and turn writer), verifier V x , judge J, family size
+K (= 3), oversampling O (= 1), context budget L, headroom ∆
+1: Sample two independent rollouts τ1 , τ2 ∼ ρθ (· | s0 ), checkpointing every turn boundary; evaluate
+each with V x
+2: A x ← { τ1 , τ2 }; m ← TT if R x (τ1 ) = R x (τ2 ) = 1, FF if R x (τ1 ) = R x (τ2 ) = 0, else TF
+3: for each root i ∈ {1, 2} do
+4:
+Bi ← {t ∈ E (τi ) : t ≤ tcut
+▷ usable boundaries
+i , | τi,≤t | + ∆ ≤ L }
+5:
+if m ∈ {TT, TF} then
+6:
+t̂i ← boundary in Bi selected by the reviewer
+′ ) ← (t̂ , ∅) for j = 1, . . . , K +O
+7:
+(t̂i,j , ai,j
+▷ unguided continuation
+i
+8:
+else
+▷ m = FF: guided repair
+9:
+{(tk , gk )}k ← ranked boundaries tk ∈ Bi with corrective directions gk , from a review of A x
+including verifier feedback
+10:
+a′k ← starting turn written from τi,≤tk and gk only; keep (tk , a′k ) if accepted by J
+′ ) ← ( t , a′ ) for j = 1, . . . , K; ( t̂
+′
+′
+11:
+(t̂i,j , ai,j
+j j
+i,K +o , ai,K +o ) ← ( to , ao ) for o = 1, . . . , O
+12:
+end if
+13:
+for j = 1, . . . , K +O in parallel do
+14:
+e′j ← Restore(ci,t̂i,j ), h′j ← Recover(ci,t̂i,j ) in a fresh sandbox
+15:
+16:
+
+′ ̸ = ∅ then
+if ai,j
+
+′ in order to obtain o ′ ; s+ ← joint state after the context
+Execute the tool calls of ai,j
+j
+j
+
+update
+else
+′ ′
+18:
+s+
+j ← (e j , h j )
+19:
+end if
+′
+′
+′
+20:
+Sample η j ∼ ρθ (· | s+
+j ); τi,j ← τi,≤t̂i,j ⊕ ( ai,j , o j ) ⊕ η j
+17:
+
+′ , o ′ ) omitted if a′ = ∅
+▷ ( ai,j
+j
+i,j
+
+′ with V and add it to A
+Evaluate τi,j
+x
+x
+22:
+end for
+23:
+Retain the first K children of family i that complete evaluation; cancel the rest
+24: end for
+25: if a family has fewer than K completed children then
+26:
+Discard x and draw a replacement task
+27: end if
+′ }
+28: T x ← {τ1 , τ2 } ∪ { τi,j
+retained , |T x | = 8; compute advantages and loss masks (Equation 7)
+29: Update πθ with one policy-gradient step over the batch of all tasks (Equation 8)
+
+21:
+
+B Training Algorithm
+Algorithm 1 details one SPROUT training iteration for a single task x. Two independent roots are
+first sampled from s0 and graded, and their outcomes determine the mode of the group: TT if both
+succeed, FF if both fail, and TF otherwise. Each root τi then grows a family of K children from its
+15
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+usable boundaries Bi , namely the eligible boundaries (Section 3.3) whose prefix leaves at least ∆ tokens
+of headroom within the context budget L. In TT and TF groups, the reviewer selects one boundary
+per root, and all children of that root continue from it without an injected starting turn. In FF groups,
+the reviewer analyzes the archive, including verifier feedback, and returns ranked boundaries tk ,
+each paired with a corrective direction gk . The policy then writes a starting turn a′k at each boundary
+from the visible prefix and gk alone, without access to the analysis or the verifier feedback, and a
+judge filters the resulting turns. Each child restores the environment and context at its boundary in
+a fresh sandbox, executes its starting turn if it has one, continues under the current policy, and is
+graded. Each family launches O extra children so that stragglers do not delay the iteration, and only
+the first K children to complete evaluation are retained. A task with a family that has fewer than K
+completed children is replaced. The eight retained attempts are credited and masked as in Equation 7
+and contribute to one policy-gradient step (Equation 8).
+
+C Starting Turns versus User Hints
+A guided branch needs some way to carry the corrective direction into the restored context. We
+considered two formats.
+User hints. The simplest format is a user hint: an external message, appended to the restored context,
+that states the corrective direction. Because the hint is derived from verifier feedback, it tends to
+leak into the continuation. The actor often recites the message, quotes test names or expected values
+from it, or justifies later actions by referring to it, so the continuation depends on information that is
+unavailable during ordinary execution. The hint also causes a problem for training. It is not an action
+of the policy and must be removed from the learner’s context. Once it is removed, the training context
+no longer explains the continuation: turns that recite or respond to the hint remain in the trajectory
+without a visible cause.
+Starting turns. SPROUT instead writes the guidance as a starting turn a′j in the actor’s own voice,
+consisting of brief reasoning followed by tool calls whose observations come from real execution
+(Section 3.4). The turn must read as a natural continuation of the prefix and may not mention
+checkpoints, other branches, or hidden tests, and in training groups a judge filters turns that violate
+these constraints (Appendix B). The context therefore contains no foreign message. During training, a′j
+remains in place as an ordinary policy turn, and only the review context used to write it is removed
+(Section 3.5). The actor thus learns the corrective action itself rather than how to respond to an external
+hint.
+
+D State Projection and Cache Matching Efficiency
+Motivation. In agentic reinforcement learning for long-horizon coding tasks, rollouts frequently
+traverse identical or semantically equivalent intermediate states (e.g., repository navigation, virtual
+environment configuration, dependency installation). Re-executing these initial setup steps from scratch
+wastes compute budget, while naively snapshotting and restoring complete microVM environments
+can introduce severe I/O contention. To amortize rollout overhead, SPROUT incorporates a statematching mechanism that identifies whether an intermediate execution state can be directly resumed
+from an existing checkpoint. This appendix provides a detailed empirical comparison of our state
+projection approach against representative caching and hashing baselines.
+Experimental Protocol and Baselines. We evaluate caching mechanisms on 248 rollout trajectories
+(136 generated with GPT 5.6 Luna and 112 with Qwen as query policies) collected across the 134
+candidate tasks that initially failed single-pass exploration. We evaluate five configurations:
+• No Cache: The standard baseline that disables state reuse entirely, executing every trajectory prefix
+
+from scratch.
+
+16
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+Table 7. Evaluation of intermediate state matching and caching mechanisms. Evaluated on 248 trajectories
+
+across 134 candidate tasks. Hit rates report both the total ratio and the breakdown by query policy. Online latency
+measures the verification time per candidate checkpoint, and retained candidates denote unresolved task slots
+remaining after cache reuse.
+Method
+
+Source / Setting
+
+Precision
+
+Latency
+
+Retained
+
+No Cache
+Exact Full History
+Official TVCACHE TCG
+Full-Workspace Hash
+
+Baseline
+0/248
+0/136
+0/112
+Strict Trace Match
+2/248 (0.8%)
+2/136 (1.5%)
+0/112 (0.0%)
+TVCACHE (Kumar et al., 2026) 8/248 (3.2%)
+8/136 (5.9%)
+0/112 (0.0%)
+Exhaustive Scan
+91/248 (36.7%) 65/136 (47.8%) 26/112 (23.2%)
+
+Total Hit Rate
+
+—
+100%
+100%
+100%
+
+0 ms
+0.0003 ms
+0.0017 ms
+79.1 ms
+
+134/134
+133/134
+133/134
+38/134
+
+Ours
+
+Relaxed Projection
+
+100%
+
+0.201 ms
+
+82/134
+
+35/248 (14.1%)
+
+Luna
+
+28/136 (20.6%)
+
+Qwen
+
+7/112 (6.2%)
+
+• Exact Full History: Matches intermediate execution states strictly by verifying identical raw conver-
+
+sational histories and tool-call logs.
+• Official TVCACHE TCG: The official Tool Call Graph (TCG) prefix-matching implementation from
+TVCACHE (Kumar et al., 2026), a stateful execution cache designed for agent post-training.
+• Full-Workspace Hash (Upper Bound): Computes recursive SHA-256 cryptographic hashes across
+the entire microVM workspace filesystem after each tool step to detect identical on-disk states. This
+represents the empirical upper bound of state-level hit rates.
+• Ours (Scan-free Relaxed Projection): Projects filesystem mutations into lightweight metadata
+signatures at tool boundaries without recursive disk-tree traversal, filtering out superficial nondeterministic side effects.
+
+Analysis and Key Takeaways. Table 7 highlights the latency-coverage trade-offs across different
+state-matching paradigms:
+1. Brittleness of Textual and Graph Matching: Exact full history matching yields an extremely low
+hit rate (0.8%) because trivial non-deterministic variations in tool outputs (e.g., timestamps, process
+IDs, temporary directory names) invalidate string identity. Similarly, while TVCACHE’s TCG
+tracks tool call trees, it misses many reusable states (3.2% hit rate) due to subtle command-line
+syntax variations in long bash command sequences.
+2. The Overhead Bottleneck of Deep Hashing: Full-workspace hashing achieves the theoretical
+upper bound hit rate of 36.7% (reducing retained tasks from 134 to 38). However, traversing and
+hashing multi-gigabyte repository workspaces incurs an average online latency of 79.1 ms per
+checkpoint check. In high-throughput parallel rollout environments where hundreds of microVMs
+execute synchronously, this overhead causes severe CPU and disk I/O contention.
+3. Optimal Latency–Coverage Balance: Our Scan-free Relaxed Projection strikes a practical balance: it
+achieves a 14.1% overall hit rate (20.6% on Luna queries) while requiring only 0.201 ms of online
+latency—over 390× faster than full-workspace hashing. Crucially, all matched states achieve 100%
+precision, ensuring that branched continuations never inherit corrupted or mismatched filesystem
+states.
+4. Model-Dependent Trajectory Divergence: Across all caching methods, trajectories generated
+by GPT 5.6 Luna exhibit significantly higher hit rates than Qwen (e.g., 20.6% vs. 6.2% under
+our method, and 47.8% vs. 23.2% under workspace hashing). Luna follows more standardized
+repository inspection patterns, producing reusable environment states during early setup stages.
+
+E Prompts of the branching controller
+The controller runs an analyst once per failed attempt and a reviewer once per round. The reviewer’s
+plan is validated before any branch executes; a rejected plan is returned to the reviewer with the
+validator’s message (at most three attempts). In the assistant-turn mode used in our experiments the
+reviewer authors the next assistant message of each branch (reasoning plus bash tool calls), which
+is spliced into the retained conversation prefix; the actor therefore never receives a user-side hint.
+Placeholders in braces ({problem}, {transcript}, . . . ) are filled by the controller.
+
+17
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+E.1 Analyst prompt (one per failed attempt)
+Analyst prompt
+You are analysing ONE failed coding attempt. Your private analysis will be
+pooled with other attempts so a reviewer can choose a checkpoint and useful
+directions for continuing from it. The continuing agent remembers only the
+conversation up to that checkpoint.
+The goal is a natural and effective continuation: if the added direction is
+later removed, the next reasoning and actions should still make sense from the
+retained work and the agent’s own observations. Diagnose the missed code-level
+connection that could plausibly occur to the agent at that point.
+## The problem it was solving
+{problem}
+## Private grading evidence (not observed by the continuing agent)
+{verdict}
+## The attempt, one line per tool step ("[N] tool(args) -> result")
+{transcript}
+## Recorded snapshot/session pairs available for selection
+{checkpoint_steps}
+## Translate evidence into repair directions
+- Your output should help the reviewer choose a repair direction, not reproduce
+the grading report. In every returned field, omit verifier-only filenames,
+test names/IDs and grader paths. Translate their useful information into the
+affected program behavior, code relationship or invariant instead.
+- A path in verifier output is not evidence that the actor can open it. Refer
+to a repository file or symbol only when the task or retained prefix
+establishes it is available at that candidate checkpoint. Do not ask the
+actor to read, locate or recreate a hidden test, or retrieve a grading artifact.
+Suggest inspecting accessible implementation/callers or constructing a small
+local check from the public task and available code instead.
+- If the cause is established, state the correction directly and explain the
+relevant constraint. Otherwise give the strongest supported hypothesis: what
+code relationship may be involved, why it is plausible, what remains unknown,
+and one accessible check with what would support or rule it out. If no specific
+cause is supported, say the cause is unresolved and identify the nearest
+evidence-backed area to investigate, rather than inventing a precise fix.
+- Do not merely add ’possibly’ to an invented explanation. In particular, do
+not guess how an unseen test constructs its fixtures, router groups or inputs.
+A symptom does not establish those details. Prefer a check that distinguishes
+plausible mechanisms before recommending a behavior-changing edit.
+- Keep private observations distinct from what the actor already knows. In
+lesson and each candidate’s why, express a code-level direction and its
+connection to the retained work, not instructions to consult external evidence.
+Example of translating a route-lookup failure into a qualified direction:
+"The route prefix may be composed inconsistently between the registration helper
+and its caller. Trace the group prefix and route suffix in the available code,
+then compare the resulting URL with the task’s required endpoint. Check for a
+missing or duplicated segment before changing registration. The evidence does
+not yet establish whether a caller-owned or handler-owned prefix is appropriate."
+This is an example of reasoning, not a diagnosis to reuse for unrelated tasks.
+## Evidence and output rules
+- Use the verdict and the whole transcript as private diagnostic evidence.
+failure_reason and lesson are controller-only reports, not actor messages.
+Retain the specific mechanism, useful correction and important constraints;
+do not dilute a diagnosis into generic advice to inspect code or run tests.
+- Separate observed facts from inferences. Distinguish the required behavior,
+a suspected cause, and a possible repair. An external failure can motivate
+a hypothesis without proving its cause. Do not change a behavioral contract
+simply because another implementation would be easier to check.
+- For each candidate, identify the code, decision or observation that connects
+
+18
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+
+the retained work to the next useful question. Explain what a concrete action
+would establish, without assuming the agent has seen the discarded suffix.
+- Preserve behavior outside the suspected bug. Identify relevant accepted
+inputs, boundary cases or API responsibilities that a repair must retain.
+Express the issue in program behavior rather than relying on test labels.
+- Do not compose the continuing agent’s inner monologue or invent observations.
+The reviewer needs a useful lead, not text the agent must repeat or a story
+about receiving feedback.
+## Checkpoint rules
+- Tool steps span {lo}..{hi}, but only the recorded steps listed above have
+eligible snapshot/session pairs. Choose candidates from that list; a matching
+native conversation cut is checked separately before launch. A branch at
+step N must resume the environment AS IT STOOD AFTER step N.
+- branch_candidates: up to {candidate_limit} useful steps, not a quota. LATER IS BETTER
+,→ when it preserves
+sound work, but choose before the decisive wrong turn. If the approach was
+already wrong at the start, propose the earliest eligible point and explain why.
+- Describe salvage relative to the state after each candidate step, not the
+final tree. Later edits, files, dependencies and observations are not already
+present at an earlier checkpoint.
+- Each candidate’s why should name the prefix connection and the next useful
+check. Avoid requiring the continuation to redo reasoning or checks that
+the retained prefix already established.
+Return ONLY a JSON object, no prose:
+{"failure_reason": "<observed behavior; supported mechanism or hypothesis; remaining
+,→ uncertainty>",
+"lesson": "<concrete repair direction or discriminating check; constraints to preserve
+,→ >",
+"salvage": "<work present at the candidate steps, or ’nothing’>",
+"branch_candidates": [{"step": <int>, "why": "<visible prefix connection; next check and
+,→ what it distinguishes>"}]}
+
+{verdict} is the private grading evidence: the grade summary, the attempt’s final patch and the
+verifier output. {transcript} renders the attempt as one line per tool step ([N] tool(args) ->
+result, tool results truncated head and tail); {checkpoint_steps} lists the steps with an exact
+snapshot/conversation pair; {candidate_limit} is the branch cap of the round (4, then 3).
+E.2 Reviewer prompt (assistant-turn mode, structured submission)
+Reviewer prompt
+You are the REVIEWER for a failed coding task. Choose branches and author the
+next assistant response for each branch. mini-swe-agent will execute its bash
+tool calls immediately, record the REAL observations, then continue normally.
+There is no user hint or opportunity for the actor to revise your first action.
+## The problem
+{problem}
+## Every attempt so far
+{reports}
+## Branch count requirement
+{count_rule}
+## Selecting the retained context
+- Each branch chooses its own base and branch_step from available_steps.
+Repeated positions are allowed; vary useful repair hypotheses, not wording.
+- native_history.messages contains the attempt’s native messages. For your
+chosen step, take ONLY the first native_history.prefix_message_counts[step]
+messages (the JSON map uses string keys). The restored disk is AFTER that
+step. Messages beyond that offset are discarded, NOT observations the
+continuing agent has already made.
+- Analyses, grades and discarded suffixes are private diagnostic evidence.
+Use them to choose a promising action, not to invent prior observations.
+
+19
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+
+Prior assistant_turn_given records show directions already tried.
+## The response you author
+- native_history.tools contains the actor’s recorded function definitions.
+Match the function names, required arguments and parameter types exactly.
+The mini executor accepts only command; never add timeout, working_dir, tail
+or other arguments, or use host/MCP tools absent from that list.
+- native_history.workspace records the inherited working directory when
+available. To change directories, use cd inside the bash command.
+- Write assistant_turn as a normal assistant message: role="assistant",
+ordinary content containing concise code-focused reasoning, and tool_calls.
+Reasoning belongs in content, NOT a provider-native reasoning/thinking field.
+- Make it a plausible next response to the retained history. A later diagnosis
+can motivate a hypothesis to test; do not state it was already observed.
+- Do not mention reviewers, guidance, other branches, scores, hidden test
+names/IDs, grader paths or outside feedback. Do not write an acknowledgment,
+a user instruction, a task restatement or invented tool observations.
+- Never describe the continuation as a checkpoint, restore, replay, restart,
+injected turn or selected branch. Phrases such as "from this checkpoint",
+"the clean checkpoint" and "resuming this trajectory" expose controller-only
+knowledge. Speak only about the code and observations in the retained history:
+for example, "I’ve inspected the merge APIs; I’ll check the working tree
+before implementing the merge logic." A task’s own database checkpoint or
+application restore API may still be discussed as domain functionality.
+- Claims that work is complete or tests have passed must be supported by
+observations BEFORE the selected cut. Otherwise describe a hypothesis and
+the check you will run, not a fact learned from discarded history or grading.
+- Supply one or more bash function calls, in execution order. Every call needs
+a non-empty unique id not used anywhere in the retained history, type=function,
+and function.name=bash. function.arguments is an OBJECT containing exactly
+one string field, command. Commands may inspect or modify the sandbox.
+- bash is the ONLY allowed tool name. Calls named shell, python, apply_patch,
+text_editor, or any host/MCP tool are rejected before any branch executes;
+the validation error will be returned for you to correct the complete plan.
+Python, git and other available programs can be invoked INSIDE bash commands.
+- A bash tool does not imply a shell executable named apply_patch exists.
+Do not invoke the host’s apply_patch helper inside bash. Use ordinary shell
+redirection or Python file edits when those programs are supported by the
+retained context. Ensure a failed edit stops subsequent checks and commits,
+using explicit error checks, && chaining, or set -e as appropriate.
+- Use only files, working-directory conventions and tools supported by the
+selected prefix. Preserve the original task’s behavioral constraints.
+- Do not include hint, reasoning_content, extra, tool results or additional
+fields in assistant_turn. The controller preserves your content and calls.
+- Check that your reasoning still reads naturally immediately after the
+selected prefix, and that each claim about completed work is supported there.
+Call submit_branch_plan exactly once with the complete plan as its arguments. The function
+,→ arguments must match the declared schema. Return no fenced block or explanatory
+,→ prose. The function is a plan submission, not a sandbox command.
+
+{reports} is a JSON array with one entry per attempt so far: the analyst’s failure_reason,
+lesson, salvage and branch_candidates, the grade summary, available_steps, the
+assistant_turn_given to that attempt (if it was a branch), and native_history (the attempt’s
+native messages, the number of messages retained at each eligible step, the actor’s recorded tool
+schema and working directory). {count_rule} is one of:
+Branch count rule, round 1 (cap 4)
+Return at most 4 branches. 4 is an upper bound, not a quota.
+Return fewer when there are fewer useful directions; do not pad the list.
+If no useful eligible branch exists, return an empty branches list and
+explain why in synthesis. Do not invent a checkpoint or filler direction.
+
+20
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+Branch count rule, round 2 (cap 3)
+Return at most 3 branches. 3 is an upper bound, not a quota.
+Return fewer when there are fewer useful directions; do not pad the list.
+If no useful eligible branch exists, return an empty branches list and
+explain why in synthesis. Do not invent a checkpoint or filler direction.
+
+The plan is submitted as a single call of the function submit_branch_plan, whose schema the
+controller validates:
+Tool schema of the plan submission
+{
+"type": "function",
+"function": {
+"name": "submit_branch_plan",
+"description": "Submit the complete branch plan for controller validation",
+"strict": true,
+"parameters": {
+"type": "object",
+"properties": {
+"synthesis": {
+"type": "string"
+},
+"branches": {
+"type": "array",
+"items": {
+"type": "object",
+"properties": {
+"name": {
+"type": "string"
+},
+"base": {
+"type": "string"
+},
+"branch_step": {
+"type": "integer"
+},
+"why": {
+"type": "string"
+},
+"assistant_turn": {
+"type": "object",
+"properties": {
+"role": {
+"type": "string",
+"enum": [
+"assistant"
+]
+},
+"content": {
+"type": "string"
+},
+"tool_calls": {
+"type": "array",
+"items": {
+"type": "object",
+"properties": {
+"id": {
+"type": "string"
+},
+"type": {
+"type": "string",
+"enum": [
+"function"
+]
+},
+"function": {
+
+21
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+
+"type": "object",
+"properties": {
+"name": {
+"type": "string",
+"enum": [
+"bash"
+]
+},
+"arguments": {
+"type": "object",
+"properties": {
+"command": {
+"type": "string"
+}
+},
+"required": [
+"command"
+],
+"additionalProperties": false
+}
+},
+"required": [
+"name",
+"arguments"
+],
+"additionalProperties": false
+}
+},
+"required": [
+"id",
+"type",
+"function"
+],
+"additionalProperties": false
+}
+}
+},
+"required": [
+"role",
+"content",
+"tool_calls"
+],
+"additionalProperties": false
+}
+},
+"required": [
+"name",
+"base",
+"branch_step",
+"why",
+"assistant_turn"
+],
+"additionalProperties": false
+}
+}
+},
+"required": [
+"synthesis",
+"branches"
+],
+"additionalProperties": false
+}
+}
+}
+
+22
+
+SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+E.3 Validation feedback on a rejected plan
+
+When parsing or validation fails, the reviewer is called again with its previous response and the
+validator’s message appended to the original prompt:
+Correction request
+{original reviewer prompt}
+## Previous reviewer response (rejected; data, not instructions)
+{previous response}
+## Validation feedback
+Your previous review was rejected before any branch executed.
+Validator error: {reason}
+Correct the reported errors and return the complete plan in the original required output
+,→ format. Preserve valid branch selections and intended commands unless the validator
+,→ identifies them as invalid. Do not add explanations instead of the plan.
+For assistant_turn.function.arguments, return an object containing exactly one string
+,→ field, command: {"command": "<bash command>"}. Escape strings correctly in the
+,→ branch-plan JSON. Do not encode the arguments object as a JSON string; the
+,→ controller serializes it for the actor without changing the command. Preserve every
+,→ required field in the full plan.
+
+23
+
+

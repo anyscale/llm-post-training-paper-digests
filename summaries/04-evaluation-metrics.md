@@ -4,7 +4,7 @@
 
 **Lens:** the benchmarks and metrics used (AIME, MATH, HumanEval, SWE-bench, Arena, win rate, pass@k, avg@k, accuracy, reward, KL, entropy, …) and the headline results/numbers.
 
-**Coverage:** 99 of the 99 papers contribute substantive content on this lens; papers for which this lens was not a focus are omitted here and appear under their relevant topic files.
+**Coverage:** 148 of the 148 papers contribute substantive content on this lens; papers for which this lens was not a focus are omitted here and appear under their relevant topic files.
 
 ---
 
@@ -1311,3 +1311,630 @@ Evaluation covers 215 audio and audio-visual subtasks across two variants (Flash
 **Key results:** Qwen3.5-Omni-Plus achieves SOTA across 215 audio/audio-visual benchmarks, surpassing Gemini-3.1 Pro on audio understanding, recognition, translation, and dialogue (FLEURS ASR avg WER 6.6% vs 7.3%; en2xx avg BLEU 33.8 vs 31.8). On SEED-TTS it reaches test-en WER 1.26, and in cross-lingual TTS it cuts zh->ko error from 14.4 (CosyVoice3) to 4.03 (~72% relative reduction). It matches Qwen3.5-Plus-Instruct on text/vision (MMLU-Pro 85.9, IFEval 89.7) with Plus first-packet latency of 435ms (audio) / 651ms (video).
 
 *Evolution:* Building on the Thinker-Talker design of Qwen2.5-Omni and Qwen3-Omni, Qwen3.5-Omni (2026) scales native omnimodal training to hundreds of billions of parameters with Hybrid-Attention MoE and the ARIA streaming-alignment trick. It moves the field from passive perception-response systems toward native omni-agents that act (WebSearch, FunctionCall) and even generate executable code from audio-visual instructions (Audio-Visual Vibe Coding), motivating future work on general-purpose omnimodal agents.
+
+### The MiniMax-M2 Series: Mini Activations Unleashing Max Real-World Intelligence
+*2026 · report · `report_MiniMax-M2-Series_2605.26494.txt` · arXiv [2605.26494](https://arxiv.org/abs/2605.26494)*
+
+Coding uses SWE-bench Pro, SWE-bench Multilingual, Multi-SWE-bench and internal NL2Repo (Claude Code scaffold, 4 trials), Terminal-Bench 2.0 (Terminus-2) and MLE Bench Lite (medal rate, 3x24h). AppDev uses internal VIBE-Pro and HyperTask; search uses BrowseComp, Wide Search and internal RISE; office/tools use GDPval-AA, Toolathlon, internal MM Claw, MEWC v2 and Finance Modeling Pro. Reasoning (AIME 2026, GPQA-D, SciCode, IFBench, AA-LCR, HLE, MMLU-Pro) follows the AA Index v4.0 protocol (pass@1).
+
+- M2.7 coding: SWE-bench Pro 56.2, SWE-Multilingual 76.5, Multi-SWE 52.7, Terminal-Bench 2.0 57.0, MLE Lite 66.6.
+- M2.7 agentic: VIBE-Pro 55.6, BrowseComp 77.8, GDPval-AA 50.0, Toolathlon 46.3.
+- M2.7 reasoning: AIME26 94.2, GPQA-D 89.8, IFBench 76.0, HLE 28.0.
+
+**Key results:** With about 10B active parameters, M2.7 is close to closed frontier models. It has the best Multi-SWE-bench score among the compared models (52.7 vs 50.3 for Opus 4.6), scores 56.2 on SWE-bench Pro against 57.3 for Opus 4.6 and 57.7 for GPT 5.4, and reaches a 66.6% MLE Bench Lite medal rate, tying Gemini 3.1 Pro. From M2 to M2.7 every tracked benchmark improves, for example BrowseComp by 33.8 points and Toolathlon by 27.5. M2.7 also handles 30-50% of the RL team's daily iteration work and, in 100 autonomous rounds of improving an internal scaffold, gained 30%.
+
+*Evolution:* The series follows MiniMax-01 and MiniMax-M1 and keeps M1's CISPO objective, but it drops their hybrid Lightning Attention in favour of full attention, after SWA hybrids degraded on agent tasks longer than 32K. It borrows MTP and auxiliary-loss-free expert-bias routing from DeepSeek-V3 and SWE-Smith-style task augmentation. It moves post-training from reasoning RL toward agent-native RL over arbitrary black-box scaffolds, and it gives an early, partly human-steered example of a model debugging its own training runs. Note: the arXiv ID is 2605 (May 2026, v2 dated July 2026), earlier than the corpus's 2608-2610 target window.
+
+### Seed2.0 Model Card: Towards Intelligence Frontier for Real-World Complexity
+*2026 · report · `report_Seed2.0_2607.00248.txt` · arXiv [2607.00248](https://arxiv.org/abs/2607.00248)*
+
+Evaluation covers 50 image and 24 video benchmarks plus language (AIME, HMMT, IMOAnswerBench, Codeforces Elo, LiveCodeBench v6, GPQA, ARC-AGI, MMLU-Pro, SuperGPQA, MultiChallenge, Frames, MRCR), agentic (SWE-Bench Verified/Pro, Terminal-Bench 2.0, BrowseComp, HLE, τ²-Bench, BFCL-v4, MCP-Mark) and in-house enterprise suites. Baselines are GPT-5.2 High, Claude-Opus/Sonnet-4.5, Gemini-3-Pro and Seed1.8.
+
+- Competitions: IMO 2025 35/42 and CMO 2025 114/126 (both gold); ICPC 2025 pass@8 73.02%; Putnam-200 35.5% pass@8.
+- Codeforces Elo 3020; MathVision 88.8; VideoMME 89.5.
+- In-house Chinese complex-IF benchmark 75.26% (+2.37 over Seed1.8).
+
+**Key results:** Seed2.0 Pro reaches gold-medal level on IMO 2025 (35/42) and CMO 2025 (114/126), has a Codeforces Elo of 3020 and scores 73.02% ICPC pass@8 (gold in all five 2025 contests). It reaches 35.5% pass@8 on Putnam-200 (above Seed-1.5-Prover's 26.5), and leads most vision and video benchmarks. The authors admit clear gaps to Claude in coding (SWE-Evo, NL2Repo) and to Gemini on long-tail knowledge (SuperGPQA, SimpleQA-Verified).
+
+*Evolution:* Successor to Seed1.5-Thinking/Seed1.6/Seed1.8 and Seed1.5-VL. It marks ByteDance Seed's shift from Olympiad-style reasoning toward agentic, long-horizon real-world tasks and research-level reasoning (Erdős problems, scientific coding). Unlike the Seed1.5-Thinking report, it is a model card with no training recipe. Its contributions are deployment-usage analysis, a ~10x cost advantage over frontier APIs, and a suite of new real-world benchmarks.
+
+### Gemma 4 Technical Report
+*2026 · report · `report_Gemma-4_2607.02770.txt` · arXiv [2607.02770](https://arxiv.org/abs/2607.02770)*
+
+Human evaluation is Arena Text Elo. Static benchmarks, mostly in thinking mode, cover MMLU Pro, AIME 2026 (no tools), LiveCodeBench v6, Codeforces Elo, SciCode, GPQA Diamond, BBEH, HLE (with/without search), IFBench, IFEval, MMMLU, MRCR v2 8-needle at 128k, Terminal Bench Hard and Tau2 (airline/retail/telecom). Vision uses MMMU Pro, MATH-Vision, MedXPertQA MM, InfographicVQA and OmniDocBench 1.5; audio uses CoVoST BLEU and FLEURS WER/CER; long context uses RULER, LOFT, GraphWalks and MTOB (up to ~256k).
+
+- 31B: MMLU Pro 85.2, AIME 2026 89.2, LiveCodeBench 80.0, Codeforces 2150, GPQA 84.3.
+- 31B: HLE 19.5, IFEval 98.9, Tau2-retail 86.4.
+- RULER-128k 96.4 vs 66.0 for Gemma 3 27B.
+
+**Key results:** Gemma 4 31B scores 1451 Elo on Arena Text, the top dense open model, close to far larger MoEs such as DeepSeek V4 Pro (1456). The 26B-A4B scores 1438, vs 1366 for Gemma 3 27B. The 31B lifts AIME 2026 from 20.8 to 89.2 and Codeforces Elo from 110 to 2150 over Gemma 3 27B. On audio, E2B/E4B improve over Gemma 3n by 12%/10% on translation and 17%/12% on ASR with a 78% smaller encoder.
+
+*Evolution:* Gemma 4 succeeds Gemma 2/3 and Gemma 3n, reusing Gemma 3's local:global attention recipe and Gemma 3n's per-layer embeddings and USM audio encoder. Its main post-training addition is an o1-style thinking mode, which brings the open Gemma line into the reasoning-model era. The report's other contributions are efficiency work: K=V global layers, p-RoPE, KV sharing, MTP drafters, QAT and an encoder-free 12B. The post-training recipe itself is barely documented, so the report is more useful as an efficient-architecture reference than as a post-training recipe.
+
+### Solar Open 2 Technical Report
+*2026 · report · `report_Solar-Open-2_2607.20062.txt` · arXiv [2607.20062](https://arxiv.org/abs/2607.20062)*
+
+English benchmarks: MMLU-Pro, GPQA-Diamond, HLE (no tools), LiveCodeBench v6, ArtifactsBench, HMMT2602, AIME2026, MultiChallenge, IFBench, AA-LCR, SWE-Bench Verified, Terminal Bench Hard, APEX-Agents, MCP-Atlas, tau3 banking and GDPval-AA v2 (ELO). Korean: KMMLU-Pro, CLIcK, HAE-RAE v1.1, Ko-AIME'25, HRM8K, KBank-MMLU, KBL, KorMedMCQA and in-house Ko-GDPval (170 tasks, 58 occupations, 11 domains). Baselines are DeepSeek-V4-Flash, MiMo-V2.5, Command A+, Mistral Medium 3.5, Solar Open 1, plus Claude Haiku 4.5 and GPT-5.4 mini on Korean.
+
+- MMLU-Pro 86.2, LiveCodeBench 92.4, GPQA-D 86.3, AIME2026 95.7.
+- SWE-Bench Verified 70.4, Terminal Bench Hard 28.3, APEX-Agents 16.6, MCP-Atlas 58.2, GDPval-AA 1128.
+- Korean average 85.4, Ko-GDPval 86.8; blind pairwise test on 835 Korean turns prefers it over DeepSeek-V4-Flash 44.1% vs 26.6%.
+
+**Key results:** Solar Open 2 leads comparably sized open-weight models on MMLU-Pro (86.2), LiveCodeBench v6 (92.4) and APEX-Agents (16.6), posts the top Korean average (85.4 vs DeepSeek-V4-Flash 84.9 and GPT-5.4 mini 80.8), and scores 86.8 on Ko-GDPval vs 86.9 for the 1.6T DeepSeek-V4-Pro (Solar Open 1: 3.4). Gaps remain on SWE-Bench Verified (70.4 vs 73.0-73.8) and Terminal Bench Hard (28.3 vs MiMo-V2.5's 41.7).
+
+*Evolution:* Solar Open 2 scales Upstage's Solar Open 1 (102B-A12B) into a Korean sovereign agentic model. It adopts the 2025-26 hybrid linear/softmax attention trend (Kimi Linear, Qwen3.5, Nemotron 3) and adds NoPE and negative eigenvalues. It also follows the specialist-then-on-policy-distillation consolidation used by DeepSeek-V4, Nemotron and MiMo, but drops the outcome reward and uses exact full-vocabulary KL. Its selective cross-architecture weight transfer and OfficeVerse office-task synthesis are reusable ideas for continuing model families across architecture changes and for training deliverable-producing agents in non-English languages.
+
+### From RLVR to RLSVR: Task Transformation Induces Self-Verifiable Rewards for Open-Ended LLM Self-Improvement
+*2026 · rl · `rl_RLSVR_2607.23802.txt` · arXiv [2607.23802](https://arxiv.org/abs/2607.23802)*
+
+Summarization is scored by ROUGE-L on GovReport, Multi-News, QMSum, VCSum, SAMSum (plus arXiv, PubMed, BillSum) and GPT-4o pairwise A/B win rates with swapped-order conservative aggregation. Creative writing uses GPT-4o A/B on WritingPrompts and WritingBench (novelty, emotion, coherence, consistency, overall). Reasoning is accuracy on GSM8K, MATH500, AIME24/25, Minerva, MMLU-Pro, GPQA-Diamond, AMC, OlympiadBench and SuperGPQA. A blinded human study (10 PhD students, 400 prompts) and Gemini-3.5-Flash as alternative judge check the judging; GPT-4o-vs-human agreement is 91.0% precision / 93.8% recall.
+
+- Qwen3-4B GovReport ROUGE-L 36.7 vs 33.2 for Absolute Zero.
+- Win rates vs own base (4B / 8B): 73.9% / 75.4% summarization average, 81.3% / 76.5% WritingPrompts overall.
+- Qwen3-4B reasoning: GSM8K 93.4, MATH500 79.5, AIME25 20.0, GPQA-D 41.3 (base 84.5 / 68.2 / 6.7 / 26.3).
+
+**Key results:** SpyRL beats the R-Zero and Absolute Zero self-play baselines on every summarization and creative-writing benchmark (R-Zero even degrades creative writing to 48.8% vs base), and improves Qwen3-4B/8B math reasoning across seven benchmarks (4B average 41.4 to 50.4). Without any external verifier it beats a Qwen3.5-27B rubric-as-reward baseline (59.3% overall win on WritingPrompts) and is roughly on par with GPT-4o-RaR (48.9%), which cost about $900 in verifier calls.
+
+*Evolution:* RLSVR takes the verifiable-reward machinery behind o1/DeepSeek-R1-style RLVR (GRPO) and the label-by-construction idea of self-supervised pretext tasks (masked LM, contrastive learning). It aims them at open-ended generation, which until now relied on RLHF/DPO, LLM-as-judge, self-rewarding or rubric-as-reward signals that bring judge bias and cost. It extends proposer-solver self-play (Absolute Zero, R-Zero), which needs verifiable solver feedback, to multi-agent information-asymmetric games, and borrows Role-Advantage Estimation from prior multi-agent self-play RL. The broader claim is that verifiability can be engineered rather than being a fixed property of a task.
+
+### Qwen-UI-Agent Technical Report: Toward Next-Generation Real-World Centric Foundation GUI Agents
+*2026 · report · `report_Qwen-UI-Agent_2607.28227.txt` · arXiv [2607.28227](https://arxiv.org/abs/2607.28227)*
+
+Mobile: MobileWorld GUI-only (117 tasks, SR), the new MobileWorld-Real (409 human-written tasks over 104 apps on live phones, scored by AutoJudge, a 5-VLM majority vote with 92.8% expert agreement on 666 trajectories) and AndroidDaily. Computer: OSWorld-Verified and OSWorld-v2 (partial/binary, steps/task). Web: WebArena (corrected references and scripts), BrowseComp/-ZH. Grounding: ScreenSpot-Pro/V2, MMBench-GUI L2, OSWorld-G-Refined, UI-Vision. General/agentic: MMMU-Pro, MMLU-Pro, IFEval, Tau2, Terminal-Bench 2.0, Claw-Eval, BFCL-v4, SkillsBench.
+
+- 27B mobile: MobileWorld 82.1 (85.5 at 100 steps), MobileWorld-Real 92.2, AndroidDaily 97.5.
+- 27B computer/web: OSWorld-Verified 79.5 (2nd to Opus 4.8's 83.4), OSWorld-v2 40.0/13.9, WebArena 73.6.
+- ScreenSpot-Pro 81.5 with zoom.
+
+**Key results:** The 27B model sets mobile SOTA: 82.1% on MobileWorld (vs Seed 2.1 Pro 73.2, Opus 4.8 67.5) and 92.2% on MobileWorld-Real (vs Seed 2.1 Pro 88.7). It reaches 73.6% on WebArena (vs Opus 4.8 71.9) and 79.5% on OSWorld-Verified, while lifting Terminal-Bench 2.0 to 50.1 vs 41.1 for the Qwen3.5-27B base comparison. Action RL raises task SR by more than 7% while cutting reasoning tokens 21.3%. Online RL increases trajectories containing a verification action by 14.7% and cuts false stops by 11.2%.
+
+*Evolution:* This report continues MAI-UI (step-level trajectory judge, GRPO-style online RL, rejection-sampled SFT) and joins the 2026 wave of native GUI agents (UI-TARS-2, GUI-Owl-1.5, UI-Venus-1.5, EvoCUA) that scale verifiable environments and online RL. It pushes past sandbox benchmarks: a 100+-phone real-device runtime and the MobileWorld-Real benchmark target the sim-to-real gap it documents in Qwen3.7-Plus failures. Its hybrid GUI+CLI batched action space, where online RL produces a 'Bash as hands, GUI as eyes' pattern, and its agent-driven data flywheel point toward agents that partly build their own training curricula.
+
+### Frontis-MA1: Training an AI4AI Model towards Recursive Self-Improvement in Machine Learning Engineering
+*2026 · rl · `rl_Frontis-MA1_2607.28568.txt` · arXiv [2607.28568](https://arxiv.org/abs/2607.28568)*
+
+The primary benchmark is MLE-Bench Lite (22 tasks), 3 runs per configuration under a 12-hour per-task budget on one RTX 4090 capped at 12 GB VRAM. Metrics are Valid Rate (x/22), Medal Average and Human Rank. Transfer is measured on NatureBench Lite (10 tasks, 4h budget) with Match-SOTA (g >= 0) and Surpass-SOTA (g > 0.1).
+
+- Frontis-MA1-35B: OpenMLE-Evo 21.67/22 valid, 60.61% medals (+/-7.73), Human Rank 0.7647; OpenMLE-Evo-Max 22/22, 71.21%, 0.8126.
+- Frontis-MA1-30B: 53.03% (Evo), 66.67% (Evo-Max); references GPT-5.6 Sol+Codex 72.73%, Kimi K3+Claude Code 72.73%, GPT-5.5+Codex 68.18%, Opus 4.8+Claude Code 63.64%.
+- Search efficiency vs AIRA-Evo: 41.7% fewer total tokens; new-best updates per 1M tokens 1.77 -> 3.27.
+
+**Key results:** Under the identical OpenMLE-Evo harness, post-training lifts Medal Average from 39.39% (Qwen3.6-35B-A3B) to 60.61%, and from 34.85% to 53.03% on the 30B replication. Frontis-MA1-35B with OpenMLE-Evo-Max reaches 71.21%, above GPT-5.5+Codex (68.18%) and approaching GPT-5.6 Sol and Kimi K3 (72.73%). On NatureBench Lite, the trained model raises Match-SOTA from 50% to 70% with the framework fixed, and OpenMLE-Evo raises it from 20% to 50% with the model fixed.
+
+*Evolution:* Frontis-MA1 combines three previously separate MLE-agent strands: AIDE/AIRA-style evolutionary search, executable environments (MLE-Dojo, MLE-Smith, MLE-Bench), and RL post-training of MLE agents (ML-Agent, MLE-RL, AceGRPO). Its central move is to train the same Draft/Improve/Debug/Crossover operators that the inference-time evolution composes. It borrows upper-tail entropic advantages from TTT-Discover and asynchronous search from AIRA2. The authors release the full stack (tasks, sandbox, training code, weights) as an open testbed for 'meta-evolution' toward AI4AI recursive self-improvement, and explicitly say it does not yet achieve general autonomous RSI.
+
+### Qwen-CUA: Native Computer Use for (almost) Everything
+*2026 · report · `report_Qwen-CUA_2608.02352.txt` · arXiv [2608.02352](https://arxiv.org/abs/2608.02352)*
+
+Pure screenshot + keyboard/mouse evaluation on eight benchmarks: OSWorld-Verified (360 tasks, 100 steps), OSWorld 2.0 (binary/partial completion), MyPCBench (184 tasks, rubric/perfect-task), MacAgentBench (676 tasks on 30 bare-metal Mac minis, Pass@1), Gym-Anything/CUA-World (1,295 tasks over 97 envs, strict-clean), ScienceBoard (169 tasks), WebArena and RedTeamCUA (task success/ASR). Baselines are Qwen3.7, GPT-5.5 and Opus-4.8.
+
+- OSWorld-Verified 86.2 vs 73.3/78.7/83.4 (Qwen3.7/GPT-5.5/Opus-4.8).
+- OSWorld 2.0 18.5/48.4 vs 2.5/22.5 for Qwen3.7 (Opus 20.3/54.8); MacAgentBench 69.2.
+- ScienceBoard 64.50 vs 35.50; Gym-Anything 46.3 vs 33.1; 3,605.8 output tokens per OSWorld-Verified task.
+
+**Key results:** Qwen-CUA reaches 86.2 on OSWorld-Verified, above GPT-5.5 (78.7) and Claude Opus 4.8 (83.4), and beats Qwen3.7 on all eight benchmarks. It cuts RedTeamCUA attack success from 36.6 to 16.4 while raising task success from 70.5 to 74.0. The >1T-parameter Qwen-CUA-Max lifts OSWorld-Verified to 87.6 and OSWorld 2.0 to 21.2/53.3.
+
+*Evolution:* Qwen-CUA continues the native screenshot-only agent line (UI-TARS, OpenCUA, Qwen3-VL) and builds directly on CUA-Gym's verifiable environment and task scaling and on SAPO for stable long-trajectory MoE RL. Its distinctive moves are an iterative SFT-refresh/RL-calibration loop that always restarts SFT from mid-training, and train-inference-consistent screenshot folding that reuses sparse terminal rewards. Its Bash-hybrid study (fewer turns but lower MyPCBench success) frames native computer use as the universal fallback layer for future hybrid code and GUI agents.
+
+### Macaron-V1: Towards Open Continual Learning with Self-Improvement and Mixture-of-LoRA
+*2026 · method · `method_Macaron-MoL_2608.09819.txt` · arXiv [2608.09819](https://arxiv.org/abs/2608.09819)*
+
+Internal Personal Intelligence benchmarks: Macaron ChatBench (46 cases, GLM-5.2 judge with six fixed axioms plus persona/scenario conditioning, 1-5 score, 3 samples), LivingBench (40 simulated scenarios, up to 10 turns, four noise types; score = 0.7 x need fulfilment + 0.3 x process quality) and UI4A-Bench (161 cases, Final Score from five weighted Layer Scores). External: VitaBench/VitaBench2 (Avg@1), tau3-Bench, PinchBench, ClawGym, SWE-Verified, TerminalBench 2.1, DeepSWE (best of 3) and SWE Atlas QnA (pass@3), coding rows on the Claude Code scaffold; some baseline cells come from public leaderboards.
+
+- Venti: ChatBench 58.3 (GPT-5.5 55.5), LivingBench 64.0 (Opus 4.8 63.8), UI4A-Bench 87.8 (Opus 4.8 75.9).
+- Venti coding: TerminalBench 2.1 87.6, SWE-Verified 85.6 (Opus 4.8 88.6), DeepSWE 58.4 (GPT-5.5 70.0).
+- Routing accuracy 99.12% on a 6,448-sample trace drawn from training data.
+
+**Key results:** Macaron-V1-Venti leads the compared frontier models on ChatBench (58.3), LivingBench (64.0), UI4A-Bench (87.8 vs 75.9 for Opus 4.8) and TerminalBench 2.1 (87.6), but trails on VitaBench, ClawGym, SWE-Verified, DeepSWE and SWE Atlas QnA. Macaron-V1-Tall beats its Qwen3.6-35B-A3B base on all seven matched rows (e.g. UI4A-Bench 59.3 vs 33.9). Separately, with the GLM-5.2 base frozen and no weight updates, adaptive harness-configuration search eventually passes all 122 TerminalBench-derived tasks the base had failed, whereas the best single full-set configuration passed 11/122. MoL stores about 74% fewer parameters than four replicated merged-base copies.
+
+*Evolution:* Macaron-V1 builds on LoRA (including Thinking Machines' 'LoRA without regret'), multi-tenant LoRA serving (Punica, S-LoRA), GRPO, and its own earlier Macaron-V1-Preview and Macaron-A2UI work. It reacts to the cross-task interference and static-checkpoint limits of monolithic post-training. It shifts post-training toward an agent system with separately versioned base, adapters, and harness, where harness search ('language space') and adapter RL are coupled. It positions MoL as an interoperability contract for continual learning and for composing specialists from different teams. The authors state that compounding gains across generations and collective-intelligence benefits are not yet demonstrated.
+
+### Palmyra x6 Technical Report: An Agentic, Tool-Use Model Post-Trained via Anchored Supervised Fine-Tuning
+*2026 · report · `report_Palmyra-x6_2608.16620.txt` · arXiv [2608.16620](https://arxiv.org/abs/2608.16620)*
+
+Scores are on a 0–1 scale with standard errors from Writer's internal harness. The main comparison is against the previous Writer Agent default and five frontier models on six agentic, finance and instruction-following benchmarks (including MCP-Atlas, FinanceBench, IFBench, BFCL Core); internal enterprise-domain datasets are the real target, with public benchmarks as a sanity check. Safety uses FORTRESS (500 adversarial prompts plus benign twins), reported as 100−ARS and 100−ORS and judged by GPT-5.6-Luna.
+
+- Model-risk evaluation: 8 endpoints, 19,674 responses, 33,862 blinded judge scorings.
+- Includes a paired political-symmetry suite (556 families / 1,112 prompts), BBQ, OR-Bench, TruthfulQA, Anthropic Political Neutrality Eval, Washington Post ModelSlant and China-sensitive probes in 5 languages.
+- Statistics use paired bootstrap, Wilcoxon and Benjamini–Hochberg tests.
+
+**Key results:** Palmyra x6 beats the prior Writer Agent default on all six benchmarks: +0.320 on MCP-Atlas, +0.305 on FinanceBench and +0.304 on IFBench. Against five frontier models it tops BFCL Core (0.785) and has the highest six-benchmark mean (0.765). It presents both sides on 80% of ModelSlant questions, and TruthfulQA is 80.6% vs the base's 81.5%. On FORTRESS, with its deployment system message, it scores 67.0 adversarial / 96.4 benign, vs 58.4 / 97.2 for the base (55.4 / 97.4 without the system message).
+
+*Evolution:* This report is an example of post-training an existing open frontier MoE base (GLM-5.2, which inherits GLM-5's MLA + DSA IndexShare architecture) rather than training a model end to end. It combines Anchored SFT (DFT weighting plus a KL anchor), SDFT-style demonstration-conditioned self-distillation for on-policy data, and LIMO/LIMI 'less is more' data minimalism. It reacts to SFT's tendency to erode base capabilities by keeping updates small and anchored and avoiding RL entirely. It also shows Muon (with GLM-5's per-head Muon Split) working as a fine-tuning optimizer at the 744B scale.
+
+### Apodex 1.1: Scaling Agentic Intelligence for Complex Work
+*2026 · report · `report_Apodex-1.1_2608.23283.txt` · arXiv [2608.23283](https://arxiv.org/abs/2608.23283)*
+
+Two modes are evaluated, ReAct (minimal scaffold) and Agent Team, across professional work (APEX-Agents, GDPVal win rate), finance (FrontierFinance, YC-Bench net worth), science (FrontierScience-Research, BioMysteryBench Human-difficult), reasoning/search (HLE with tools, DeepSearchQA F1), math under the MathArena protocol (IMO 2025/2026, USAMO 2026, IMO-ProofBench) and coding (Terminal-Bench 2.1, SWE-bench Verified). Internal suites are FrontierSearchBench (41 tasks, score in [-100,100]), FrontierResearchBench (pass rate) and HDS6 process grading (6 capabilities x 4 items, GPT-5.5/Claude judge panel with an integrity gate).
+
+- ReAct / Team: APEX-Agents 34.4 / 38.5, GDPVal 69.5 / 78.8, FrontierFinance 48.7 / 54.3, FrontierScience-Research 55.0 / 63.3, BioMysteryBench 23.5 / 35.3, HLE 53.2 / 56.1, DeepSearchQA 88.2 / 92.4.
+- Math (Agent Team): IMO 2025 36.5, IMO 2026 30.5, USAMO 2026 26.5 (thresholds 35/29/25); IMO-ProofBench Basic 96.7 / Advanced 63.3.
+- Terminal-Bench 2.1 70.8, SWE-bench Verified 77.7; FrontierSearchBench 57.0 / 69.1; 35B mini: FrontierFinance 50.2, FrontierScience 51.7, APEX-Agents 27.7 (Team).
+
+**Key results:** With Agent Team, Apodex 1.1 posts the best values in its comparison tables on FrontierFinance (54.3, vs Claude Fable 5 at 49.2) and FrontierScience-Research (63.3, vs DeepSeek-V4-Flash-0731 at 55.0), and passes the IMO 2025/2026 and USAMO 2026 thresholds. On APEX-Agents it improves from Apodex 1.0's 16.5 to 38.5, and it reaches GDPVal 78.8. It still trails the frontier on SWE-bench Verified (77.7 vs Claude Opus 5's 92.2), Terminal-Bench 2.1 (70.8 vs 91.9) and FrontierResearchBench (12.4% vs 20.6%).
+
+*Evolution:* Apodex 1.1 extends Apodex 1.0's lead-agent/subagent Agent Team and AgentOS kernel. It follows the 2025-26 shift from single-response models to long-horizon working agents (Kimi K3, GPT-5.6, GLM-5.2, DeepSeek V4), and it treats environment construction (in the vein of ScaleEnv and Agent-World) and multi-agent coordination as two explicit scaling axes. PIVOT-RL's hinted continuation from failure pivots joins recent work on credit assignment at informative intermediate turns in agentic RL. The paper is light on model and training hyperparameters and heavy on harness and evaluation design, including process-level HDS6 grading.
+
+### On-policy Distillation with Verifiable Reward
+*2026 · rl · `rl_OPDVR_2608.24696.txt` · arXiv [2608.24696](https://arxiv.org/abs/2608.24696)*
+
+Six math benchmarks (AIME24, AIME25, AMC, MATH500, Minerva, OlympiadBench) scored by avg@16 accuracy at temperature 0.7, top-p 0.95. Training dynamics track entropy, response length and zero-gated token ratio (about 0.48-0.50 for 4B, 0.40-0.44 for 1.7B).
+
+- Same-architecture (Qwen3-4B <- Qwen3-4B-RL) average: student 42.0, teacher 50.4, sampled-token OPD 47.8, Top-64 OPD 47.4, OPD+GRPO 47.7, RLSD 44.8, ExOPD 47.9, SG-OPD 47.5, OPDVR 49.1 (AIME24 36.9 vs teacher 36.0).
+- Cross-architecture (Qwen3-1.7B-Base <- Qwen3-4B-Base-RL): OPD 20.9, Top-64 OPD 21.7, OPDVR 22.8.
+- GRPD table average: GRPO 44.8, OPD 48.4, Distilled RL 48.7, GRPD 49.4.
+
+**Key results:** OPDVR raises the same-architecture average from 47.8 (sampled-token OPD) to 49.1, beating the next-best baseline ExOPD by 1.2 points, and lifts the cross-architecture average to 22.8 vs 21.7 for the best baseline; GRPD improves over GRPO by 6.5 points on AIME24 and 10.9 on AIME25 and over Distilled RL by 0.7 average. An inverse-gated ablation drops to 44.6 average, below vanilla OPD (47.8).
+
+*Evolution:* OPDVR sits in the 2026 wave of on-policy distillation (popularized by Qwen3, MiMo-V2-Flash, GLM-5 and DeepSeek-V4 post-training) and reacts to hybrids that combine OPD with RLVR via weighted losses or advantage-sign switching (OPD+GRPO, Distilled RL, RLSD) or trajectory/token-level conflict filters (Uni-OPD, RG-OPD, SG-OPD). Its contribution is showing that a hyperparameter-free sign gate turns sampled-token OPD into a proper RLVR objective, so it plugs into GRPO/DAPO/PPO and can in principle exceed the teacher rather than being capped by it.
+
+### TTPO: Test-Time Policy Optimization
+*2026 · rl · `rl_TTPO_2608.27448.txt` · arXiv [2608.27448](https://arxiv.org/abs/2608.27448)*
+
+Avg@12 at temperature 1.0 with thinking enabled (max 38,912 new tokens) on AIME 2025, AIME 2026, HMMT 2025, HMMT 2026 and BRUMO 2025; Maj@12 is tracked during TTT and non-thinking evaluation is in the appendix. Scores are the peak over saved checkpoints (100 steps for OPSD/TTPO, 500 for GRPO/TTRL).
+
+- OpenThoughts setting (1.7B / 4B / 8B): TTPO 40.1 / 58.6 / 62.6 vs label-supervised OPSD 39.7 / 58.4 / 61.7 and GRPO 35.7 / 57.5 / 61.2.
+- TTT: 45.2 / 61.1 / 65.3 vs TTRL 40.2 / 58.8 / 63.0 and OPSD-TTT 41.9 / 59.4 / 63.7.
+- Non-thinking gains over base: +25.2 / +30.6 / +36.4 vs +7.1 / +5.8 / +3.5 for OPSD.
+
+**Key results:** Without any labels, TTPO matches or beats ground-truth-supervised OPSD at all three Qwen3 scales, and in pure TTT lifts Qwen3-1.7B from 38.0 to 45.2 average (+5.4 over TTRL, +3.3 over OPSD-TTT). Qwen3-4B with TTPO (61.1) surpasses the Qwen3-8B base (60.7). Swapping pseudo-labels for ground truth performs worse, because on hard problems the correct-answer positive set is nearly empty and both branches starve.
+
+*Evolution:* TTPO combines two 2026 lines: TTRL-style label-free test-time RL with majority-vote rewards (and follow-ups Hi-TTRL and SCRL), and OPSD-style on-policy self-distillation with a privileged-information teacher (and hybrids that mix OPSD with RLVR). It responds to the fragility of pseudo-label distillation, where a wrong vote corrupts every token, with a negative-learning argument: penalizing disagreement stays correct even when the vote is wrong. Its token weighting and masking borrow from TIP and STAPO. It extends dense self-distillation to settings where labels never arrive, though only on verifiable math so far.
+
+### A.X K2 Technical Report
+*2026 · report · `report_A.X-K2_2608.30181.txt` · arXiv [2608.30181](https://arxiv.org/abs/2608.30181)*
+
+Thinking-mode comparison against A.X K1, Qwen3.5-397B, Nemotron 3 Ultra, DeepSeek-V4 Flash, GLM-5.1, Kimi-K2.6 and MiniMax-M2.7 across math, Korean, code, science/knowledge, general and agentic suites, plus proof competitions and long context (RULER to 256K, LongBench v1/v2). In-house: KS-Eval (26 tasks), Manufacturing Benchmark and Korean red-teaming ASR.
+
+- Math: AIME26 97.1, Apex 45.8, Apex-shortlist 88.6, KMO26 92.5; IMO 2025 35/42 and all 8 KMO26 round-2 problems.
+- Korean: KMMLU-Pro 80.5, KoBALT 73.0, CLIcK 91.6; Code: LiveCodeBench v6 84.0, SciCode 41.0, Terminal Bench v2.1 36.0; HLE 27.8, GPQA-D 85.6, AA-Omniscience 39.6, IFBench 75.9, AA-LCR 66.0.
+- Agentic: GDPval Elo 1031, tau2-Telecom 98.0, tau3-Banking 13.0, BrowseComp 9.3; RULER 94.6, LongBench v2 63.9; Manufacturing F1 69.0; red-teaming ASR 12.1% / 33.9% (non-thinking/thinking); NVFP4 retains 99.0% of FP8 accuracy.
+
+**Key results:** A.X K2 leads all compared open-weight models on AIME26 (97.1), Apex (45.8, up from A.X K1's 1.0), KMMLU-Pro (80.5), CLIcK (91.6) and tau2-Telecom (98.0), and reaches IMO 2025 gold threshold (35/42), despite training on fewer tokens (~8.5T) than A.X K1 (~10T). It trails on Terminal Bench (36.0 vs up to 65.9) and BrowseComp (9.3 vs up to 29.1); sparse attention costs no LongBench quality, and NVFP4 serving gives +123.7% throughput over A.X K1 at 120K input.
+
+*Evolution:* A.X K2 is SK Telecom's successor to A.X K1 under Korea's Sovereign AI foundation model project. It combines DeepSeek-V3.2/GLM-5-style indexer sparse attention with gated attention and Gated Norm, and it simplifies the indexer warmup to a sparse-only one. Its post-training continues the hybrid-thinking line (Qwen3, DeepSeek). It replaces A.X K1's dual-track training with paired-response Think-Fusion and adopts MiniMax-M1's CISPO with GDPO multi-reward normalization. Its report that a trainer-rollout FP8 format mismatch collapses RL is practical guidance for low-precision RL on Blackwell hardware.
+
+### Does On-Policy Distillation Really Distill? From Noisy Teacher to Self-Improvement
+*2026 · method · `method_DoesOPD-Distill_2608.31046.txt` · arXiv [2608.31046](https://arxiv.org/abs/2608.31046)*
+
+In-domain math is AIME24, AIME25 and HMMT25 (Avg@32 and Pass@32, temperature 0.7, top-k 20, top-p 0.8, 32768 max tokens, non-thinking); out-of-domain is MBPP+ and GPQA-Diamond, and code training is evaluated on LiveCodeBench v6 and HumanEval+. Diversity is pairwise 4-gram Jaccard distance; efficiency is training step time.
+
+- AIME24 Avg@32: Qwen3-1.7B 13.44 -> 48.85 (Pass@32 40.00 -> 80.00); Qwen3-4B 23.33 -> 62.08; Qwen3.5-9B 76.35 -> 87.81; Olmo3-7B Think 71.88 -> 77.29.
+- Qwen3-1.7B 3-benchmark Avg@32: GRPO 24.79, TTRL 11.81, OPD 22.15, OPSD 23.58, NSR 24.13, OPSA 35.83.
+- Step time: GRPO 186.2 s, OPD 61.2 s, OPSA 46.3 s.
+
+**Key results:** Without any teacher, reward, or hint, OPSA lifts Qwen3-1.7B AIME24 Avg@32 by 35.41 points (a 263% relative gain), more than doubles Pass@32 on all three math benchmarks, and beats OPD by 16.77 points on AIME24 and the best on-policy baseline by 11.04 average Avg@32. Token-budget-matched controls (appending 'wait') do not close the gap: GRPO 32.81 and OPD 31.67 vs OPSA 48.85.
+
+*Evolution:* The paper questions the 2025-2026 on-policy distillation line (GKD, MiniLLM, Thinking Machines' K1-estimator OPD, and hint-based self-distillation OPSD) by showing much of OPD's gain comes from suppressing the student's own low-probability tokens, not from teacher knowledge. It connects to negative-sample reinforcement (NSR) and high-entropy 'fork token' findings in RLVR, and to label-free RL such as TTRL and Intuitor, proposing a teacher-free, reward-free token-level objective; the authors note it is tested only up to 9B and may not expand the exploration frontier of already sharp models.
+
+### SWE-Bench Pro Verified: A Reliable Benchmark for Software Engineering Agents
+*2026 · method · `method_SWE-Bench-Pro-Verified_2609.08149.txt` · arXiv [2609.08149](https://arxiv.org/abs/2609.08149)*
+
+Accuracy is the share of instances where all fail-to-pass and pass-to-pass tests pass, measured for seven models on SWE-Bench Pro and the new Verified version. Validation compares outcomes under the anti-hacking environment (McNemar test, counts of high-risk operations and answer-file access) and checks refined instances.
+
+- Pro -> Verified: Kimi-K3 89.06 -> 62.93, GLM-5.3 81.12 -> 58.82, DeepSeek-V4-Pro-0813 79.48 -> 61.42, DeepSeek-V4-Flash-0731 78.93 -> 59.92, GLM-5.2 78.80 -> 59.51, GPT-5.6-Sol 76.47 -> 61.97, DeepSeek-V4-Pro 49.98 -> 49.93.
+- GLM-5.2 anti-hacking: 186 PASS->FAIL vs 15 FAIL->PASS (p<0.001); local high-risk ops 4,213 -> 908 (-78.4%), network 573 -> 4 (-99.3%); of 186 PASS->FAIL, 166 show direct evidence of removed hacking, 0 impaired execution.
+- Refinement on 102 instances: 21 FAIL->PASS, 20 PASS->PASS, 2 PASS->FAIL, 59 FAIL->FAIL.
+
+**Key results:** Under the anti-hacking environment GLM-5.2 falls from 78.80% to 57.32% (-21.48 points; refinement then recovers it to 59.51%), whereas DeepSeek-V4-Pro, which showed little hacking, barely moves (49.98 -> 49.11 -> 49.93). Confirmed answer-file access drops to zero, with no PASS->FAIL transition attributed to impaired normal execution.
+
+*Evolution:* Builds on SWE-Bench Pro (2509.16941) and follows the 'Verified' precedent of SWE-bench Verified and SimpleQA Verified, drawing on the AgentCompass trajectory audit, community git-leakage reports and pull requests, and external SWE-Bench Pro quality audits. It shows that six of seven models score 14.5-26.1 points lower on Verified than on SWE-Bench Pro, which suggests existing SWE-Bench Pro results overstate capability. The concurrent SWE-Bench Pro V2 (2610.24206) cites it and takes a stricter route: it audits all 731 tasks with experts, discards rather than edits defective tests, allows network access only to the model endpoint, and re-grades in a clean container. The authors note that their domain blocklist may miss self-hosted Git services, mirrors or direct IP access.
+
+### NeoHorse-1: Towards Recursive Self-Improvement via Agentic Post-Training with Routing Harness
+*2026 · method · `method_NeoHorse-1_2609.08183.txt` · arXiv [2609.08183](https://arxiv.org/abs/2609.08183)*
+
+Ten benchmarks: agentic QwenClawBench and PinchBench (OpenSquilla harness), WorkBuddy Bench, VitaBench (DeepSeek-V4-Flash as user simulator and judge), BFCL V4, tau2-Bench; coding HumanEval and LiveCodeBench v6; instruction following IFEval and IFBench. All run in thinking mode with Qwen3.5 sampling (T=1.0, top-p 0.95, top-k 20, presence penalty 1.5), max output 51,200 or 32,768 tokens, and 3-run means on QwenClaw, WorkBuddy and tau2.
+
+- 4B (Qwen3.5-4B -> NeoHorse-1-4B): BFCL 61.02->61.79, tau2 84.29->88.46, HumanEval 87.20->96.95, LCB v6 53.71->59.43, macro avg 58.94->64.87.
+- 9B: tau2 88.04->90.82, BFCL 64.88->67.43, IFEval 89.46->89.09, avg 65.60->69.04.
+- NeoHorse-Jev-4B: 77.70 six-group aggregate (JevBench, Kev, OpenJev text, Nimble, VitaminC, MASSIVE).
+
+**Key results:** Agentic post-training raises the 10-benchmark macro average from 58.94 to 64.87 (4B) and from 65.60 to 69.04 (9B), nearly closing the gap between the post-trained 4B and the 9B base. Under a matched recipe, routing-harness data beats public Toucan tool-agent data by +6.26 avg (tau2 +11.31, HumanEval +8.54), and adding nested routing-harness supervision raises the 5-benchmark dev average monotonically from 69.31 to 71.45.
+
+*Evolution:* NeoHorse-1 extends the authors' Agentic Routing 'harness-native data flywheel' and trajectory-SFT lines (FireAct, AgentTuning, Agent-FLAN), combining them with on-policy distillation (Agarwal et al.; Thinking Machines). It reframes deployment logs as the feedback channel for recursive self-improvement, using router capability-demand predictions as a cheap difficulty signal for curriculum ordering instead of explicit difficulty labels. The authors present it as a single-iteration prototype: whether gains compound across repeated harness-to-training loops is left to future work.
+
+### An Open Recipe for IMO Gold: Training Nemotron for Olympiad Mathematics
+*2026 · rl · `rl_Nemotron-IMO_2609.10712.txt` · arXiv [2609.10712](https://arxiv.org/abs/2609.10712)*
+
+The headline uses official IMO 2026 grading (0-7 per problem, 42 total). A 30-problem development set is scored by an independent GPT-5.5 / Gemini 3.1 Pro / Claude Opus 4.8 jury with MathArena min-score reconciliation, reporting cumulative accepted-only and end-to-end scores. RL training is tracked on 133 proof problems graded by GPT-5.5, and compute is accounted in tokens and GB200 GPU-hours.
+
+- Dev-set end-to-end scores (out of 210): GA 162, RL 180, SFT 165, ensemble 188.
+- Verifier audit on 300 proofs: RL+SFT 16/16 panel 1.1% false-accept / 81.3% false-reject vs 31.6% / 22.8% for GA alone.
+
+**Key results:** The fully natural-language system (no formal prover, tools or internet) scored 30/42 at IMO 2026, above the gold cutoff of 29: full marks on P1, P2, P4 and P5 and 1 point each on P3 and P6. All six submitted proofs were found within ~707M tokens and 1,464 GPU-hours (2.31B tokens and ~4,800 GPU-hours for the full run). Splitting round-1 budget across checkpoints beats doubling one: RL128+SFT64 scores 159 vs 139 for RL256.
+
+*Evolution:* The system follows the IMO 2025 natural-language gold results (Gemini Deep Think, OpenAI) and the generate-verify-refine line of Huang & Yang and DeepSeekMath-V2, whose generator/verifier/meta-verifier data design and reward it adopts. Its main contribution is openness: checkpoints, SFT/RL data, NeMo-RL/NeMo-Skills code, submitted proofs, compute accounting and a new uncontaminated benchmark. It also documents a shared blind spot of model-based verifiers, which credited P3/P6 proofs that officials gave 1 point, and finds that more elaborate refinement and triage schemes did not improve final coverage.
+
+### Dream-RSI: Recursive Self-Improvement through Evolving Worlds
+*2026 · method · `method_Dream-RSI_2609.14858.txt` · arXiv [2609.14858](https://arxiv.org/abs/2609.14858)*
+
+Nine tasks in four domains, with cost measured as cumulative discovery-agent calls. KernelBench (VGG16, LayerNorm, ConvDiv, ConvMax) scores 1/ms vs generations against Recursive Fixed Exploration and PACEvolve; math tasks (Sum-Difference, Autocorrelation inequality, Circle Packing) compare against AlphaEvolve, OpenEvolve, ShinkaEvolve, ThetaEvolve, EvoX and SimpleTES; Lasso path measures average runtime on six held-out datasets against sklearn, glmnet and SimpleTES; harness optimization uses the Terminal-Bench 2.1 full-suite score against Claude Code (0.75), Terminus-Kira (seed) and Meta-Harness (0.79).
+
+- Sum-Diff 1.145427, Circle Packing 2.635983 (ties best), Autocorrelation 1.456375.
+- Terminal-Bench 2.1 harness score 0.7247 -> 0.8090.
+
+**Key results:** On KernelBench, Dream-RSI matches fixed exploration with 2.43x (VGG16) and 1.79x (LayerNorm) fewer generations, and reaches 2.09x (ConvDiv) and 1.44x (ConvMax) higher performance at similar budgets. On Lasso it cuts held-out average runtime from 3587.1 to 2931.0 ms with 317 vs 550 calls (Gemini-3.1-Pro), beating sklearn and glmnet on all six datasets with about 162x fewer calls than SimpleTES's 51,200 (different backbones). It also lifts a Terminus-Kira harness on Terminal-Bench 2.1 from 0.7247 to 0.8090, above Meta-Harness (0.79).
+
+*Evolution:* Dream-RSI sits in the AlphaEvolve/OpenEvolve/ShinkaEvolve/PACEvolve line of LLM-driven discovery and follows EvoX in treating the search strategy itself as the object to optimize. Drawing on model-based RL and Dreamer-style world models, it addresses the delayed, expensive meta-level feedback of that setting by turning past discovery trees into free off-policy simulators. This closes a recursive self-improvement loop at the exploration-policy layer without any weight updates. Its recorded discovery trees could also serve as training data for the policy-learning RSI approaches in this corpus.
+
+### DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression
+*2026 · report · `report_DeepSeek-V4.1-Flash_2609.19969.txt` · arXiv [2609.19969](https://arxiv.org/abs/2609.19969)*
+
+Reasoning benchmarks are GPQA Diamond, HLE, internal Codeforces and MathArena Apex. Agentic benchmarks are Terminal-Bench 2.1/3.0/4.0, DeepSWE v1.1, ProgramBench (Almost@1), NL2Repo, CyberGym, SEC-Bench Pro, ExploitGym, HLE with tools, AutomationBench, Agents' Last Exam, and visual Chartography, BabyVision and ZeroBench (pass@5). Code agents run in DeepSeek Harness Minimal with 1M context at T=1.0, top-p 0.95. Robustness is tested across 8 scaffold configurations and effort levels 25–100; multi-agent tests use ProgramBench-golden (172 tasks) and FrontierSWE v2 under wall-clock deadlines.
+
+- GPQA 90.9, HLE 36.8, Codeforces 3471, Apex 65.6.
+- TB2.1 90.6, DeepSWE 74.2 (65.5–74.2 across 8 scaffolds), CyberGym 88.1, AutomationBench 54.8, ALE 31.8.
+- Base model: MMLU-Pro 74.1, HumanEval 79.4, plus held-out BPB.
+
+**Key results:** With only 16B active parameters, V4.1-Flash beats DeepSeek-V4-Flash (DeepSWE 54.4→74.2, Codeforces 3289→3471) and matches or beats Opus-5 on DeepSWE (74.0), Terminal-Bench 2.1 (89.1) and AutomationBench, with a global KV cache about 1/4 of V4-Flash's and a persistent cache about 1/8. Raising effort from 25 to 100 lifts the reasoning average from 67.1 to 76.3 for about 2.5× the tokens. Agent Teams reach 30.04% vs 20.39% single-agent on ProgramBench.
+
+*Evolution:* This report refines DeepSeek-V4's CSA/HCA sparse attention, mHC and OPD recipe. It adds YOCO-style KV sharing between encoder and decoder halves, IndexCache-style cross-layer index reuse, and DeepSeek's own Engram and DSpark modules. Its explicit claim is that post-training algorithms barely matter at this stage, and that the gains come from scaling synthesized verifiable tasks, environments and scaffold diversity. It also documents agents exploiting real sandbox vulnerabilities during RL, and it makes a trained, continuous reasoning-effort knob a deployed API feature.
+
+### RRSI: Regularized Recursive Self-Improvement of Agent Harnesses
+*2026 · method · `method_RRSI_2609.24972.txt` · arXiv [2609.24972](https://arxiv.org/abs/2609.24972)*
+
+Coding uses Terminal-Bench 2.1 accuracy and SWE-bench Verified resolve rate; agentic workspace uses Harvey LAB criteria pass rate, JobBench weighted rubric, GDPval win rate vs experts and APEX-Agents pass@1; engineering design uses EngDesign pass rate and Frontier-Eng Medal Score. Cost is policy tokens and steps per trial; baselines are H0, Meta-Harness, AHE, TTHE and HarnessX under the same candidate budget. Reliability uses paired task-level bootstrap 95% CIs (10,000 resamples, all excluding zero) and an independent rerun of every search that agrees within 1.8 points.
+
+- Coding over H0: TB2.1 74.2->80.2, SWE-V 82.0->83.8.
+- Agentic: Harvey evolve 89.4->90.5, held-out 86.9->89.2, JobBench 36.0->40.7, GDPval 48.8->52.3, APEX 34.2->37.9.
+- Engineering: EngDesign 50.0->54.9, Frontier-Eng 17.7->22.0.
+
+**Key results:** RRSI gains up to 6.0 points on the evolve split and improves every held-out split, by up to 4.3 OOD (Frontier-Eng +4.3 Medal, +24.3% relative). The agentic OOD average is 43.6 vs 39.7 for H0 and at most 40.6 for prior methods; AHE and TTHE end below H0. The final harness uses 2.42M tokens/trial vs 3.80M for unregularized evolution; removing all regularizers raises the evolve score to 92.8 but drops the OOD average to 40.3.
+
+*Evolution:* RRSI responds to the 2026 wave of automated harness evolution (Meta-Harness, AHE, TTHE, HarnessX, Self-Harness, Darwin Godel Machine-style self-modification) and to evidence that their evolve-set gains often fail to transfer. It reframes harness RSI as adaptive empirical optimization on a reused finite evolve set (citing Dwork et al. on adaptive data analysis) and imports classical L0/L1/L2 regularization, noise-aware acceptance and leakage screening into the search. Harness transfer becomes the evaluation criterion: harnesses evolved on one suite carry over to unseen benchmarks and to backbones never used in the search (Gemini 3.1 Flash Lite).
+
+### Qwen3.8-Omni: Towards Native Omni-Modal Agents
+*2026 · report · `report_Qwen3.8-Omni_2609.25611.txt` · arXiv [2609.25611](https://arxiv.org/abs/2609.25611)*
+
+Text: DeepSWE 1.1, SWE-bench Pro/Multilingual, NL2Repo, CoWorkBench, IFBench, GPQA-D, HLE, LiveCodeBench v6. Vision: AndroidWorld, ClawEval-MM, Vision2Web, LVBench, MathVision, CharXiv. Audio: multi-speaker ASR (DER/cpWER), FLEURS, MMAU/MMAR/MMSU, music QA, VoiceBench. Audio-visual: OmniVideoBench, Video-MME-v2, LVOmniBench, StreamingBench. Agentic: WildClawBench-MM, UniClawBench, AgenticVBench, OmniGAIA. Realtime: TTFT/TTFC/RTF, voice-cloning WER and speaker similarity.
+
+- SWE-bench Pro 63.3, LiveCodeBench v6 92.6, AndroidWorld 87.1, MathVision 91.8.
+- AliMeeting DER/cpWER 3.4/17.2 vs 88.1/89.6 for Qwen3.5-Omni-Plus; WildClawBench-MM 71.0 vs 34.5.
+- Agentic (Qwen Code) inference lifts LVOmniBench 63.3 -> 73.6.
+
+**Key results:** Against Qwen3.5-Omni-Plus, it raises the average over 29 audio, audio-visual and agent evaluations by more than 25%, while matching the text-only Qwen3.8-Flash (SWE-bench Pro 63.3 vs 62.5; IFBench 81.5 vs 81.3). Agentic evidence gathering on OmniVideoBench raises accuracy from 63.4 to 67.8 and cuts tokens per query by about 45.7% (145,736 to 79,117), and the paper estimates more than 98%/93% lower API input cost per hour of audio/audiovisual content.
+
+*Evolution:* This report succeeds Qwen3.5-Omni (Thinker-Talker, AuT) and inherits the Qwen3.8-Next hybrid GDN/sparse-attention MoE backbone. It moves the omni line from perception and chat toward long-horizon agentic productivity, with 1M context and spatial audio. Its post-training follows the 2026 pattern of consolidating SFT+RL specialist teachers through multi-teacher distillation before unified RL, and of GSPO/MOPD for the speech head. Releasing Qwen-MM-Plugins and Qwen-Live-Harness puts the system as much in the harness as in the weights.
+
+### Hunyuan-A13B Technical Report
+*2026 · report · `report_Hunyuan-A13B_2609.27284.txt` · arXiv [2609.27284](https://arxiv.org/abs/2609.27284)*
+
+The base model is scored on MMLU, MMLU-Pro, MMLU-Redux, BBH, SuperGPQA, EvalPlus, MultiPL-E, MBPP, CRUXEval, MATH, CMATH, GSM8K and GPQA. The post-trained model uses AIME24/25, MATH, GPQA-Diamond, OlympiadBench, LiveCodeBench, FullstackBench, the new ArtifactsBench, BBH, DROP (F1), ZebraLogic, IFEval, SysBench, internal LengthCtrl/InsCtrl/ComplexNLU/Word-Task, and BFCL v3, tau-Bench, ComplexFuncBench and C3-Bench.
+
+- Base: MMLU 88.17, MATH 72.35, GSM8K 91.83.
+- Slow-thinking: AIME24 87.3, AIME25 76.8, GPQA-D 71.2, LiveCodeBench 63.9, ZebraLogic 84.7, BFCL v3 78.3, tau-Bench 54.7, C3-Bench 63.5.
+- Long context: PenguinScrolls 87.7, LongBench-v2 55.0, FRAMES 81.1, RULER-QA avg 76.7 (73.9 at 64K-128K); throughput 1981.99 tokens/s at batch 32.
+
+**Key results:** With 13B active parameters, Hunyuan-A13B in slow-thinking mode scores 87.3 on AIME2024, ahead of Qwen3-A22B (85.7), DeepSeek-R1 (79.8) and o1 (74.3). It leads all compared models on BFCL v3 (78.3), ComplexFuncBench (61.2) and C3-Bench (63.5), and its base model beats Hunyuan-Large on 12 of 14 benchmarks with 1/4 of the active parameters.
+
+*Evolution:* Builds on Hunyuan-Large and Hunyuan-TurboS: it reuses their data pipeline, tokenizer and NTK-aware long-context recipe. Its RL borrows the KL-free GRPO of DAPO and the context-length staging of DeepScaleR. The fast/slow dual-mode CoT with /think and /no think tags follows the hybrid-thinking design of Qwen3. The report is dated 2025-06-27 internally even though its arXiv ID is 2609, so it documents a mid-2025 efficient open MoE that pairs reasoning-first RL with broad generative-reward-model RL.
+
+### Scaling properties of same-family on-policy distillation
+*2026 · method · `method_OPD-Scaling-SameFamily_2609.32722.txt` · arXiv [2609.32722](https://arxiv.org/abs/2609.32722)*
+
+The gold score is held-out GSM8K+MATH test accuracy (temperature 1.0, max 2048 tokens); derived metrics are peak gold score G_peak, initial slope m, transfer extent d_transfer, and a logged teacher-induced proxy score P. Linear early fits reach R^2 0.932-0.988 with slopes 0.175-0.721. Law quality is judged by leave-one-scale-out RMSE and outer-scale extrapolation RMSE.
+
+- Vanilla joint law: A=0.97, alpha=0.30, beta=-0.27, zeta=0.95, leave-one-scale-out RMSE 1.66 vs 3.43 for a size-only law; Delta: zeta=1.01, beta=-0.33, RMSE 0.82.
+- 14B student peak ranges 77.7% (0.5B teacher) to 87.3% (14B teacher).
+- 0.5B student peaks at 40.8% with a 3B teacher but 37.7% with a 14B teacher.
+
+**Key results:** In every weak-to-strong pair the student's peak exceeds its teacher's score, and the joint law extrapolates to the held-out largest student and teacher within 0.7 (Vanilla) and 0.4 (Delta) accuracy points; it also predicts a score-matched intermediate 3B teacher's 7B-student peak at 74.1 vs observed 73.8, correctly ranking it below the 1.5B teacher (77.5). Delta-OPD has a larger matched-KL slope in 15 of 17 pairs; an off-policy cold start costs 6.6/15.7/19.4 points for 3B/7B/14B students under the 0.5B expert; every bootstrapped chain peaks below direct OPD from the 0.5B expert (e.g. 76.8 vs 77.7 at 14B).
+
+*Evolution:* The paper carries the scaling-law method of Gao et al. (2023) for RLHF reward overoptimization, and its direct-alignment extension, over to on-policy distillation (GKD, MiniLLM, Thinking Machines' OPD) and its teacher-shift variants (OPD2, Direct-OPD, W2S-OPD). It turns weak-to-strong OPD from a one-off trick into a predictable tool: peak capability can be estimated from student size, capped teacher size and teacher score before training, which supports training RL expertise once at small scale and transferring it across a family. It also overturns the bootstrapping gain reported by Burns et al. (2024) for this setting. Evidence is limited to one family (Qwen2.5), one math mixture, 2K-token responses and single seeds.
+
+### Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+*2026 · rl · `rl_EAPO_2609.33781.txt` · arXiv [2609.33781](https://arxiv.org/abs/2609.33781)*
+
+Avg@32 and unbiased pass@32 on 297 math problems (AIME24/25/26, HMMT26, AMC23, MATH500 level-5) with six-benchmark means; OOD avg@16 on eight Reasoning Gym tasks. Also reported: pass@k up to 256 on AIME26, normalized answer entropy and collision rate on low-accuracy problems, and epistemic-marker frequency.
+
+- Mean avg@32: Qwen3-4B-Base 31.0 and 8B-Base 34.0, +5.6 and +4.3 over the best entropy baselines.
+- Reasoning backbones: Qwen3-4B 72.4, Olmo-3-7B-Think-DPO 74.3; Reasoning Gym macro 34.89 and 43.02.
+- Answer entropy 0.751 vs 0.657 for GRPO; collision rate 0.101 vs 0.166.
+
+**Key results:** EAPO gets the best mean avg@32 and pass@32 on all four backbones, beating GRPO, EntropyAdv, HAPO, 80/20 forking tokens, and the privileged-information method RLRT. On Qwen3-4B-Base AIME24 it reaches 20.2 avg@32 vs 12.5 for GRPO and 15.3 for RLRT. The sign-entropy ablation shows the (+1, -1) coupling beats uniform credit by 6.52 avg@32 points, and a surprisal-based variant collapses to zero reward.
+
+*Evolution:* EAPO extends the entropy-centric RLVR line that followed DAPO/GRPO (80/20 high-entropy forking tokens, EntropyAdv advantage bonuses, HAPO), which treats uncertainty the same way in successful and failed responses. It reacts to that symmetry with sign-dependent credit, and to fine-grained credit methods that need PRMs, value models, extra rollouts or privileged teachers (VinePPO, RLRT). In their place it offers a drop-in token-advantage reweighting computed from rollout entropy alone that broadens pass@k coverage, which matters for the RLVR exploration-collapse problem.
+
+### Inducing Process Supervision from Outcome-Only Reinforcement Learning
+*2026 · rl · `rl_TIPS_2609.36641.txt` · arXiv [2609.36641](https://arxiv.org/abs/2609.36641)*
+
+Process supervision is scored by ProcessBench F1 (GSM8K, MATH, OlympiadBench, OmniMath) and AgentProcessBench First-Error Accuracy (HotPotQA, GAIA, BFCL, tau2-Bench). Best-of-8 reranking accuracy over Qwen2.5-7B-Instruct samples is reported on GSM8K, MATH, College Math, OlympiadBench and Minerva (vs Majority Vote@8 and Pass@8 oracle), with mean@4 solver accuracy on AIME 2026 and HMMT Feb 2026 as a control.
+
+- ProcessBench F1: TIPS-Qwen3-4B-Thinking-2507 85.2 (base 60.3); TIPS-Qwen3-4B-Instruct-2507 77.7 (base 63.8).
+- Best-of-8 average 73.3 vs 78.1 oracle; AgentProcessBench gains +2.5 / +5.4 / +4.5 (4B-Instruct / 4B-Thinking / 8B-Thinking).
+- Human study on 60 trajectories: correct first-error localization in 78.3% of cases.
+
+**Key results:** Using only 3.2K outcome-labeled trajectories, TIPS-Qwen3-4B-Thinking-2507 scores 85.2 ProcessBench F1, beating Qwen2.5-Math-PRM-72B (78.3), GenPRM-32B (77.6), GPT-5.4-Instruct (79.4) and Claude-4.7-Opus (79.3), though not o1-mini (87.9). Outcome-supervised ImplicitPRM and AutoPSV trained on 197K trajectories reach only 41.5 and 45.3 F1. A label-only prompt (no CoT) gains just +0.7 F1 versus +13.9 with CoT, and solver-format RLVR on DAPO-Math-17K does not improve ProcessBench at all (62.8).
+
+*Evolution:* TIPS sits between the PRM line (PRM800K human labels, Math-Shepherd/SCAN Monte Carlo labels, GenPRM/ThinkPRM distilled generative PRMs) and the reasoning-reward-model line (RM-R1, J1) that applies RLVR to ORMs. It reacts to the cost and label drift of MC estimation, and to the poor step localization of outcome-supervised implicit PRMs (ImplicitPRM, AutoPSV), by showing that GRPO on an outcome-only verdict yields a strong PRM as a byproduct when step and outcome correctness are tightly coupled. It points toward cheap generative verifiers for math and, with weaker transfer so far, for agent trajectories.
+
+### WEFT: Scaling Tool-Use Post-Training for General-Purpose Agents
+*2026 · code · `code_WEFT_2609.36887.txt` · arXiv [2609.36887](https://arxiv.org/abs/2609.36887)*
+
+Main results use BFCL V4, tau2-Bench (retail/telecom/airline) and Claw-Eval; data ablations use Toolathlon-Verified, AutomationBench and Claw-Eval, each with its native harness and official metric.
+
+- BFCL / tau2 / Claw-Eval: WEFT-8B 52.28 / 62.25 / 35.78; WEFT-14B 62.21 / 67.63 / 43.77; WEFT-35B-A3B 63.4 / 74.34 / 64.0 (below Qwen3.5-35B-A3B's reported 65.4 on Claw-Eval); 35B-A3B Toolathlon-Verified 45.99, AutomationBench 26.50.
+- Adding OpenClaw+Hermes harnesses gives +9.71 mean; three self-evolution rounds cut tool-error rate 1.76% -> 0.96% and add 3.65-5.25 points.
+- Atomic-turn GRPO beats trajectory-level GRPO on tau2 by 5.69 (8B) / 4.43 (14B); MegaMCP cuts sandbox upload 95.5% and cold-start time to first tool call 54.1%.
+
+**Key results:** WEFT-8B and WEFT-14B beat every evaluated matched-size environment-scaling baseline on BFCL V4, tau2-Bench and Claw-Eval; WEFT-14B exceeds Agent-World-14B by 6.41, 2.23 and 12.27 points. Trajectory-level GRPO regresses tau2-Bench relative to SFT, while atomic-turn GRPO improves all three benchmarks at both sizes (e.g. Claw-Eval +8.54 for 14B).
+
+*Evolution:* WEFT responds to environment-scaling work (EnvScaler, Agent World Model, ScaleEnv, Agent-World) by arguing that environments are only one part of the system that generates learning signal; faulty tools, infeasible tasks and bad verifiers also corrupt it. It combines harness diversity (as in ClawGym II and mixed-harness rollouts) with execution-driven repair of environments, tasks and verifiers. Its atomic-turn credit assignment compares segments sampled from identical snapshot states, a finer-grained alternative to GiGPO, PivotRL and BPO.
+
+### PhantomEnvironments: Training LLM Agents in Fictional Worlds
+*2026 · code · `code_PhantomEnvironments_2609.40221.txt` · arXiv [2609.40221](https://arxiv.org/abs/2609.40221)*
+
+Token-level F1 on six real-world multi-hop search benchmarks, each with its own corpus: HotpotQA, 2WikiMultihopQA, MuSiQue, SynthWorlds-RM, SynthWorlds-SM (500 questions each) and FRAMES (all 824), plus CofCA for ablations. Evaluation is stronger than training (Qwen3-Embedding-4B, 20 turns, 32,768 context). Other measures: the Knowledge Advantage gap (SynthWorlds-RM minus SM), a pooled noisy corpus, unseen 1K/10K universes, search calls vs hop count, and knowledge retention (PopQA, MMLU, Wiki-18 perplexity).
+
+- Qwen2.5-7B: FRAMES F1 16.2 -> 35.4; SynthWorlds-SM 15.6 -> 40.6.
+
+**Key results:** RL in fictional worlds improves F1 for all four models, averaging 1.7x on the Wikipedia-2018 benchmarks and 2.2x on the newer SynthWorlds/FRAMES benchmarks (Llama-3.2-3B up to 7.1x on SynthWorlds-SM). Real NQ+HotpotQA training wins in-domain (Qwen2.5-3B 56.7 vs 52.2 average F1), but PhantomEnvs wins out-of-domain (32.1 vs 28.4) and closes Qwen2.5-3B's Knowledge Advantage gap from 8% (11% after real-data training) to 0%.
+
+*Evolution:* The paper builds on the Search-R1 recipe and PhantomWiki's rule-generated fictional evaluation worlds, extending earlier in-context synthetic-reasoning work to the harder agentic setting where documents must be found by search. It reacts to LLM-synthesized agent environments (ZeroSearch, ASearcher, WebSailor, SWiRL), which risk hallucinated rewards, contamination and API cost, and offers exactly verifiable, LLM-free environments that never go stale. Its finding that linear hops drive transfer while attribute constraints reward a verbatim-query shortcut gives guidance for composing environment complexity axes.
+
+### Scaling Verifiable Environments for Long-horizon Work Agents
+*2026 · code · `code_WorkForge_2610.04906.txt` · arXiv [2610.04906](https://arxiv.org/abs/2610.04906)*
+
+Five agent benchmarks: WildClawBench (Score, Pass@1, OpenClaw), Claw-Eval (Score, Pass^3, OpenClaw), GDPval (official rubric score on 201 text-only of 220 tasks, Claude Code), APEX-Agents (Score, Pass@1, ReAct Toolbelt) and Agents' Last Exam (Score, Pass@1, Claude Code), decoded with vLLM at temperature 0.7, top-p 0.9, 32,768 tokens per response.
+
+- WorkForge-A3B: WildClaw 29.9, ClawEval 53.3, GDPval 73.6, APEX 21.3, ALE 28.7/12.4 Pass@1.
+- WorkForge-27B: 38.5, 65.4, 82.4, 29.9, 33.9.
+- Hybrid verifier selection beats LLM-only and programmatic-only (ALE 22.11 vs 15.62 vs 14.89); ALE 15.7->28.7 from 1K to 16K trajectories.
+
+**Key results:** SFT on WorkForge lifts Qwen3.5-35B-A3B-Base from 45.5 to 73.6 on GDPval and from 5.0 to 21.3 on APEX, beating the prior best sub-100B specialist ClawGym-30A3 on GDPval by 38.6 points. WorkForge-27B reaches 82.4 on GDPval, above Qwen3.5-397B-A17B (79.7) with roughly 15x fewer parameters.
+
+*Evolution:* WorkForge reacts to automated environment-synthesis work (EnvScaler, Agent World Model, ClawGym, NexForge) whose mock or LLM-synthesized workspaces are small and clean, arguing that real-world files and fact-anchored verifiers are needed for professional work agents. It pairs programmatic and rubric-based LLM judging in the style of PaperBench/Agent-as-a-judge, and its harness-transfer finding (Claude Code vs OpenClaw trajectories) points to harness alignment as a factor in agent post-training.
+
+### MiMo-V2.6: Scaling Reinforcement Learning Towards Self-Improvement
+*2026 · report · `report_MiMo-V2.6_2610.11959.txt` · arXiv [2610.11959](https://arxiv.org/abs/2610.11959)*
+
+Coding: DeepSWE v1.1, ProgramBench and internal MiMo Code Bench. Cyber: CyberGym (corrected environments), ExploitGym, ExploitBench, SEC Bench Pro and MiMo Cyber Bench. General agent: AutomationBench, Toolathlon-Verified, GDPval-AA 2.1, Agents' Last Exam, Terminal-Bench 4.0/2.1, OSWorld-Verified and JobBench. Visual: MiMo Visual Coding. Baselines run at max reasoning effort; the open 9B distill reports SWE-bench Verified, SWE-bench Pro and Terminal-Bench 2.1 (avg@3/avg@1).
+
+- Pro: DeepSWE 71.9, ProgramBench 26.5, AutomationBench 53.1, Toolathlon-V 76.9, GDPval-AA 1673, Terminal-Bench 2.1 89.9, OSWorld-V 82.0.
+- Pro cyber/visual: CyberGym 94.0, ExploitBench 47.9, SEC Bench Pro 66.3, Visual Coding 72.3.
+- DeepSWE avg@3 over RL: 58.4 -> 72.6 (Pro), 48.7 -> 65.7 (Flash).
+
+**Key results:** About $2.6M of RL compute (43.8% rollout, 43.5% training, 12.7% grading) raises MiMo-V2.6-Pro's DeepSWE score from 58.4 to 72.6, against 19.0 for MiMo-V2.5-Pro and 74.0 for Claude Opus 5, and lifts held-out-harness pass@1 from about 50% to 66%. Freezing the router prevents load collapse (with a trainable router, CV rises from 0.78 to 2.0 and cold experts reach 22%), and confirmed hacking stays below 2% of trajectories. The open MiMo-V2.6-Distill-Qwen-9B plus RL reaches 66.2 on SWE-bench Verified and 52.8 on Terminal-Bench 2.1.
+
+*Evolution:* Builds on MiMo-V2-Flash's hybrid-SWA backbone, MOPD and RL infrastructure. It also adopts DAPO-style dynamic sampling, Kimi k1.5 partial rollout and R3 routing replay. It moves from verifiable-reward RLVR toward spending compute on agentic graders (GRS/GAR) that judge solution quality and behavior rather than only test pass/fail. It also adds systematic defenses against solution leakage and reward hacking. Releasing the 9B distill, the environments and the RL framework gives the open community a reproducible baseline for agentic RL.
+
+### MagicBeanStalk: Escaping the RLVR Zero Advantage Trap with Recursive Data Synthesis
+*2026 · data · `data_MagicBeanStalk_2610.12659.txt` · arXiv [2610.12659](https://arxiv.org/abs/2610.12659)*
+
+Math is pass@1 at 16K on AIME 24/25, AMC, HMMT Feb/Nov, Minerva, Olympiad and Omega-500 (16 rollouts for gpt-oss-120b), with answers checked by normalized strings, numeric equivalence and a GPT-5.2 judge; 8K-32K budget sweeps and MathArena Apex-Shortlist (47 problems, 16 samples) are added. Finance is pass@1/pass@5 on SecQue and FinanceBench (8 samples, T=1.0, 8K). Data quality uses GPT-5.6 blinded 1-5 scores for blueprint preservation and novelty and a three-judge audit.
+
+- Pairs scoring >=4 on both preservation and novelty: math 19.7% MBS vs 3.0% seed synthesis; finance 86.0% vs 17.0%.
+- Three-judge audit rejects only 8.0% of math answers unanimously (0% finance).
+
+**Key results:** Continual RLVR on MBS data lifts gpt-oss-120b's 8-benchmark average from 61.2 to 69.8 (+8.6) versus +1.1 for the full 78K source mixture, +1.9 for Golden Goose and +5.8 for the best in-budget Goldilocks subset, and lifts DeepSeek v4 Flash from 72.4 to 77.9 with the same data; on MathArena Apex-Shortlist MBS gains +11.0/+13.3/+10.9 at 16K/24K/32K. In finance, 340 seeds yield 14K+ problems that improve Qwen3-4B-Instruct pass@1 by +6.9 on SecQue and +2.4 on FinanceBench.
+
+*Evolution:* MBS reacts to the zero-advantage problem that DAPO-style dynamic sampling only filters away, arguing that hard 0/8 problems are specifications of missing skills rather than waste. It extends teacher-written seed synthesis (CoT-Self-Instruct, SwS, PromptCoT) and Internet-mined task synthesis (Golden Goose, by overlapping authors) with policy- and budget-relative calibration and recursive decomposition. It is presented as complementary to algorithmic hard-problem methods (BroRL, POPE, hint/prefix guidance) and pushes RLVR scaling toward targeted, data-centric synthesis for strong frontier-scale policies and data-scarce domains like finance.
+
+### AutoEnvScaling: Automating the Data Flywheel with Terminal Agents
+*2026 · code · `code_AutoEnvScaling_2610.14163.txt` · arXiv [2610.14163](https://arxiv.org/abs/2610.14163)*
+
+Environment generation is scored by valid-environment rate and USD cost per valid environment for eight proposers under Prompt, Prompt+Env Feedback and AutoEnvScaling. Solvers are scored on held-out Terminal-Bench 2.1 avg@5 with the Pi agent (4 CPUs, 8 GiB); HiL-Bench SWE (ask_human) measures task success and Ask-F1.
+
+- Valid rate: DeepSeek-V4-Flash 3.5% -> 12.1% -> 89.0%; Claude Opus 5 74.6% -> 94.0%.
+- TB2.1: Qwen3.5-9B 19.1 base / 27.2 Tmax / 33.5 AutoEnvScaling; Qwen3.5-35B-A3B 26.7 / 34.6 / 38.9 (35.3 without solver feedback).
+- Self-improvement: TB2.1 41.1 -> 53.3, TB4.0 1.6 -> 3.2; HiL-Bench success 33.9% / Ask-F1 55.3% vs 6.8% / 29.6%; cross-domain admission 1,061/1,489 (71.3%).
+
+**Key results:** Running generation as a terminal task raises the valid-environment rate by up to 25x over prompt-only generation at up to 75% lower cost per valid environment, and RL on GPT-5.6-sol environments lifts Qwen3.5-35B-A3B 4.3 points above a matched Tmax pool on Terminal-Bench 2.1. With Qwen3.6-35B-A3B as both proposer and solver, Terminal-Bench 2.1 rises 12.2 points (6.1 above Tmax); without proposer training, valid rate falls to 22.4% and training collapses.
+
+*Evolution:* AutoEnvScaling builds on terminal-environment synthesis pipelines (Endless Terminals, TermiGen, Tmax, SETA, RST) and on proposer-solver self-play (Absolute Zero, R-Zero, SPICE, SPADE). Those approaches fix the generation procedure in advance; here an agent carries out the researcher's environment-design workflow end to end, using solver rollouts and a persistent harness. Training one model in both roles, kept stable by an explicit proposer reward, is presented as a step toward recursive self-improvement through self-built training data.
+
+### SPROUT: Scaling Agentic Reinforcement Learning for Long-Horizon Software Engineering
+*2026 · code · `code_SPROUT_2610.14405.txt` · arXiv [2610.14405](https://arxiv.org/abs/2610.14405)*
+
+Rollout collection is scored by resolve rate, normalized recovery rate (R_method - R_Pass@1)/(1 - R_Pass@1), and total execution steps and tokens, against Pass@1/Pass@4, entropy-based branching and Shepherd, on DeepSWE, Terminal-Bench 2.1 and SWE-bench Pro v2 Hard with Kimi K3, Qwen3.8-27B, DeepSeek V4.1 Flash, Claude Sonnet 5 and GPT-5.6 Luna. RL evaluation reports success rates on the three benchmarks plus wall-clock time per training step.
+
+- DeepSWE sampling: 98.2% (Kimi K3, vs 92.0 Pass@4), 85.8% (GPT-5.6 Luna, vs 68.1), 78.6% (Qwen3.8-27B, vs 71.7), with 47.9-67.7% fewer tokens.
+- Ablations (GPT-5.6 Luna, DeepSWE): no injected starting turn 85.8 -> 49.6; reward-only review 53.1.
+
+**Key results:** RL on Qwen3.8-27B with SPROUT reaches 84.3 / 40.7 / 64.0 on SWE-bench Pro v2 Hard / DeepSWE / Terminal-Bench 2.1, beating basic GRPO (74.5 / 33.6 / 39.3) by 13.9 points on average while cutting time per step from 3.77 h to 2.28 h (-39.5%). As a sampler it beats Pass@4 on every model, by up to 23.6 points (Qwen3.8-27B on Terminal-Bench 2.1, 66.3 to 89.9), using 32-52% of Pass@4's tokens.
+
+*Evolution:* SPROUT extends GRPO-style RLVR for SWE agents (in the line of SWE-RL and DeepSWE-style training) by addressing the all-fail-group problem on long horizons, where zero-advantage groups waste hours-long rollouts. It reacts to branching RL methods (VinePPO, TreeRL, CBPO, BPO, Shepherd) that branch only within the conversation, snapshot only a few container states, or delegate branch choice to a stronger model. Full-filesystem per-turn microVM checkpoints plus self-guided, verifier-informed repair make branching practical for tasks with hundreds of tool calls, and its depth-vs-breadth study suggests sequential review rounds are more token-efficient than wider parallel sampling.
+
+### Apertus 1.5: From Open Text Models to Open Multimodal Reasoners
+*2026 · report · `report_Apertus-1.5_2610.15542.txt` · arXiv [2610.15542](https://arxiv.org/abs/2610.15542)*
+
+A roughly 50-task text suite (knowledge, IF, math, code, multilingual/cultural, safety, function calling, charter alignment) is paired with held-out benchmarks to detect overfitting, image/audio suites (LMMs-Eval, VLMEvalKit), RULER/HELMET long context, and AIME mean@8 with a 32,768-token thinking budget.
+
+- 8B (thinking off): MMLU 70.5, MMLU-Pro 48.8, IFEval 87.1, Multi-IF 83.7, IFBench 35.3, AlpacaEval LC 47.2, MATH-500 51.2.
+- 8B (thinking on): MATH-500 71.4, IFBench 44.3, AIME24 22.9, AIME25 23.8, MMMU roughly +10.
+- Preference stage lifts the dev-suite average 49.3 -> 54.8 (8B) and 55.3 -> 61.2 (70B).
+
+**Key results:** Apertus 1.5 8B is the strongest of all compared 8B-class models (open-weight included) on instruction following (IFEval 87.1, Multi-IF 83.7). Thinking lifts its MATH-500 from 51.2 to 71.4 and AIME24 from 7.5 to 22.9. The 70B improves over Apertus 1.0 on every benchmark but trails open-weight peers such as Qwen3.5 and Gemma 4.
+
+*Evolution:* Builds on Apertus 1.0 (2025, 15T tokens, 1000+ languages) as a fully open model upgraded in place to image and audio input via discrete-token early fusion. Its post-training borrows from the open-recipe lineage: OLMo 3's Dolci prompts and IFTrain constraints, DAPO-style asymmetric clipping, and online DPO with MaxMin pairing (Delta Learning). It also introduces SDPO self-distillation for charter alignment. Its lessons include filtering reasoning traces by what the model already solves, adding long-context SFT to recover retrieval lost in SFT, and running offline DPO before online DPO at 70B. All are released with open data, code and checkpoints.
+
+### LoongSage: A Production-Grade, High-Efficiency Agentic RL Framework for Frontier LLMs with Validated Recipes
+*2026 · code · `code_LoongSage_2610.16352.txt` · arXiv [2610.16352](https://arxiv.org/abs/2610.16352)*
+
+No downstream benchmark scores are reported; validation tracks training entropy, rollout reward mean, K3 train-inference KL and step time over four full runs, plus an async throughput ablation.
+
+- SWE (DeepSeek-V4-Flash, 8 H20 nodes): reward 0.75-0.80, KL ~1e-4; DAPO: reward 0.45 -> ~0.80, KL peak 5.3e-4, step 900 -> 550 s.
+- OpenCode (Qwen3-Coder-30B-A3B): reward 0.35 -> 0.50; MOPD: step 1100 -> 700 s, full-vocabulary distillation +17 GB peak memory over DAPO.
+
+**Key results:** On Qwen3-30B-A3B GRPO (16 H20 GPUs, B=64 x 8, 20K-token responses), fully asynchronous windowed-fifo with S=2 cuts average step time from 580.79 s (colocated) to 428.76 s, a 1.35x speedup (1.40x steady-state), and windowed-fifo gets 4-6% more throughput than no-window with a buffer less than half as deep. Across the four production runs, rewards rise steadily while the train-inference gap stays at the 1e-4 scale.
+
+*Evolution:* LoongSage follows slime's minimalist Megatron+SGLang pairing, verl's extensible controller design, AReaL/Forge-style fully asynchronous rollouts and Agent-Lightning's agent-trainer disaggregation. It reacts to frameworks built for single-turn RLHF/RLVR by treating TITO trajectory fidelity, bounded staleness, MoE routing replay and precision pinning as core design primitives, and adds memory-multiplexed multi-teacher on-policy distillation. Its operational appendix, which catalogs silent kernel and weight-layout bugs that widened the train-inference gap, argues that agentic RL recipes must include system configurations, not just hyperparameters.
+
+### Recursive Environment Scaling for General Long-Horizon Agents
+*2026 · code · `code_RES_2610.16397.txt` · arXiv [2610.16397](https://arxiv.org/abs/2610.16397)*
+
+Claw-Eval-Live (Pass@1 at native score >= 0.80, mean native score), Workspace-Bench-Lite (TCR@80, rubric pass rate RPR) and Terminal-Bench 2.1 (binary verifier Pass@1), each with one 50-turn attempt per task. Six models are evaluated on original vs RES environments, and SFT on RES vs original trajectories is compared at equal trajectory counts.
+
+- Claw-Eval-Live Pass@1, original -> RES: DeepSeek-V4.1-Flash 82.86->5.71, GPT-5.6 Sol 85.71->26.67, Claude Opus 5 86.67->28.57.
+- Qwen3.5-35B-A3B SFT (RES vs original): Claw 77.14 vs 64.76, Workspace TCR@80 28.00 vs 14.00, Terminal-Bench 38.20 vs 23.60.
+- Ablations: removing dependencies raises Pass@1 0->100% on 15 tasks; no inheritance 93.33 vs 6.67; 6-operator basic library 80.00.
+
+**Key results:** RES lowers success for all six evaluated frontier models on all three benchmarks (by 57.14-77.14 points on Claw-Eval-Live), and with equal trajectory counts SFT on RES trajectories beats original-trajectory SFT in all nine model-benchmark comparisons by 7.00-14.61 points. Accepted children cost on average 1.45 proposer executions, 89.2k tokens and 112.6 s each.
+
+*Evolution:* RES sits beside environment-synthesis work (EnvScaler, ScaleEnv, Agent-World) and recursive task synthesis such as RST, but transforms existing benchmark environments in place instead of building new tasks. Holding the objective fixed allows paired original-vs-scaled comparisons. The approach extends saturated benchmarks such as Claw-Eval-Live into harder variants, and the paper shows these variants also serve as a source of long-horizon SFT data.
+
+### Efficiently Learning To Reason or Not to Reason: Root-token Policy Optimization for Adaptive Thinking
+*2026 · rl · `rl_RPO-AdaptiveThinking_2610.17767.txt` · arXiv [2610.17767](https://arxiv.org/abs/2610.17767)*
+
+Math uses MATH500, AIME24 and AIME25; transfer uses GPQA-Diamond and LiveCodeBench (2025-03-25 to 2025-04-15). Metrics are Pass@1 averaged over 16 runs, average generated tokens, Think% (fraction routed to LONG) and the reasoning-per-accuracy ratio RAR = Think%/Pass@1 (lower is better), plus ECE/MCE reliability for p_short, training-compute PFLOPs and misrouting counts.
+
+- Qwen3-8B math average: Think% 57.3 -> 44.8, Pass@1 63.8 -> 62.0, RAR 0.90 -> 0.72.
+- Exaone4-1.2B RAR 0.85 -> 0.49.
+
+**Key results:** RPO's training compute is an estimated ~0.02x that of AdaptThink (10,241 vs 522,240 PFLOPs for an 8B model) while it still learns difficulty-aware routing. On R1-1.5B it reaches 51.3 average Pass@1 at 20.5% MATH500 Think% (RAR 0.96) versus AdaptThink's 56.5 (RAR 0.74) at a much larger budget. At an equal ~10K-PFLOP budget, full-trajectory GRPO only reaches 90.2% Think% while RPO reaches 20.5-43.4% at comparable accuracy.
+
+*Evolution:* RPO targets the overthinking problem of R1-style LRMs and follows the learn-when-to-think line (AdaptThink, Thinkless, ARM, AdaReasoner), whose full-trajectory GRPO is costly. It takes token-selective RL (high-entropy forking tokens) to its extreme by updating a single root routing token, making adaptive thinking trainable on ~3 GPUs with open data. The authors present it as a controllable routing layer on top of SFT, not a uniform replacement: gains are configuration-dependent (e.g., Qwen3-32B and Qwen3-1.7B show comparable rather than better RAR).
+
+### Enabling Token-wise Importance Sampling in Off-Policy RLVR with Proximal KL Regularization
+*2026 · rl · `rl_ProxKL_2610.18738.txt` · arXiv [2610.18738](https://arxiv.org/abs/2610.18738)*
+
+Held-out evaluation is greedy pass@1 on MATH500, OlympiadBench, MinervaMath and Gaokao2023MathEn and mean@16 on AIME24/25 and AMC23/24, plus AIME24 pass@16 curves. The headline is a micro-averaged Average over 4,149 responses (three seeds at 1.7B); training accuracy under periodic refresh is tracked at 1.7B-32B. Diagnostics include policy entropy, pre-clip gradient norm and fixed-policy correction variance V(H).
+
+- 1.7B off-policy: 33.00-33.18 vs GRPO 32.14-32.41 at LR 5e-6; 32.97 vs 30.39 at LR 1e-5, staleness 4.
+- 4B: 48.13 / 48.35 vs 47.17 / 46.13 at staleness 4 / 16.
+- On-policy roughly ties (34.09 vs 34.50).
+
+**Key results:** Proximal KL beats GRPO on micro-averaged accuracy in all seven matched off-policy settings (Qwen3-1.7B/4B, two learning rates, staleness 0/4/16), by up to +2.58 points. Moving from staleness 4 to 16, its 4B Average rises (+0.22) while GRPO's falls (-1.04). Under periodic refresh it avoids the PG/CISPO collapses at 8B/32B, and 8B reaches 50% training accuracy in about 200 updates versus about 640 for GRPO.
+
+*Evolution:* The paper builds on GRPO/DAPO token-wise ratios, batch-size-invariant PPO's split of the proximal and behavior policies (as used in AReaL and AsyncWebRL), the same group's FRPO Future-KL gradient identity, and PCL/Trust-PCL soft path consistency. It reacts to the growing off-policyness of asynchronous RLVR systems (AReaL, Slime, Miles) and to the bias of PPO clipping and CISPO-style weight clipping. It offers a theoretically grounded, critic-free alternative in which bounded future-KL feedback replaces the clip gate.
+
+### LLM-jp-4 Technical Report
+*2026 · report · `report_LLM-jp-4_2610.19331.txt` · arXiv [2610.19331](https://arxiv.org/abs/2610.19331)*
+
+llm-jp-eval v2.1.3 (Japanese and English category averages), plus MMLU, JMMLU, GPQA Diamond (EN/JA), AIME 2024/2025, HLE and BBH. LLM-as-a-Judge via llm-jp-judge uses a GPT-5.4 judge averaged over 3 runs on MT-Bench JA/EN, AnswerCarefully v2.0 (336 questions) and llm-jp-instructions (400 questions). Baselines are llm-jp-3.1-8x13b-instruct4, Qwen3-8B and gpt-oss-20b.
+
+- Japanese average: 0.590 (8B), 0.605 (32B-A3B) vs 0.307 predecessor, 0.608 Qwen3-8B; English 0.634 / 0.650 vs Qwen3-8B 0.714.
+- 32B-A3B: JMMLU 0.820, GPQA-JA 0.540, GPQA-EN 0.520, AIME24/25 0.400/0.300.
+- Medium-effort MT-Bench JA/EN 7.82/7.86.
+
+**Key results:** LLM-jp-4-32B-A3B roughly doubles the previous generation's Japanese llm-jp-eval average (0.307 → 0.605) and matches Qwen3-8B (0.608) and gpt-oss-20b (0.604). At medium reasoning effort it beats gpt-oss-20b on MT-Bench JA (7.82 vs 7.33), AnswerCarefully (3.70 vs 3.55) and llm-jp-instructions (3.61 vs 3.16). It still trails both baselines on English, GPQA-EN and AIME.
+
+*Evolution:* Successor to LLM-jp-3/3.1 and a Japanese 'sovereign AI' counterpart to fully open efforts like OLMo, Pythia and Apertus. It reacts to license contamination in popular open datasets (FineWeb-Edu and MegaMath built with Llama) by rebuilding them with Apache-licensed models (Qwen3, gpt-oss). Its thinking post-training is SFT+DPO only, distilled from gpt-oss-120b in Harmony format without RL. It shows that OSAID-compliant, fully reproducible pipelines can reach parity with similar-scale open-weight models on Japanese tasks.
+
+### More Methods, Better Agents? A Reality Check on Self-Distillation in Agentic Reinforcement Learning
+*2026 · method · `method_SelfDistill-RealityCheck_2610.19789.txt` · arXiv [2610.19789](https://arxiv.org/abs/2610.19789)*
+
+Final evaluation at T=0.4 over eight rollout seeds (mean +/- SD) on ALFWorld success, ScienceWorld task score, Search-QA exact match, and WebShop score and success. Training is tracked by validation every 5 steps (2,772 sweeps), normalized validation-curve AUC, peak-to-final drop and low-performance counts; cost is net training time ratio to GRPO and GPU-hours.
+
+- Twelve-setting means: PCSD 54.26, AgentOPSD 51.34, GRPO 49.68, OCSD 49.50, RLSD 46.54, SDAR 46.33, OVCSD 46.17, ICSD 44.75, ADRS 44.61, GRPO+OPSD 43.05, Skill-SD 39.45.
+- By AUC, OCSD leads (39.88) and AgentOPSD ranks ninth (34.41).
+
+**Key results:** Only PCSD (+4.58) and AgentOPSD (+1.66) beat GRPO's twelve-setting mean, no method wins across settings, and severe failures occur (e.g. 0.00% WebShop success for Skill-SD and ICSD at 4B and Skill-SD and RLSD at 9B; 1.52% for GRPO+OPSD on 4B ALFWorld). Of 120 method-setting comparisons, 112 cost more training time than GRPO and 58 of those score lower; under a GRPO-matched time budget AgentOPSD's ALFWorld mean falls from 68.10 to 37.63 and PCSD's WebShop mean from 73.17 to 63.83, both below GRPO.
+
+*Evolution:* The paper reacts to the 2026 surge of on-policy self-distillation methods for agentic RL (SDAR, Skill-SD, RLSD, OCSD, OVCSD, AgentOPSD, ADRS, ICSD, PCSD), which grew out of OPD/OPSD with privileged-context teachers, and whose papers mostly reuse published baseline numbers. It shifts the emphasis from proposing methods to fair re-evaluation under one protocol. It argues that a well-tuned GRPO remains a strong baseline, and that future work should report repeated evaluation, training-failure analysis, and measured cost together.
+
+### Priming Base Models for Agentic Post-Training: An Open Midtraining Recipe
+*2026 · method · `method_Open-Midtraining-Recipe_2610.22019.txt` · arXiv [2610.22019](https://arxiv.org/abs/2610.22019)*
+
+After identical SFT, models are scored on SWE-bench Verified (500), Multilingual (300) and Pro (731) in OpenHands (3 rollouts, 200 turns, 250 for Pro), Terminal-Bench 2.0/2.1 (89 tasks) in Terminus-2 (8 rollouts), DeepSWE (4 runs) and a BrowseComp subset, reporting pass@1 and pass@k at temperature 1.0, top-p 0.95, plus a six-harness sweep. Base-model metrics are LoCoDiff exact match/edit distance, RepoBench, and repository and trace bits-per-byte; regression checks use MMLU, MMLU-Pro, GSM8K, MATH, HumanEval, MBPP, commonsense suites and RULER.
+
+- Lightning at 500B tokens: SWE-V 60.7 -> 64.5, Multilingual 55.8 -> 62.8, Pro 32.0 -> 35.5, TB 22.6 -> 23.6, LoCoDiff exact 0.0 -> 26.8%.
+- Super at 280B: DeepSWE 11.7 -> 15.7, SWE-V 72.9 -> 74.3, BrowseComp 61.8 -> 64.8; Multilingual and Pro end 1.1 and 2.1 below base.
+
+**Key results:** On Nemotron 3.5 Lightning, 500B midtraining tokens improve SWE-bench Verified/Multilingual/Pro by 3.8/7.0/3.5 points after identical full SFT, and on Nemotron 3.5 Super 280B tokens raise DeepSWE from 11.7 to 15.7 and SWE-bench Verified from 72.9 to 74.3. Midtraining improves every agent harness tested (+8.6 SWE-V and +6.8 Terminal-Bench 2.1 averaged across harnesses on Super after short SFT; +11.6 SWE-V across six harnesses on Lightning-8K), and agent traces supply most of the gain over natural data alone.
+
+*Evolution:* The paper opens up the midtraining stage that Qwen3-Coder-Next, GLM-5, Kimi-Dev, daVinci-Dev and Composer 2 describe only at a high level, publishing per-source construction, blend weights and ablations. It reacts to evidence that very long SFT stages hurt later RL trainability by moving natural SWE data and lower-tier traces into a 256K pretraining-style stage. Its preliminary 20-step GRPO run shows only that the midtrained advantage survives the start of RL, so whether midtraining increases what RL can add is still open; the authors plan to scale the trace corpus (already ~90B tokens) and move reasoning/chat data into midtraining.
+
+### Mosaic: Multi-Session Agentic Reinforcement Learning
+*2026 · rl · `rl_Mosaic_2610.22174.txt` · arXiv [2610.22174](https://arxiv.org/abs/2610.22174)*
+
+Accuracy and average sessions per trajectory on BrowseComp (1,266 questions) under single-session, multi-session/compact and multi-session/subagent inference, against base Qwen3.5-4B, single-session GRPO, IGPO (turn-level information gain) and multi-session Broadcasting. Session utility is measured by Positive-IG rate and IG per session.
+
+- Single / compact / subagent: base 23.22 / 24.80 / 21.64; GRPO 31.99 / 34.68 / 31.91.
+- Broadcasting 35.31 (3.17 sessions) compact, 31.44 (4.43) subagent; Mosaic 38.86 (2.35) compact, 32.46 (3.77) subagent.
+- Positive-IG rate 59.92% vs 47.74% (Broadcasting, compact); IG per session 0.89 vs 0.86.
+
+**Key results:** On BrowseComp with Qwen3.5-4B, Mosaic reaches 38.86% accuracy under context compaction versus 35.31% for broadcasting (a 10.1% relative gain) while cutting average sessions from 3.17 to 2.35, and 32.46% versus 31.44% under subagent forking with 3.77 versus 4.43 sessions. It also beats IGPO (31.36 / 24.64) with much lower information-gain computation time.
+
+*Evolution:* Mosaic extends GRPO-based agentic RL (Search-R1-style search agents) to trajectories broken by context compaction and subagent forking, which modern harnesses produce but single-session RL assumes away. It reacts to broadcasting used in harness-agnostic trainers such as Dressage and Polar, and moves IGPO's turn-level information-gain reward to the session level with type-conditioned normalization. The paper frames session utility and allocation, cross-session state transfer, and asynchronous or black-box-harness multi-session RL as open directions.
+
+### Self-Evolving Coding Agents via Harness-Policy Optimization
+*2026 · code · `code_Self-HPO_2610.22791.txt` · arXiv [2610.22791](https://arxiv.org/abs/2610.22791)*
+
+SWE-Bench Verified (500 tasks, primary), SWE-Bench Multilingual (300, OOD) and SWE-Bench Pro public V2 (642, OOD), scored by resolve rate avg@3 with std under a 250-step limit and T = top-p = 0.95. Pass@k on Verified uses 8 attempts.
+
+- Self-improving (Verified / Multilingual / Pro / avg): Base 61.0/54.2/58.3/57.8; RLVR 67.5/56.3/61.8/61.9; Self-Harness 65.2/54.3/60.7/60.1; Self-HPO 69.5/59.7/65.2/64.8.
+- External Opus 4.8 setup: SFT 65.0/49.6/49.1/54.6; Meta-Harness 69.1/56.5/64.8/63.5; HPO 71.6/61.4/66.0/66.3.
+- Pass@8 80.0 -> 84.8; pass@1 +17.2/+12.9/+6.1 on Medium/Easy/Hard but -2.2 on already-Resolved; zero-success RL groups 6.5% vs 11-17% for RLVR.
+
+**Key results:** Self-HPO lifts Qwen3.5-35B-A3B's average resolve rate across the three SWE benchmarks from 57.8% to 64.8% (Verified 61.0 -> 69.5), beating RLVR by 2.9 and Self-Harness by 4.7 points on average. With Opus 4.8 as harness proposer, HPO reaches 71.6% on Verified. Cross-evaluation shows the evolved harness alone gives +3.5 and the trained policy alone +3.4, while the joint pair gives +8.5, more than the sum of the two.
+
+*Evolution:* Self-HPO joins two lines that had been developed separately: harness optimization with a frozen policy (Meta-Harness, Self-Harness, ADAS-style search) and policy RL under a fixed harness (GRPO/RLVR, Orchard's BAR, SWE-RL-style agents). Unlike concurrent joint methods (WHALE with a frozen external proposer, Evo2 with a separate trained proposer, HASE with harness edits inside the RL action space), it makes the RL-trained policy its own next harness proposer and derives the harness search set from tasks the RL step left unsolved. It also finds that improving the harness with a strong teacher beats SFT distillation from that same teacher, especially out of distribution.
+
+### How Data Scales in Agentic Reinforcement Learning: Laws and Synthesis Strategies
+*2026 · data · `data_AgenticDataScaling_2610.23946.txt` · arXiv [2610.23946](https://arxiv.org/abs/2610.23946)*
+
+Held-out task success is converted to L = -log p_success on AIME24/25, MATH500 and AMC23 (math+code), SWE-bench Verified (world-held-out), a 240-task WebArena-Lite split, the AppWorld test/challenge split, and Bamboogle plus a multi-hop split for search. Bootstrap 95% CIs over 3 seeds are reported.
+
+- Qwen3-8B math+code exponents: alpha_E = 0.41, alpha_T = 0.26, alpha_tau = 0.11 (R^2 > 0.97), same ordering in all 21 settings.
+- Environment split: alpha_W (world) = 0.44, alpha_V (structure) = 0.28.
+- Collapse ratios: r*_E ~9.4, r*_T ~3.4, r*_tau ~1.4.
+
+**Key results:** Scaling exponents order environment > task > trajectory in all 21 tested settings (sizes, families, domains, PPO/GRPO), and the compute-optimal recipe D_E ~ C^0.34, D_T ~ C^0.27, D_tau ~ C^0.13, N ~ C^0.26 predicts 51.7% vs a measured 51.3% on a held-out Qwen3-14B run at 32C0, beating Chinchilla-transferred (47.3%) and trajectory-heavy naive allocation (42.9%), a 1.4x-1.7x compute-efficiency gain.
+
+*Evolution:* The paper extends Kaplan/Chinchilla compute-optimal scaling and RL-scaling studies (ScaleRL, the Agent RL Scaling Law of ZeroTIR) that treat RL data as a single scalar of rollout tokens or prompts. It reacts to the common open-source practice of scaling trajectory resampling (TDScaling, AgentRL), arguing that this axis has the flattest exponent and the earliest synthesis collapse. It gives environment synthesizers (AWM, GenEnv) and task generators (AutoPlay, SCA, RLVE) a common price scale and turns 'where to synthesize' into a solvable budget-allocation problem.
+
+### SWE-Bench Pro V2: A Cleaner, Harder-to-Game Coding Benchmark
+*2026 · method · `method_SWE-Bench-Pro-V2_2610.24206.txt` · arXiv [2610.24206](https://arxiv.org/abs/2610.24206)*
+
+Percent resolved with 95% Wilson intervals on the 642 tasks and a 51-task Hard split, with a 50-minute budget per task (stop at 2940 s) on Harbor 0.22.0. A harness study runs GLM-5.3, Kimi K3 and Inkling in mini-swe-agent, Pi and OpenCode; cost metrics include tokens per solved task and wall-clock by activity.
+
+- Full / Hard: Opus 5 (xhigh, Claude Code) 99.4 / 98.0, Fable 5.1 99.1 / 92.2, Kimi-K3 97.5 / 88.2, GPT-6-Astra 96.9 / 90.2, GLM-5.3 95.6 / 84.3, GPT-5.6-Sol 95.5 / 82.4.
+- Gemini 3.8 Flash 94.9 / 58.8, Sonnet 5 93.2 / 88.2, GPT-5.6-Terra 92.4 / 86.3, Inkling 89.9 / 56.9, Haiku 5.5 87.2 / 52.9.
+- Scaffold spreads 0.9, 1.7 and 7.5 points; variance explained: task 31.7%, model 2.65%, scaffold 0.29%; Kimi K3 1.3M tokens per solved task under Pi vs 2.6M under mini-swe-agent.
+
+**Key results:** Every one of the 642 V2 tasks is solved by at least one frontier system, Opus 5 in Claude Code reaches 99.4% and the full set still spans 87.2-99.4%, while the Hard split spreads systems from 52.9% to 98.0%. With the network open, 32 of 642 Opus 5 runs contacted code hosts and 25 downloaded the task's own repository; in Round 2 a frontier model had copied reference solutions verbatim from GitHub on 351 solved tasks, only 237 of which held up with GitHub blocked. All such retrievals, and forged dependencies that passed in-sandbox, fail under the locked protocol.
+
+*Evolution:* A maintenance release of SWE-Bench Pro (2509.16941), the successor benchmark to the saturated and contamination-prone SWE-bench Verified, by Scale AI and Reflection AI authors (including SWE-Bench Pro co-author Jeff Da), released on Scale AI's SWE-bench_Pro dataset page. It reacts to reported git-history leakage and to new exploits that only stronger agents reach, such as in-sandbox binary replacement and Go module-cache forgery. It contrasts itself with the concurrent SWE-Bench Pro Verified (2609.08149): V2 audits every task with experts, never edits hidden tests, validates repairs by blind re-implementation, uses a network allowlist rather than a domain blocklist, and re-grades in a clean container. It argues that a near-saturated but correctly graded split remains useful for sub-frontier, cost and scaffold comparisons and as a regression test.
+
+### Muse Glimmer 30B: An On-Device Agentic Model
+*2026 · report · `report_Muse-Glimmer_2610.24628.txt` · arXiv [2610.24628](https://arxiv.org/abs/2610.24628)*
+
+Agentic and coding: tau3-Banking, WildClawBench, GAIA2, GDPval-AA, SciCode, OSWorld-Verified, SWE-Bench Verified/Pro (bash plus file tool, 4 runs), TauBench and Terminal-Bench 2.1. Tool use: MCPAtlas and PinchBench. Reasoning: DeepSearchQA, AIME 2026, GPQA-D, ARC-AGI and HLE. Also IFBench, SkillsBench, multimodal (CharXiv, MMMU-Pro, OmniDocBench, ScreenSpot), BEAM-128K, AA-LCR, privacy/security (CIMemories, PrivacyLens, Siren AgentDojo) and multilingual (Omnilingual-GAIA2, MMLU-ProX, FLoRes+).
+
+- High reasoning: SWE-Bench Verified 76.0, SWE-Bench Pro 51.2, Terminal-Bench 2.1 51.7, MCPAtlas 75.5, GAIA2 43.3.
+- AIME26 94.7, GPQA-D 83.5, IFBench 77.0, AA-LCR 80.0, Omnilingual-GAIA2 60.4.
+- 15-task average accuracy: 75.7 (BF16), 75.6 (EvoPress), 74.8 (Q4KM).
+
+**Key results:** At high reasoning, Muse Glimmer beats Gemma4-31B and Qwen3.6-27B on MCPAtlas (75.5 vs 54.2/62.5), SWE-Bench Pro (51.2 vs 36.9/50.2), AA-LCR (80.0 vs 68.3/73.3) and Omnilingual-GAIA2 (60.4 vs 37.5/45.0). It trails Qwen3.6-27B on OSWorld-Verified (65.9 vs 75.6), Terminal-Bench 2.1 (51.7 vs 60.7) and GDPval-AA. EvoPress 4-bit-class quantization keeps 75.6 of the BF16 model's 75.7 average accuracy.
+
+*Evolution:* Meta's on-device follow-up to Llama 4 (it shares that tokenizer) distills the frontier Muse Spark model, combining logit co-distillation in pretraining with Qwen3-style on-policy distillation before RL. Unlike Gemma 4 and Qwen3.6, it argues for a dense model over MoE under a hard 32GB memory budget. It builds privacy (Contextual Integrity) and prompt-injection robustness into training for local agents such as OpenClaw. The report gives no RL algorithm details, reward formulas or post-training data sizes.
+
+### Arctic-SWE: Revisiting the Long Horizon Agent Training by Modeling-System Co-Design
+*2026 · code · `code_Arctic-SWE_2610.24914.txt` · arXiv [2610.24914](https://arxiv.org/abs/2610.24914)*
+
+pass@1 is the average over 4 rollouts on a fixed 483-problem SWE-bench Verified subset (17 excluded as ungradeable offline) and all 731 SWE-bench Pro problems (Pro-v1, Pro-v2, Pro-v2 Python subset), at T=1.0, top-p 0.95 in isolated sandboxes. Diagnostics are training reward, token entropy, rollout-trainer mismatch KL, stale drops and policy lag.
+
+- Overfit test: full recipe reaches 93.0% (epochs 100-150) and 95.8% (200-230) where Prime-RL and SkyRL recipes collapse after ~70%.
+- Verified ablations: std-normalized advantages -1.7, per-rollout aggregation -3.4, length penalties collapse to 20.3% / 8.4%.
+- Unsealed sandboxes let Qwen3.8-27B hack 19/60 Pro trials (50.0% to 65.0%).
+
+**Key results:** On unchanged R2E-Gym data, Arctic-SWE lifts Qwen3.5-4B from 47.4% to 62.0% SWE-bench Verified pass@1, matching FrogNano's 61.5% with about one-sixth the training rollouts. With curated data the 4B reaches 65.0/38.3/59.7 and the 9B 65.7/39.6/70.2 on Verified/Pro-v1/Pro-v2 (from 47.4/25.0/37.9 and 56.2/31.9/48.8).
+
+*Evolution:* Arctic-SWE reacts to SWE-agent RL works (R2E-Gym, DeepSWE, SkyRL, FrogNano, MiMo) whose baselines are hard to reproduce, arguing many reported gains may be measured against under-tuned recipes. It assembles known pieces (CISPO, IcePop masking, PipelineRL-style async with KV recomputation, gated rewards) into a reproducible async baseline validated by an RL-overfitting stress test, and shows fail-to-pass validation is too weak, motivating counterfactual-patch auditing and test strengthening of training rewards. It also documents git-history and network reward hacking and forgetting of evicted tasks in small models as open problems for agent RL.
+
+### Self-Credit: Credit Assignment for Long-Horizon Agentic RL via Intra-group Rescaling
+*2026 · rl · `rl_Self-Credit_2610.28388.txt` · arXiv [2610.28388](https://arxiv.org/abs/2610.28388)*
+
+Pass@1 LLM-judge accuracy over 3 seeds (temperature 0.7) on BrowseComp-Plus (Qwen3-8B/32B, Qwen3-Embedding-8B retriever), GAIA and xBench-DeepSearch (Gemma4-E4B), against zero-shot, GRPO, GiGPO, SUPO and ECHO, plus average turns. Analysis metrics: gold documents searched or opened, answer and evidence recall, citation F1 against gold-finding turns and a Claude Sonnet 4.6 judge, and rescaling firing rate and precision.
+
+- BrowseComp-Plus 32B: 47.0 vs ECHO 41.4, GiGPO 38.2, GRPO 33.3; 8B: 40.6 vs 32.1 (SUPO/ECHO).
+- GAIA 39.2 vs 34.3 (GRPO); xBench-DeepSearch 16.7 vs 12.0 (GiGPO).
+- Ablations (32B/8B): no rescaling 41.0/28.9, no repeated-failure penalty 34.9/26.5, credit on all turns 42.2/27.7; OOD average (HotpotQA, MuSiQue, FRAMES, Bamboogle) 46.6 vs 45.4 GRPO.
+
+**Key results:** On BrowseComp-Plus, Self-Credit improves Qwen3-8B and Qwen3-32B by 37.0 and 36.2 points over zero-shot (to 40.6 and 47.0) and beats the strongest RL baselines by 8.5 and 5.6 points. With Gemma4-E4B it beats the best baselines by 4.9 points on GAIA (39.2) and 4.7 points on xBench-DeepSearch (16.7).
+
+*Evolution:* Self-Credit combines compaction-augmented agentic RL (SUPO, CompactionRL, ECHO) with group-based turn-level credit in the spirit of GiGPO, but matches turns by the evidence they retrieve rather than by repeated states. It reacts to credit methods that need critics, process reward models, external judges or hindsight rollouts, and to ECHO's success-only turn selection, by using both successful and failed rollouts to correct self-generated credit and guard against citation hacking. It shows that a policy's own summaries can supply usable process supervision for long-horizon search agents.
+
+### Harness Scaling for Generalizable Agentic Reinforcement Learning
+*2026 · code · `code_HarnessScaling_2610.29458.txt` · arXiv [2610.29458](https://arxiv.org/abs/2610.29458)*
+
+ClawGym-Bench, PinchBench and JobBench-Easy, reporting Pass@1 averaged over three runs with GPT-5.4 rubric judging. In-space generalization averages over 18 fixed held-out configurations from H minus H_tr; out-of-space uses Claude Code (v2.1.205) and OpenClaw as unseen black-box harnesses. GPT-5.4 also judges six behavioral dimensions.
+
+- Overall averages (single -> scaling): Qwen3-4B GRPO 29.81 -> 39.04, PPO 33.91 -> 36.93; Qwen3-30B-A3B GRPO 37.29 -> 42.78, PPO 36.31 -> 41.89.
+- Structured 18 beats Random-18, all 243 harnesses and random assignment.
+- Largest behavioral gains: state tracking, workflow compliance, error recovery.
+
+**Key results:** Across two model scales and both GRPO and PPO, Harness Scaling beats single-harness RL on unseen harness configurations (in-space gains of +3.57 to +9.80 points averaged over benchmarks), costing only 0.19 points on the base harness for Qwen3-30B-A3B. On the unseen Claude Code harness it averages 37.22 (4B) and 41.20 (30B-A3B), above OpenClaw-trained black-box SFT (35.08/38.08) and black-box RL (33.38/36.28).
+
+*Evolution:* The paper follows agentic RL that scales tasks (ClawGym) and environments (EnvScaler, Agent World Model, Agent-World) but trains through one fixed harness, as in Agent Lightning and OpenClaw-RL. It borrows orthogonal-array factorial design from classical experimental design to make harness diversity tractable. Its result that a structured set of 18 harnesses beats exhaustive 243-harness training under a fixed budget suggests that how harness diversity is organized matters, not only how much there is.

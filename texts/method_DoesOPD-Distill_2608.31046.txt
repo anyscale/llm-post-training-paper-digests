@@ -1,0 +1,3644 @@
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+D OES O N -P OLICY D ISTILLATION R EALLY D ISTILL ?
+F ROM N OISY T EACHER TO S ELF -I MPROVEMENT
+Yi Ding, Ruqi Zhang
+Department of Computer Science, Purdue University, USA
+{ding432,ruqiz}@purdue.edu
+ Github
+
+Hugging Face
+
+On-policy distillation (OPD) offers dense token-level supervision as an alternative
+to the sparse outcome-level advantages of reinforcement learning with verifiable
+rewards (RLVR). However, the teacher scores student-generated trajectories that
+are inherently off-policy for it, so the reliability of its supervision, and hence the
+source of the student’s improvement, remains unclear. We quantitatively analyze
+teacher supervision during OPD training and find substantial noise whose prevalence increases with teacher scale. Surprisingly, the student policy is insensitive
+to such noise, converging to comparable performance regardless of whether noisy
+supervision is retained or removed. Does OPD distill at all? By analyzing what
+drives its gains, we find that learning concentrates on low log-probability tokens,
+and using a single fixed negative advantage matches the performance of teacherprovided ones. This suggests that OPD works largely by suppressing low logprobability tokens, which requires no teacher. These findings motivate On-Policy
+Self-Adaptation (OPSA), a supervision-free method using entropy-adaptive negative advantages. It assigns stronger learning signals to high-entropy positions,
+suppressing tail tokens, and evenly redistributing probability mass among head
+tokens. Compared with the base Qwen3-1.7B, OPSA improves Avg@32 by
+35.41 points on AIME24, corresponding to a 263% relative gain, and more than
+doubles Pass@32 across all three benchmarks. It also outperforms OPD by 16.77
+points in Avg@32 on AIME24. Extensive experiments and analyses across model
+families and tasks further demonstrate its effectiveness and generalizability.
+
+𝒚𝟏
+
+Student Model
+
+Student logp
+𝒚
+
+𝑨
+
+Teacher Model
+
+Student Model
+(c)
+OPSD
+
+Teacher logp
+
+𝒚
+
+30
+20
+
+100
+
+Self-Adapted
+Neg. Advantage
+
+𝒚
+
+dyn
+
+𝑦𝑖 ∈ lowest 20% logp tokens , 𝐴𝑖
+
+External
+Supervision
+𝑨
+
+OPD Avg@4
+OPSA Avg@4
+
+10
+
+Teacher logp
+
+Hint
+
+Policy Model
+
+40
+
+0
+
+𝑨
+
+OPSA
+
+50
+
+Internal
+Information
+
+Student logp
+
+Student Model
+
+(d)
+OPSA (Ours)
+
+Avg@4 on AIME24 (%)
+
+𝑨𝒏
+
+𝒚𝒏
+
+(b)
+OPD
+
+60
+
+𝑨𝟏
+Verifiable
+Answer
+
+Accuracy (%)
+
+Policy Model
+
+…
+
+(a)
+RLVR
+
+…
+
+arXiv:2608.31046v2 [cs.LG] 24 Sep 2026
+
+A BSTRACT
+
+1
+𝐻𝑖 − 𝐻min
+=− −
+2 2 𝐻max − 𝐻min
+
+0
+AIME 24
+
+80
+60
+
+↑ 100.0%
+
+HMMT 25
+
+500
+Qwen3-1.7B
+w/ OPSA
+
+↑ 122.2%
+↑ 114.3%
+
+80.00
+
+40
+
+0
+
+AIME 25
+
+400
+
+↑ 263.5%
+
+48.85
+
+20
+
+No External Teacher, No Hint, No Verifiable Reward, Zero External Supervision
+
+200
+300
+Training Steps
+
+100
+
+40.00
+
+13.44
+
+Avg@32
+
+↑ 264.4%
+
+35.31
+
+66.67
+
+Pass@32
+
+Avg@32
+
+↑ 307.2%
+
+30.00
+
+9.69
+
+23.33
+
+50.00
+23.33
+
+5.73
+
+Pass@32
+
+Avg@32
+
+Pass@32
+
+Figure 1: Left: Overview of different on-policy reinforcement learning algorithms. Unlike existing
+methods that derive advantages from external supervision, OPSA enables self-improvement with no
+external supervision by assigning entropy-adaptive negative advantages to low-probability tokens.
+This suppresses tail tokens and redistributes their mass among head tokens, sharpening low-entropy
+positions while preserving diversity at high-entropy forks. Right: Training dynamics and performance of OPSA. OPSA eliminates the teacher supervision used in OPD, and further outperforms
+OPD by 12% in Avg@4. On Qwen3-1.7B, OPSA improves Avg@32 by 263-307% across mathematical reasoning benchmarks and more than doubles Pass@32.
+
+1
+
+On-Policy Self-Adaptation
+
+1
+
+September 25, 2026
+
+I NTRODUCTION
+
+Reinforcement learning (RL) has become a dominant post-training paradigm to improve reasoning
+capabilities of large language models (LLMs) (Guo et al., 2025; Yang et al., 2025; GLM-5-Team
+et al., 2026), offering stronger performance and generalization than offline methods such as supervised fine-tuning (SFT) (Chu et al., 2025; Chen et al., 2025). Reinforcement learning with verifiable
+rewards (RLVR), including GRPO (Shao et al., 2024) and DAPO (Yu et al., 2026), samples multiple
+responses per question and assigns advantages by normalizing verifiable rewards within each group
+(Fig. 1(a)). However, response-level rewards provide coarse and sparse supervision for long-horizon
+reasoning (Yue et al., 2025). Moreover, when responses within a group share the same correctness
+outcome, their normalized advantages vanish (Wang et al., 2026b; Ding et al., 2026), weakening the
+learning signal and making training unstable or prone to collapse.
+On-Policy Distillation (OPD) (Agarwal et al., 2024; Gu et al., 2024) addresses this limitation by
+using a strong teacher to provide token-level advantages through reverse Kullback-Leibler (KL)
+optimization on student-sampled trajectories (Fig. 1(b)) (Burnham & Anderson, 2001; Lu & Lab,
+2025). However, it requires shared vocabularies and white-box access to teacher logits, restricting
+teacher selection. On-Policy Self-Distillation (OPSD) (Hübotter et al., 2026; Zhao et al., 2026;
+Shenfeld et al., 2026) retains the same OPD paradigm but replaces the external teacher with the
+policy itself conditioned on hints, such as reference answers (Fig. 1(c)). Constructing such hints still
+requires additional sampling or annotation and may risk information leakage (Yang et al., 2026).
+More fundamentally, OPD and OPSD share the same advantage-assignment paradigm, which asks
+the teacher to score student-sampled prefixes that are inherently off-policy for it. This raises the
+question of whether the teacher can still provide reliable supervision in such off-policy contexts (Xie
+et al., 2026; Fu et al., 2026; Hou et al., 2026). Our analysis reveals a substantial fraction of noisy
+teacher supervision, where noisy means a negative advantage on a correct answer or a positive
+advantage on an incorrect one, and this fraction grows with teacher scale. Surprisingly, training
+exclusively on these noisy trajectories achieves performance comparable to both standard OPD and
+OPD trained with the noisy trajectories removed, suggesting that OPD’s gains may not arise from
+the behavior matching it is designed to achieve. This raises a fundamental question: what actually
+drives student improvement in OPD?
+To answer this question, we analyze OPD’s gains from the perspectives of token selection and learning signals. We find that (i) improvement is driven primarily by low log-probability tokens sampled
+by the student, and (ii) negative advantages are critical, as replacing all OPD advantages with a
+single fixed negative value yields comparable performance. These observations suggest that OPD’s
+gains come from suppressing low-probability tokens sampled by the student, requiring no teacher.
+Fixed negative advantages reproduce much of OPD’s gains, but they discard its fine-grained tokenlevel signals by treating all tokens equally. We therefore study how much negative signal each
+token should receive, and find that token entropy determines it, with stronger signal at high-entropy
+positions giving better performance.
+Altogether, we propose On-Policy Self-Adaptation (OPSA), a supervision-free token-level RL
+method that assigns entropy-adaptive negative advantages to low-probability tokens (Fig. 1(d)). We
+summarize our contributions as follows:
+• We find that teacher supervision in OPD is highly noisy and uncover a surprising insensitivity of the student policy to such noise. Training exclusively with noisy supervision,
+excluding noisy supervision, and standard OPD all converge to comparable accuracy after
+similar numbers of training steps.
+• We identify the key drivers of OPD improvement: effective learning is concentrated on
+low-logp student-sampled tokens, and fixed negative advantages on these tokens can match
+standard OPD. This suggests that OPD’s gains stem less from teacher distillation than from
+suppressing low-probability tokens, questioning the necessity of teacher supervision.
+• We propose On-Policy Self-Adaptation, a supervision-free token-level RL method. It reshapes the policy distribution by suppressing tail-token probabilities and redistributing the
+probability mass among head tokens. This sharpens the distribution at low-entropy positions while preserving diversity at high-entropy fork tokens to support effective exploration.
+2
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+• We show through extensive experiments that OPSA generalizes across model families and
+tasks. On Qwen3-1.7B, OPSA improves Avg@32 by 263%–307% relative to the base
+model across the three benchmarks and more than doubles Pass@32 on each benchmark.
+
+2
+
+T EACHER S UPERVISION IN OPD I S H IGHLY N OISY, BUT S TUDENTS
+I MPROVE R EGARDLESS
+
+2.1
+
+P RELIMINARY
+
+On-Policy Distillation (OPD) (Agarwal et al., 2024; Gu et al., 2024) optimizes the reverse Kullback–Leibler (KL) divergence between the student and teacher distributions over the same prefixes,
+which is computed using the K1 estimator (Lu & Lab, 2025):
+KL(πs || πt ) = Ey∼πs (·|x)
+
+|y|
+X
+
+[log πs (yi | x; y<i ) − log πt (yi | x; y<i )] ,
+
+(1)
+
+i=1
+
+where y<i = [y1 , · · · , yi−1 ] denotes prefixes of the response y sampled from student policy πs .
+In practice, OPD provides token-level advantage signals Ai for the student policy during the Reinforcement Learning (RL) training, and the loss function can be written as:
+
+
+|y|
+X
+1
+πt (yi | x; y<i )
+LOPD = −E 
+Ai log πs (yi |x; y<i ) , Ai = log
+.
+(2)
+|y| i=1
+πs (yi | x; y<i )
+The loss function optimizes the student policy by assigning positive or negative credits to the studentsampled tokens based on teachers’ preference, pushing it closer to teachers’ behavior in each state.
+2.2
+
+N OISY T EACHER S IGNALS IN OPD
+
+Since the KL divergence is computed conditioned on prefixes sampled from the student distribution,
+the teacher must score trajectories it would not generate. This raises a key concern: can the teacher
+provide reliable supervision in such off-policy settings (Fu et al., 2026; Xie et al., 2026; Wang et al.,
+2026a)?
+Definition of Noisy Signals. Previous work (Hou et al., 2026) often measures supervision noise
+at the trajectory level. However, the quality of intermediate reasoning steps is difficult to assess
+quantitatively, as a per-token reference for what the supervision should be is generally unavailable.
+Therefore, we focus on tokens corresponding to verifiable final answers enclosed in \boxed{},
+whose correctness is determined by the verifier. We call the supervision noisy when the sign of the
+teacher-provided advantage on these tokens disagrees with the verifiable reward, i.e., when incorrect
+answers receive positive advantages or correct answers receive negative ones. Such supervision
+provides the student with misleading learning signals during RL training.
+Setup. We use Qwen3-1.7B as the student policy πs with thinking mode disabled, and use
+Qwen3-4B/30B-A3B/235B-A22B-Instruct as teacher πt , respectively. For the following
+analysis, we randomly sample one correct and one incorrect response from πs for each of 500 questions in DAPO-17k (Yu et al., 2026), with correctness verified based on ground-truth answers.
+Teacher Supervision is Highly Noisy, and Noisier at Scale. As shown in Fig. 2(a), supervision
+from teacher models of all sizes contains substantial noise. For the 4B teacher, 20.4% of correct trajectories receive negative advantages on their answer tokens, while 40.8% of incorrect trajectories
+receive positive advantages, yielding an overall noise rate of 30.6%. The noise rate increases with
+teacher size, from 30.6% for the 4B teacher to 34.7% for the 30B-A3B teacher and 50.6% for the
+235B-A22B teacher. In addition, the largest teacher consistently tends to assign negative advantages:
+97.8% of answer tokens enclosed in \boxed{} receive negative advantages even when the answer
+is correct, while 96.6% also receive negative advantages when the answer is incorrect. This leads to
+an overall noise rate of approximately 50%. These results suggest that, as the teacher becomes more
+3
+
+100
+60
+40
+20
+0
+
+97.8
+
+Correct; A < 0
+Incorrect; A > 0
+
+80
+
+September 25, 2026
+
+43.4
+
+40.8
+
+26.0
+
+20.4
+
+3.4
+
+4B
+
+30B-A3B
+
+Teacher model
+
+235B-A22B
+
+Avg@4 on AIME24
+
+Noisy trajectory (%)
+
+On-Policy Self-Adaptation
+
+40
+35
+30
+25
+
+Standard OPD
+Noisy only
+Clean only
+
+20
+15
+10
+
+0
+
+(a) Reward-advantage direction mismatch
+
+40
+
+80
+
+OPD training step
+
+4B
+30B-A3B
+235B-A22B
+
+120
+
+160
+
+(b) Training dynamics under different supervision
+
+Figure 2: Performance of Qwen3-1.7B as the student model under supervision from teachers of
+different scales. (a): The proportion of teacher-provided advantage signals whose directions disagree
+with verifiable rewards on student-sampled trajectories. Red and blue bars denote noise rates in
+correct and incorrect trajectories, respectively. (b): Avg@4 performance on AIME24 during OPD
+training with different variants of teacher-provided advantage signals.
+capable, its supervision on student-generated trajectories becomes overwhelmingly negative and increasingly insensitive to answer correctness. We attribute this to the growing distributional mismatch
+between the student and teacher policies, which makes student-generated trajectories increasingly
+off-policy from the teacher’s perspective.
+2.3
+
+S TUDENTS A RE I NSENSITIVE TO N OISE IN T EACHER S UPERVISION
+
+Analysis in Section 2.2 reveals that OPD training involves a substantial amount of noisy tokenlevel supervision. To isolate its effect on learning, we conduct a controlled filtering experiment
+by partitioning trajectories according to whether they contain noisy signals defined in Section 2.2.
+We compare standard OPD trained on all trajectories against two variants trained exclusively on
+trajectories with or without noisy signals. As shown in Fig. 2(b), all three settings converge to
+comparable performance after a similar number of gradient steps. Remarkably, even when training
+is restricted to trajectories containing noisy advantages, the student improves at a rate comparable
+to standard OPD. This finding reveals a surprising insensitivity of OPD to supervision noise in the
+teacher-provided advantages. In particular, when the teacher supervision is substantially noisy, the
+student’s improvement may not come from matching the teacher’s behavior. This raises a more
+fundamental question:
+Research Question
+OPD improves student performance even when teacher supervision is highly noisy. This
+suggests that the gains may not come from knowledge transfer, the mechanism OPD is built
+on. What, then, drives student improvement in OPD?
+
+3
+
+W HERE D OES S TUDENT I MPROVEMENT C OME F ROM ?
+
+In this section, we progressively disentangle where the performance gains of OPD come from.
+Specifically, Sections 3.1 and 3.2 investigate which tokens affect improvement and what kinds of
+learning signals are effective, respectively. We summarize our findings as follows:
+Key Findings
+• Which Tokens? Most high-log-probability tokens sampled by the student provide negligible gradients and little effective learning signal. OPD’s performance gains instead arise
+primarily from the small fraction of low-log-probability tokens. (§3.1)
+• Which Signals? Negative advantages, which constitute the majority of OPD signals, are
+the ones that matter. Notably, replacing all OPD advantages, both positive and negative,
+with a fixed negative value yields performance comparable to standard OPD. (§3.2)
+
+4
+
+51.7% |A| ≤ 10−4
+29.2% A = 0
+
+103
+102
+101
+100
+
+−20
+−10
+0
+10
+Token advantage A
+(a) Advantage distribution
+
+100
+80
+
+97.5%
+
+96.6%
+
+60
+40
+
+51.7%
+
+20
+0
+
+0
+20
+40
+60
+80 100
+Highest-logp tokens retained (%)
+(b) Zero advantage dominates high logp
+
+Avg@4 on AIME24
+
+104
+
+September 25, 2026
+
+|A| ≤ 10−4 ratio (%)
+
+Token count
+
+On-Policy Self-Adaptation
+
+50
+
+Standard OPD
+Top 20%
+Top 40%
+Calculated A
+Random A
+
+40
+30
+20
+10
+0
+
+40
+
+80
+120
+160
+200
+OPD training step
+(c) Training across top-logp fractions
+
+Figure 3: Qwen3-1.7B student with 4B-Instruct teacher. (a): Token-level advantage distribution
+during OPD, with most tokens receiving near-zero advantages. (b): Fraction of near-zero advantages
+among tokens within different top-percentile ranges of student logp. (c): Training only on top-logp
+tokens yields limited improvement, suggesting that these tokens provide weak learning signals.
+3.1
+
+W HICH T OKENS C ONTRIBUTE TO OPD T RAINING ?
+
+Findings in Section 2.3 suggest that not all tokens generated by the student policy contribute effective
+learning signals for OPD. Revisiting the loss in Eq. 2, let ztv denote the logit for token v conditioned
+on context y<t . We have the logit-level gradients for each token (Zhu et al., 2026; Jia et al., 2026):
+
+∂LOPD
+At (1 − πs (v | x; y<t )) , if v = yt (sampled token)
+−
+∝
+.
+(3)
+v
+−At (πs (v | x; y<t )),
+if v ̸= yt (unsampled token)
+∂zt
+We observe that the gradient vanishes in two regimes: when |At | is small, and when πs (yt | x, y<t )
+approaches one for the sampled token. Tokens in either regime have negligible impact on training.
+Token Mass Concentrates at Near-Zero Advantages. We visualize the distribution of tokenlevel advantages in Fig. 3(a). A substantial fraction of the tokens is concentrated near zero: 29.2%
+of tokens have exactly zero advantage, and 51.7% have advantage magnitude below 10−4 .
+Near-Zero Advantages Coincide with the Student’s High-Logp Tokens. Fig. 3(b) shows that
+tokens with near-zero advantages (|A| < 10−4 ) are concentrated among those assigned high log
+probability by the student. When the student is extremely confident in a token, the teacher, conditioned on the same student-generated prefix, often assigns similarly high probability to that token,
+resulting in only a negligible difference between their logp and, consequently, an advantage close to
+zero.
+High-Logp Tokens Contribute Nothing to On-Policy Training. To test whether high-logp tokens provide any effective learning signal, we conduct controlled on-policy training experiments.
+Specifically, we train on varying proportions of the student’s top-logp tokens using either the original OPD advantages (calculated A) or random advantages (random A) sampled evenly from [−1, 1].
+As shown in Fig. 3(c), restricting training to these tokens yields no noticeable improvement in the
+student’s AIME24 performance. Interestingly, the performance remains essentially unchanged even
+when the original advantages are replaced with random values. These results suggest that highlogp tokens provide no effective learning signal during on-policy training, largely regardless of the
+advantages assigned to them.
+3.2
+
+W HICH L EARNING S IGNALS D RIVE P OLICY I MPROVEMENT ?
+
+Revisiting the formulation of the OPD advantage in Eq. 2, the reverse KL is computed on studentsampled trajectories, which are inherently off-policy for the teacher. The teacher therefore assigns
+lower probabilities to many sampled tokens, resulting in predominantly negative advantages, consistent with the results in Fig. 3(a). A related observation appears in the RL setting as well, where
+Zhu et al. (2026) show that Negative Sample Reinforcement (NSR), which learns only from negative
+signals, can improve policy performance. This motivates us to ask whether the gains achieved by
+OPD are driven primarily by its large proportion of negative advantages, rather than by the specific
+supervision provided by the teacher.
+5
+
+September 25, 2026
+
+40
+
+20
+OPD
+A = −0.5
+A = 0.2
+
+10
+0
+
+100
+
+200
+300
+400
+Training Steps
+(a) Avg@4 on AIME24
+
+500
+
+9k
+6k
+
+OPD
+A = −0.5
+A = 0.2
+
+3k
+0
+
+0
+
+100
+
+200
+300
+400
+Training Steps
+(b) Response Length
+
+500
+
+Grad Norm
+
+30
+
+0
+
+10
+
+12k
+
+Response Length
+
+Avg@4 on AIME24
+
+On-Policy Self-Adaptation
+
+OPD
+A = −0.5
+A = 0.2
+
+8
+6
+4
+2
+0
+
+0
+
+100
+
+200
+300
+Training Steps
+(c) Grad Norm
+
+400
+
+500
+
+Figure 4: Training dynamics of standard OPD and on-policy training with fixed advantages.
+We use Qwen3-1.7B as the student model and compare three advantage assignment schemes. The
+first follows standard OPD, using Qwen3-4B-Instruct as the teacher model to compute tokenlevel advantages. The other two are teacher-free variants that assign a fixed advantage of −0.5
+or +0.2 to each selected token. Since high-logp tokens provide little effective training gradient
+(Section 3.1), we restrict training to the 20% of tokens with the lowest student logp.
+A Fixed Negative Advantage Alone Improves Students. We report the training dynamics of the
+different advantage-assignment schemes in Fig. 4. First, OPD restricted to the 20% of tokens with
+the lowest student log-probabilities achieves performance comparable to that of full-token OPD,
+further supporting the findings in Section 3.1. More notably, training with a fixed negative advantage yields a steady improvement in the student policy’s avg@4 performance on AIME24. Similar
+to standard OPD, the response length also increases gradually throughout training and eventually
+stabilizes at approximately 12K tokens. In contrast, training with a fixed positive advantage leads
+to policy collapse: during the first 40 training steps, the response length progressively decreases to
+nearly zero while the gradient norm explodes. After the collapse, the policy produces degenerate
+outputs consisting largely of seemingly random or garbled tokens.
+Takeaway
+Our analysis suggests that OPD gains may arise not from distilling teacher knowledge, but
+from suppressing low-probability tokens sampled by the student itself, an operation that
+requires no teacher at all. This observation motivates the method introduced in Section 4.
+
+4
+
+M ETHODOLOGY
+
+Section 3 showed that OPD’s improvements survive the removal of the teacher, of positive advantages, and of all but the lowest-logp tokens. The remaining question is: given that negative signal
+on low-logp tokens is what drives improvement, how much negative signal should each such token receive? Section 4.1 shows that token entropy determines the amount of signal; Section 4.2
+turns the findings into On-Policy Self-Adaptation (OPSA), a supervision-free training algorithm,
+and Section 4.3 analyzes why it works.
+4.1
+
+E NTROPY D ETERMINES THE A MOUNT OF N EGATIVE S IGNALS
+
+Section 3.1 suggested that low-logp tokens are the ones that matter, but logp alone does not distinguish two very different situations. A token can have low log probability because the policy is
+uncertain, with probability mass spread across many plausible tokens, so that even head tokens have
+relatively low logp. Or the student distribution is sharply concentrated on only a few tokens, while
+the sampled token happens to fall in the tail of a confident distribution. Wang et al. (2026c); He
+et al. (2026) have shown that high-entropy tokens play an important role in reinforcement learning and may benefit from stronger learning signals. Motivated by these findings, we compare two
+entropy-aware schemes that dynamically adjust the magnitude of the negative advantage:
+1
+Adyn
+= Afix
+i − δ · ri ,
+i
+4
+
+ri = 2
+6
+
+Hi − Hmin
+− 1,
+Hmax − Hmin
+
+(4)
+
+September 25, 2026
+
+30
+20
+OPD
+δ=1
+
+10
+0
+
+100
+
+δ=0
+δ = −1
+
+200
+300
+400
+Training Steps
+(a) Avg@4 on AIME24
+
+9k
+6k
+3k
+
+500
+
+0
+
+OPD
+δ=1
+
+0
+
+100
+
+δ=0
+δ = −1
+
+200
+300
+400
+Training Steps
+(b) Response Length
+
+500
+
+Grad Norm
+
+40
+
+0
+
+10
+
+12k
+
+50
+
+Response Length
+
+Avg@4 on AIME24
+
+On-Policy Self-Adaptation
+
+δ=0
+δ = −1
+
+OPD
+δ=1
+
+8
+6
+4
+2
+0
+
+0
+
+100
+
+200
+300
+Training Steps
+(c) Grad Norm
+
+400
+
+500
+
+Figure 5: Training dynamics of on-policy training with dynamic negative advantages.
+where Hmin and Hmax are the minimum and maximum entropy over the lowest-20%-logp positions
+within each response, so that ri ∈ [−1, 1] measures a token’s entropy relative to its own rollout. The
+parameter δ controls the relationship between the advantage magnitude |Ai | and the token entropy
+Hi : δ = 1 assigns larger-magnitude negative advantages to higher-entropy tokens, δ = −1 reverses
+this, and δ = 0 recovers the fixed-negative-advantage setting of Section 3.2.
+Adaptive Advantages with δ = 1 Outperform OPD. The results in Fig. 5 show that, surprisingly,
+when the magnitude of the negative advantage is positively correlated with token entropy (δ = 1),
+the policy exhibits steady improvement in avg@4 on AIME24, ultimately reaching 50.0% and substantially outperforming standard OPD at 35.13%. Comparing the positively correlated (δ = 1) and
+negatively correlated (δ = −1) variants further demonstrates that on-policy training benefits substantially from assigning larger-magnitude negative advantages to high-entropy tokens. In contrast,
+the negatively correlated variant becomes unstable between steps 350 and 450, maintains consistently higher gradient norms throughout training, and ultimately performs slightly worse than the
+fixed-negative-advantage baseline. These results highlight the importance of concentrating stronger
+learning signals on high-entropy tokens for effective and stable on-policy training.
+4.2
+
+O N -P OLICY S ELF -A DAPTATION
+
+These results give a complete on-policy training recipe, which we call On-Policy Self-Adaptation
+(OPSA). OPSA updates only the lowest-logp tokens, assigns them negative advantages, and scales
+the magnitude with entropy. It requires no external supervision of any kind, including teacher sig3
+nals, ground-truth rewards, or reference answers. Setting Afix
+i = − 4 and δ = 1 in Eq. (4) and
+restricting the update to Slowest20 , the training objective of OPSA is defined as follows:
+"
+#
+X
+1
+Hi − Hmin
+1
+dyn
+Ai log πθ (yi |x; y<i ) , Adyn
+(5)
+LOPSA = −E
+=− −
+i
+|Slowest20 |
+2 2(Hmax − Hmin )
+i∈Slowest20
+
+Since OPSA eliminates the need for a teacher model during training, it avoids additional forward
+passes through a teacher model to compute advantages. Instead, advantages are derived directly
+from the student policy’s token-level entropy, introducing negligible computational overhead and
+substantially reducing training time. Detailed efficiency results are reported in the Appendix B.3.
+4.3
+
+W HY D OES OPSA W ORK ?
+
+To further understand the mechanism of OPSA, we conduct a detailed analysis by categorizing
+tokens into four cases based on token entropy and sampled-token probability: (a) a tail token at a
+high-entropy position, (b) a head token at a high-entropy position, (c) a tail token at a low-entropy
+position, and (d) a head token at a low-entropy position. Based on the logit-level gradients in Eq. 3,
+Fig. 6 illustrates how the negative advantages in OPSA reshape the policy distribution in each case.
+Tail Tokens: OPSA Suppresses Low-Probability Reasoning Branches. During on-policy training, stochastic sampling is typically used instead of greedy decoding to maintain rollout diversity.
+At relatively high sampling temperatures, however, extremely low-probability tail tokens may occasionally be sampled, causing the reasoning process to enter unlikely and potentially erroneous
+branches. Because OPSA adaptively assigns negative advantages to the 20% of policy-generated
+7
+
+0.04 0.03 0.03 0.02 0.02
+
+Head mass 0.92 → 0.92
+
+0.39
+Before
+
+0.09
+
+0.25 0.26
+
+0.33
+
+0.27
+
+0.34
+
+Sampled token: So
+
+Tail mass
+0.08 → 0.08
+0.04 0.04 0.03 0.03 0.02 0.02
+
+Wait
+But
+We
+⋯
+#
+(a) OPSA suppresses low-probability tail mass
+
+Wait
+But
+#
+We
+⋯
+So
+(b) OPSA redistributes mass among head tokens
+
+0.97
+
+0.97
+
+Sampled token: 3
+
+0.08
+
+0.02
+
+<0.01
+
+<0.01
+
+Before
+
+After
+
+Mass concentrates on token "1"
+0.91 → 0.97
+Tail mass 0.09 → 0.03
+
+0.02
+
+<0.01
+
+x
+^
+3
+(c) OPSA avoids sampling low-confidence tokens
+1
+
+Sampled token: 1
+
+Token "1" is not in the
+lowest 20% by log p
+OPSA skips this update
+
+After
+
+So
+
+0.2
+0.0
+
+Tail mass
+0.14 → 0.08
+
+0.25 0.26 0.26 0.27
+
+0.8
+0.4
+
+Sampled token: #
+
+After
+
+0.91
+
+After
+
+1.0
+
+Before
+
+0.35
+
+0.6
+
+September 25, 2026
+
+Head mass 0.86 → 0.92
+0.39
+
+0.4
+0.3
+0.2
+0.1
+0.0
+
+Before
+
+LOW ENTROPY
+Token probability
+
+HIGH ENTROPY
+Token probability
+
+On-Policy Self-Adaptation
+
+<0.01
+
+<0.01
+
+<0.01
+
+3
+x
+^
+1
+(d) OPSA maintains high-confidence tokens
+
+Figure 6: Examples of OPSA updates. (a) At high-entropy positions, OPSA suppresses sampled tail
+tokens and reallocates probability to head tokens. (b) At high-entropy positions, OPSA redistributes
+probability among head tokens, with little effect on the tail. (c) OPSA avoids sampling tail tokens
+at low-entropy positions. (d) OPSA preserves high-confidence predictions.
+tokens with the lowest logp, its policy update suppresses these sampled tail tokens and reallocates
+their probability mass to higher-probability head tokens, as illustrated in Fig. 6(a)(c). In this way,
+OPSA steers subsequent reasoning away from low-probability branches and toward more confident
+alternatives.
+Head Tokens: OPSA Evenly Redistributes Mass Without Collapsing Diversity. Suppressing
+tail tokens makes sampling increasingly head-dominated, which raises the concern of diversity collapse. Fig. 6(b) shows why this does not occur. At a high-entropy position, the negative advantage
+assigned to a sampled head token redistributes probability mass among competing head tokens rather
+than further sharpening the distribution onto a single prediction, while leaving the tail-token probabilities largely unaffected. This behavior preserves output diversity and the policy’s ability to explore
+alternative reasoning paths. Moreover, because OPSA updates only the 20% of sampled tokens with
+the lowest student log-probabilities, high-confidence tokens at low-entropy positions are typically
+excluded from training. As shown in Fig. 6(d), OPSA therefore preserves confident predictions at
+low-entropy positions, where high precision is particularly important (Zhang et al., 2026b).
+Reshaped Distribution Enables Reflective Reasoning. Consistent with prior observations (Ding
+et al., 2026; Zhao et al., 2025a), we find that high token-level entropy is closely associated with selfreflective reasoning behavior. At such high-entropy positions, the model is more likely to generate
+reflective tokens such as “wait” and “but”, which often signal reflection or self-correction and lead to
+higher-quality reasoning. The example in Fig. 6 illustrates how OPSA increases the total probability
+mass of the head-token set at high-entropy positions while redistributing it more evenly within the
+set. This makes diverse reflective branches more likely to be explored. We provide a quantitative
+analysis of this phenomenon in Section 5.3.2.
+
+5
+
+E XPERIMENTS
+
+5.1
+
+E XPERIMENTAL S ETUP
+
+Models and Datasets. Our experiments cover models from the Qwen3 (Yang et al., 2025),
+Qwen3.5 (Team, 2026), and Olmo3 (Olmo et al., 2025) families. All models are trained on DAPO17k (Yu et al., 2026) for mathematical reasoning tasks using only the questions, without access to
+labels and ground-truth answers. We evaluate the models on three in-domain mathematical reasoning benchmarks, AIME24, AIME25, and HMMT25, as well as the out-of-domain benchmark
+MBPP+ (Liu et al., 2023) (Code), and GPQA-Diamond (Rein et al., 2023) (Q&A). We provide
+additional model details and code-task training results in Appendix B.1 and C.1, respectively.
+8
+
+On-Policy Self-Adaptation
+
+Methods
+RLVR (Shao et al., 2024)
+TTRL (Zuo et al., 2026)
+OPD (Lu & Lab, 2025)
+OPSD (Zhao et al., 2026)
+OPSA (Ours)
+
+September 25, 2026
+
+Dense Signal
+
+No Verifiable Reward
+
+No External Teacher
+
+No Hint
+
+✗
+✗
+✓
+✓
+✓
+
+✗
+✓
+✓
+✓
+✓
+
+✓
+✓
+✗
+✓
+✓
+
+✓
+✓
+✓
+✗
+✓
+
+Table 1: Comparison of supervision signals in different on-policy training methods.
+Math (I.D.)
+Methods
+
+O.O.D.
+
+AIME24
+avg@32 pass@32
+
+AIME25
+avg@32 pass@32
+
+HMMT25
+avg@32 pass@32
+
+MBPP+ GPQAD
+avg@32
+
+Qwen3-1.7B
+w/ OPSA
+∆
+
+13.44
+40.00
+48.85
+80.00
++35.41
++40.00
+↑ 263.5% ↑ 100.0%
+
+9.69
+30.00
+35.31
+66.67
++25.62
++36.67
+↑ 264.4% ↑ 122.2%
+
+5.73
+23.33
+23.33
+50.00
++17.60
++26.67
+↑ 307.2% ↑ 114.3%
+
+58.24
+27.92
+59.44
+32.40
++1.20
++4.48
+↑ 2.1% ↑ 16.0%
+
+Qwen3-4B
+w/ OPSA
+∆
+
+23.33
+56.67
+62.08
+83.33
++38.75
++26.66
+↑ 166.1% ↑ 47.0%
+
+20.52
+56.67
+58.44
+83.33
++37.92
++26.66
+↑ 184.8% ↑ 47.0%
+
+13.13
+33.33
+37.40
+60.00
++24.27
++26.67
+↑ 184.8% ↑ 80.0%
+
+66.93
+68.35
++1.42
+↑ 2.1%
+
+38.46
+41.29
++2.83
+↑ 7.4%
+
+Qwen3.5-9B
+w/ OPSA
+∆
+
+76.35
+87.81
++11.46
+↑ 15.0%
+
+93.33
+96.67
++3.34
+↑ 3.6%
+
+56.04
+76.98
++20.94
+↑ 37.4%
+
+93.33
+96.67
++3.34
+↑ 3.6%
+
+44.48
+67.40
++22.92
+↑ 51.5%
+
+86.67
+93.33
++6.66
+↑ 7.7%
+
+77.33
+79.27
++1.94
+↑ 2.5%
+
+70.53
+73.70
++3.17
+↑ 4.5%
+
+Olmo3-7BIT
+w/ OPSA
+∆
+
+54.48
+61.88
++7.40
+↑ 13.6%
+
+83.33
+93.33
++10.00
+↑ 12.0%
+
+38.75
+47.92
++9.17
+↑ 23.7%
+
+76.67
+83.33
++6.67
+↑ 8.7%
+
+24.90
+29.69
++4.79
+↑ 19.2%
+
+56.67
+63.33
++6.66
+↑ 11.8%
+
+57.79
+59.61
++1.82
+↑ 3.1%
+
+34.12
+35.64
++1.52
+↑ 4.4%
+
+Olmo3-7BTK
+w/ OPSA
+∆
+
+71.88
+77.29
++5.41
+↑ 7.5%
+
+93.33
+93.33
++0.00
+↑ 0.0%
+
+61.77
+67.08
++5.31
+↑ 8.6%
+
+90.00
+93.33
++3.33
+↑ 3.7%
+
+41.98
+47.50
++5.52
+↑ 13.1%
+
+73.33
+83.33
++10.00
+↑ 13.6%
+
+64.55
+66.33
++1.78
+↑ 2.8%
+
+38.86
+40.93
++2.07
+↑ 5.3%
+
+Table 2: Performance of OPSA across models on in-domain math and out-of-domain code and Q&A
+tasks. Qwen models use non-thinking mode; Olmo IT and TK denote Instruct and Think variants.
+Baselines. We compare OPSA with representative on-policy training methods, including reinforcement learning with verifiable rewards (RLVR), such as GRPO (Shao et al., 2024); TestTime Reinforcement Learning (TTRL) (Zuo et al., 2026), which does not require external supervision; standard On-Policy Distillation (OPD) (Lu & Lab, 2025); and On-Policy Self-Distillation
+(OPSD) (Zhao et al., 2026), which replaces an external teacher with hints corresponding to questions. Table 1 summarizes the key properties of these methods. OPSA combines their desirable
+characteristics: it provides dense token-level learning signals while requiring neither verifiable rewards, external teacher models, nor auxiliary hints.
+Implementation Details. We implement OPSA using the slime (Zhu et al., 2025) framework and
+optimize the objective in Eq. 5. The loss is computed only over the 20% of policy-sampled tokens
+with the lowest log-probabilities. All experiments are conducted on 8 NVIDIA H100 or H200 GPUs.
+5.2
+
+M AIN R ESULTS
+
+OPSA Consistently Improves Different Models. Table 2 demonstrates that OPSA consistently
+improves performance across model families, scales, and reasoning modes. For the Qwen3 series,
+OPSA more than doubles Avg@32 on every mathematical reasoning benchmark. In particular, for
+Qwen3-1.7B, it yields relative improvements of 263% on AIME24 and AIME25 and 307% on
+HMMT25. The gains remain substantial on the stronger Qwen3.5-9B, where OPSA further improves Avg@32 by 11.46 points on AIME24 and 22.92 points on HMMT25. We observe the same
+9
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+Methods
+
+AIME24
+avg@32 pass@32
+
+AIME25
+avg@32 pass@32
+
+HMMT25
+avg@32 pass@32
+
+Average
+avg@32 pass@32
+
+Qwen3-1.7B
++ GRPO
++ TTRL
++ OPD
++ OPSD
++ OPSA
+∆=OPSA-RLbest
+
+13.44
+33.96
+19.90
+32.08
+33.33
+48.85
++14.89
+
+40.00
+70.00
+30.00
+73.33
+73.33
+80.00
++6.67
+
+9.69
+25.31
+9.79
+20.52
+22.50
+35.31
++10.00
+
+30.00
+50.00
+30.00
+50.00
+53.33
+66.67
++13.34
+
+5.73
+15.10
+5.73
+13.85
+14.90
+23.33
++8.23
+
+23.33
+43.33
+23.33
+40.00
+43.33
+50.00
++6.67
+
+9.62
+24.79
+11.81
+22.15
+23.58
+35.83
++11.04
+
+31.11
+54.44
+27.78
+54.44
+56.67
+65.56
++8.89
+
+Qwen3-1.7BThinking
++ OPSA
+
+46.56
+52.50
+
+80.00
+83.33
+
+36.25
+42.79
+
+73.33
+73.33
+
+22.92
+26.85
+
+60.00
+60.00
+
+35.24
+40.71
+
+71.11
+72.22
+
+Table 3: Comparison of different on-policy RL methods on Qwen3-1.7B.
+consistent trend on two Olmo3-7B variants, despite their substantially different baseline performance, with OPSA improving Avg@32 and Pass@32 across nearly all benchmarks. OPSA also
+consistently improves Pass@32. Across the Qwen3 series, relative gains range from 47% to 122%.
+Even for stronger models with near-saturated Pass@32, such as Qwen3.5-9B and Olmo3-7BTK ,
+OPSA maintains or further improves Pass@32, including gains of 6.66 points on HMMT25 for
+Qwen3.5-9B and 10.00 points for Olmo3-7BTK . These results demonstrate that OPSA remains
+effective across models with substantially different initial capabilities.
+OPSA Outperforms Baselines Using Zero External Supervision. We compare OPSA with several representative on-policy RL baselines. For clarity, TTRL performs test-time training directly
+on AIME24, and we evaluate its best checkpoint; OPD uses Qwen3-4B-Instruct as the teacher
+model. As shown in Table 3, OPSA consistently outperforms all baselines in both Avg@32 and
+Pass@32 while requiring no external supervision. Averaged across the three benchmarks, OPSA
+surpasses the best baseline by 11.04 points in Avg@32 and 8.89 points in Pass@32. Although
+TTRL is also free from external supervision, its self-consistency-based training tends to sharpen the
+policy distribution around a local optimum, substantially degrading Pass@k. OPSD removes the
+external teacher by conditioning the student policy on additional hints to construct a teacher distribution. However, we find that it yields meaningful gains only when thinking mode is disabled for the
+student but enabled for the teacher, thereby creating a substantial distributional mismatch at the first
+token position. OPD and GRPO, two widely adopted post-training methods, achieve comparable
+overall performance. As shown in Table 7 in Appendix B.3, OPD, OPSD, and OPSA require fewer
+rollout generations during training and are therefore substantially more efficient than GRPO.
+Generalization of OPSA. To evaluate its out-of-domain generalization, we further test the models on the code-generation benchmark MBPP+ and general Q&A benchmark GPQA-Diamond. As
+shown in Table 2, OPSA consistently improves both tasks across different models, demonstrating its ability to generalize beyond the training domain. Additionally, we disable thinking mode
+(enable thinking=false) during the OPSA training on Qwen models. Table 3 also reports
+performance when thinking mode is enabled at inference time. Interestingly, with thinking mode
+disabled, the OPSA model achieves performance comparable to that of the base model with thinking mode enabled, suggesting that OPSA shifts the policy toward longer-form reasoning behaviors.
+Enabling thinking mode for the OPSA model yields further improvements, demonstrating that the
+gains from OPSA remain complementary to the model’s native thinking capability.
+5.3
+5.3.1
+
+M ORE A NALYSIS AND A BLATION
+OPSA E LICITS R EFLECTIVE L ONG -F ORM R EASONING
+
+Section 4.3 shows that, at high-entropy positions, OPSA redistributes probability mass among head
+tokens rather than concentrating it on a single prediction. Such positions often correspond to “fork”
+tokens in the chain of thought (Wang et al., 2026c; Zhang et al., 2026b), where different tokens
+may initiate distinct reasoning branches. Fig. 7(a) shows that the response length increases steadily
+throughout OPSA training. To better understand this change, we compare the frequency of reflective
+tokens in reasoning trajectories before and after training. As shown in Fig. 7(b), the OPSA-trained
+10
+
+1.7B
+
+104
+
+4B
+
+9k
+6k
+3k
+0
+
+0
+
+200
+
+103
+
+4B Base
+4B OPSA
+
+102
+101
+100
+10−1
+10−2
+
+400
+
+1.7B Base
+1.7B OPSA
+
+Avg@4 on AIME (%)
+
+12k
+
+September 25, 2026
+
+Counts / Response
+
+Training Rollout Length
+
+On-Policy Self-Adaptation
+
+Training Steps
+(a) Rollout length during training
+
+wait
+
+but
+
+perhaps alternatively
+Token
+(b) Reflective token count
+
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+1.7B (r = 0.88)
+4B (r = 0.82)
+
+5k
+
+10k
+15k
+20k
+Response Length
+(c) Length accuracy relationship
+
+Figure 7: OPSA elicits long-form reasoning by generating more reflective tokens compared to base
+models. Moreover, AIME24 Avg@4 performance increases positively with response length.
+model produces substantially more reflective expressions, indicating more frequent reflection and
+self-correction during reasoning. We further observe a clear positive correlation between response
+length and answer accuracy. Together, these findings suggest that OPSA promotes exploration at
+high-entropy forks, leading the model toward longer and potentially more productive reasoning
+branches characterized by increased reflection and self-correction.
+
+Response Length
+
+Avg@4 on AIME24
+
+2k
+20
+Performance Drops When Fork Tokens Are Masked.
+To validate whether OPSA’s gains primarily arise from
+1.5k
+15
+probability redistribution at fork tokens in the chain of
+thought, we conduct an ablation study by masking fork
+1k
+10
+positions whose head-token sets contain reflective words,
+thereby excluding these positions from training. As
+0.5k
+5
+shown in Fig. 8, masking these fork tokens largely elimResponse Length
+inates the increases in both response length and accuracy
+Avg@4 on AIME24
+0
+0
+observed under OPSA. Moreover, the response length
+0
+50 100 150 200 250 300
+collapses at approximately 300 training steps. These reTraining Steps
+sults demonstrate that applying OPSA at fork positions
+suppresses low-probability tail tokens while redistribut- Figure 8: Training dynamics of OPSA
+ing probability mass among competing head tokens. This when masking fork tokens.
+encourages the policy to explore longer and more reflective reasoning branches, which appears to be a major source of its performance improvement. More
+details are given in Appendix B.3.
+
+0.8
+
+fork tokens
+
+longer response more fork tokens
+greater response diversity
+
+(a) Tree-Style Reasoning Pattern
+
+0.7
+0.6
+
+1.7B
+4B
+9B
+
+512
+
+1024 2048 4096
+Response Length
+
+Base
+OPSA
+
+Full
+
+(b) Pairwise 4-gram Jaccard Distance
+
+Jaccard Distance
+
+OPSA D OESN ’ T H URT M ODELS ’ D IVERSITY
+Pairwise Jaccard Distance
+
+5.3.2
+
+0.00
+0.05
+0.10
+0.15
+0.20
+
+1.7B
+4B
+9B
+
+512
+
+1024 2048 4096
+Response Length
+
+Full
+
+(c) Jaccard Distance
+
+Figure 9: Diversity analysis of OPSA. (a) As reasoning length increases, more opportunities for
+branching arise. At each fork, OPSA distributes probability more evenly across alternative tokens,
+allowing multiple sampling to explore different reasoning paths and thereby increasing response
+diversity. (b–c) Jaccard-distance comparisons on AIME24 before and after OPSA training, using 32
+sampled responses per problem.
+Although the analysis in Section 4.3 shows that OPSA sharpens the overall token distribution, particularly at low-entropy positions, it redistributes probability mass among competing head tokens at
+11
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+high-entropy fork positions. This mechanism allows OPSA to preserve response diversity in longform reasoning. We quantify diversity using Jaccard distance (JD) (Broder, 1997; Wang & Wan,
+2018), where lower values indicate greater similarity between responses. Fig. 9 reports JD for the
+base and OPSA-trained models across different response lengths. As the number of generated tokens
+increases, the JD gap between the two models gradually narrows and eventually approaches zero, indicating that OPSA preserves a level of long-form response diversity comparable to that of the base
+model. This result suggests that OPSA continues to explore alternative reasoning branches at successive fork positions, producing the branching, tree-like reasoning patterns illustrated in Fig. 9(a)
+without causing diversity collapse. The Pass@32 results in Table 2 provide further evidence that
+OPSA-induced distribution sharpening neither restricts the policy’s exploration space nor degrades
+its pass@k performance.
+A BLATION S TUDY OF T HE F RACTION OF T RAINED T OKENS
+
+We have examined the advantage-assignment scheme
+of OPSA in Section 3.2, where negative advantages
+positively correlated with token entropy yield the
+strongest improvement. Here, we ablate the proportion
+of low-log-probability tokens used for training. Fig. 10
+reports the Avg@4 training curves when OPSA is applied to the lowest 10%, 20% (ours), 30%, and 40% of
+tokens ranked by their on-policy log-probabilities.
+
+Avg@4 on AIME24 (%)
+
+5.3.3
+
+60
+
+Lowest 10%
+Lowest 20%
+Lowest 30%
+Lowest 40%
+
+50
+40
+30
+20
+10
+0
+
+0
+
+100
+
+200
+
+300
+
+400
+
+500
+
+Training on only the bottom 10% performs substanTraining Steps
+tially worse than the other settings. We find that these
+tokens consist almost entirely of low-probability tail Figure 10: Ablation study of OPSA with
+tokens outside the top-1 prediction. Applying nega- different training token ratios.
+tive advantages exclusively to them over-sharpens the
+policy distribution and causes a pronounced entropy
+decrease, thereby limiting further improvement. In contrast, the 20%, 30%, and 40% settings all
+increase Avg@4 to above 45. These results indicate that OPSA is not highly sensitive to the exact
+token-selection ratio and that training on only the bottom 20% of sampled tokens is sufficient to
+achieve substantial gains.
+
+6
+
+R ELATED W ORKS
+
+Supervision Signals in On-Policy Distillation. OPD optimizes a student policy on its selfgenerated trajectories. GKD (Agarwal et al., 2024) combines student-generated and supervised
+trajectories under flexible divergence objectives, while MiniLLM (Gu et al., 2024) adopts reverseKL distillation to reduce exposure bias. More recently, Lu & Lab (2025) improve OPD efficiency
+for reasoning tasks using the K1 estimator. Another line of work (Zhao et al., 2026; Shenfeld
+et al., 2026; Hübotter et al., 2026) replaces the external teacher with the same policy conditioned
+on additional hints, yielding on-policy self-distillation (OPSD). However, OPSD retains the OPD
+training paradigm, leaving unresolved whether the constructed teacher can provide reliable supervision on student-generated trajectories (Kaur et al., 2026). Recent studies aim to avoid potential
+training noise in OPD through token selection (Xu et al., 2026; Fu et al., 2026) or fine-grained credit
+assignment (Xing et al., 2026; Xie et al., 2026; Hou et al., 2026), but still rely on external supervision. In contrast, we investigate the source of OPD’s gains and propose OPSA, which enables
+self-improvement without external supervision.
+Label-Free Policy Improvement. Label-free training enables a policy to improve using signals
+derived from the model itself, without external supervision. Self-rewarding methods (Yuan et al.,
+2024; Ding & Zhang, 2026) use an LLM-as-a-Judge (Zheng et al., 2023) to score the model’s own
+responses and construct reward signals. TTRL (Zuo et al., 2026) and EMPO (Zhang et al., 2026a) instead infer pseudo-gold answers from GRPO rollouts through majority voting or clustering, and then
+use them for reward assignment. Intuitor (Zhao et al., 2025b) adopts self-certainty, using trajectorylevel entropy as a reward to encourage the policy toward more confident outputs. However, these
+methods depend heavily on the policy’s initial capability. If the correct answer does not lie near a
+mode of the policy distribution, coarse trajectory-level rewards may reinforce an incorrect mode,
+12
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+causing the policy to become increasingly overconfident and ultimately leading to a collapse in
+Pass@k. In contrast, OPSA does not force the policy to converge toward any self-generated reward
+signal. Instead, it provides finer-grained token-level learning signals through entropy-adaptive negative advantages, simultaneously improving precision at low-entropy positions and exploration at
+high-entropy fork tokens, thereby enhancing the policy’s overall reasoning capability.
+
+7
+
+C ONCLUSION
+
+The central contribution of this work is a systematic investigation into the source of performance
+gains in OPD. We find that much of OPD’s improvement can be reproduced without teacher supervision by assigning fixed negative advantages to low-probability tokens, while scaling these advantages according to token-level entropy further enhances performance. Building on these findings, we
+introduce On-Policy Self-Adaptation (OPSA), an external-supervision-free framework that enables
+policy self-improvement through entropy-adaptive negative advantages.
+Our analysis shows that OPSA suppresses low-probability tail tokens while redistributing probability mass among competing head tokens. This adaptively sharpens the overall token distribution, improving prediction confidence at low-entropy positions while preserving exploration at high-entropy
+reasoning forks. As a result, OPSA encourages longer and more reflective reasoning trajectories,
+leading to substantial improvements in both Avg@32 and Pass@32.
+Notably, OPSA outperforms OPD without teacher supervision while exhibiting similar training dynamics, including response-length growth. This observation calls for a reexamination of the mechanism underlying OPD with the K1 estimator: its gains may arise not only from making the student
+imitate a stronger teacher, but also from reshaping the student policy’s own probability distribution.
+More broadly, our results show that the policy’s internal token-level uncertainty can itself provide
+an effective fine-grained learning signal for on-policy self-improvement, without rewards, reference
+answers, or teacher-provided supervision.
+
+R EFERENCES
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu
+Geist, and Olivier Bachem. On-policy distillation of language models: Learning from selfgenerated mistakes. In International Conference on Learning Representations, volume 2024,
+pp. 21246–21263, 2024.
+Andrei Z Broder. On the resemblance and containment of documents. In Proceedings. Compression
+and Complexity of SEQUENCES 1997 (Cat. No. 97TB100171), pp. 21–29. IEEE, 1997.
+Kenneth P Burnham and David R Anderson. Kullback-leibler information as a basis for strong
+inference in ecological studies. Wildlife research, 28(2):111–119, 2001.
+Hardy Chen, Haoqin Tu, Fali Wang, Hui Liu, Xianfeng Tang, Xinya Du, Yuyin Zhou, and Cihang
+Xie. Sft or rl? an early investigation into training r1-like reasoning large vision-language models.
+arXiv preprint arXiv:2504.11468, 2025.
+Tianzhe Chu, Yuexiang Zhai, Jihan Yang, Shengbang Tong, Saining Xie, Dale Schuurmans, Quoc V
+Le, Sergey Levine, and Yi Ma. Sft memorizes, rl generalizes: A comparative study of foundation
+model post-training. arXiv preprint arXiv:2501.17161, 2025.
+Yi Ding and Ruqi Zhang. Sherlock: Self-correcting reasoning in vision-language models. Advances
+in Neural Information Processing Systems, 38:101638–101672, 2026.
+Yi Ding, Ziliang Qiu, Bolian Li, and Ruqi Zhang. Learning self-correction in vision–language
+models via rollout augmentation. In Forty-third International Conference on Machine Learning,
+2026.
+Yuqian Fu, Haohuan Huang, Kaiwen Jiang, Jiacai Liu, Zhuo Jiang, Yuanheng Zhu, and Dongbin
+Zhao. Revisiting on-policy distillation: Empirical failure modes and simple fixes. arXiv preprint
+arXiv:2603.25562, 2026.
+13
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+GLM-5-Team, :, Aohan Zeng, Xin Lv, Zhenyu Hou, Zhengxiao Du, Qinkai Zheng, Bin Chen,
+Da Yin, Chendi Ge, Chenghua Huang, Chengxing Xie, Chenzheng Zhu, Congfeng Yin, Cunxiang
+Wang, Gengzheng Pan, Hao Zeng, Haoke Zhang, Haoran Wang, Huilong Chen, Jiajie Zhang, Jian
+Jiao, Jiaqi Guo, Jingsen Wang, Jingzhao Du, Jinzhu Wu, Kedong Wang, Lei Li, Lin Fan, Lucen
+Zhong, Mingdao Liu, Mingming Zhao, Pengfan Du, Qian Dong, Rui Lu, Shuang-Li, Shulin Cao,
+Song Liu, Ting Jiang, Xiaodong Chen, Xiaohan Zhang, Xuancheng Huang, Xuezhen Dong, Yabo
+Xu, Yao Wei, Yifan An, Yilin Niu, Yitong Zhu, Yuanhao Wen, Yukuo Cen, Yushi Bai, Zhongpei
+Qiao, Zihan Wang, Zikang Wang, Zilin Zhu, Ziqiang Liu, Zixuan Li, Bojie Wang, Bosi Wen, Can
+Huang, Changpeng Cai, Chao Yu, Chen Li, Chengwei Hu, Chenhui Zhang, Dan Zhang, Daoyan
+Lin, Dayong Yang, Di Wang, Ding Ai, Erle Zhu, Fangzhou Yi, Feiyu Chen, Guohong Wen, Hailong Sun, Haisha Zhao, Haiyi Hu, Hanchen Zhang, Hanrui Liu, Hanyu Zhang, Hao Peng, Hao
+Tai, Haobo Zhang, He Liu, Hongwei Wang, Hongxi Yan, Hongyu Ge, Huan Liu, Huanpeng Chu,
+Jia’ni Zhao, Jiachen Wang, Jiajing Zhao, Jiamin Ren, Jiapeng Wang, Jiaxin Zhang, Jiayi Gui,
+Jiayue Zhao, Jijie Li, Jing An, Jing Li, Jingwei Yuan, Jinhua Du, Jinxin Liu, Junkai Zhi, Junwen
+Duan, Kaiyue Zhou, Kangjian Wei, Ke Wang, Keyun Luo, Laiqiang Zhang, Leigang Sha, Liang
+Xu, Lindong Wu, Lintao Ding, Lu Chen, Minghao Li, Nianyi Lin, Pan Ta, Qiang Zou, Rongjun
+Song, Ruiqi Yang, Shangqing Tu, Shangtong Yang, Shaoxiang Wu, Shengyan Zhang, Shijie Li,
+Shuang Li, Shuyi Fan, Wei Qin, Wei Tian, Weining Zhang, Wenbo Yu, Wenjie Liang, Xiang
+Kuang, Xiangmeng Cheng, Xiangyang Li, Xiaoquan Yan, Xiaowei Hu, Xiaoying Ling, Xing Fan,
+Xingye Xia, Xinyuan Zhang, Xinze Zhang, Xirui Pan, Xu Zou, Xunkai Zhang, Yadi Liu, Yandong Wu, Yanfu Li, Yidong Wang, Yifan Zhu, Yijun Tan, Yilin Zhou, Yiming Pan, Ying Zhang,
+Yinpei Su, Yipeng Geng, Yong Yan, Yonglin Tan, Yuean Bi, Yuhan Shen, Yuhao Yang, Yujiang
+Li, Yunan Liu, Yunqing Wang, Yuntao Li, Yurong Wu, Yutao Zhang, Yuxi Duan, Yuxuan Zhang,
+Zezhen Liu, Zhengtao Jiang, Zhenhe Yan, Zheyu Zhang, Zhixiang Wei, Zhuo Chen, Zhuoer Feng,
+Zijun Yao, Ziwei Chai, Ziyuan Wang, Zuzhou Zhang, Bin Xu, Minlie Huang, Hongning Wang,
+Juanzi Li, Yuxiao Dong, and Jie Tang. Glm-5: from vibe coding to agentic engineering, 2026.
+URL https://arxiv.org/abs/2602.15763.
+Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. Minillm: Knowledge distillation of large
+language models. In International Conference on Learning Representations, volume 2024, pp.
+32694–32717, 2024.
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu
+Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in llms via
+reinforcement learning. arXiv preprint arXiv:2501.12948, 2025.
+Yuhang He, Haodong Wu, Siyi Liu, Hongyu Ge, Hange Zhou, Keyi Wu, Zhuo Zheng, Qihong Lin,
+Zixin Zhong, and Yongqi Zhang. Where hindsight credit can reside: A signed-capacity view of
+token updates in rlvr. arXiv preprint arXiv:2604.11056, 2026.
+Wenjin Hou, Shangpin Peng, Weinong Wang, Zheng Ruan, Yue Zhang, Zhenglin Zhou, Mingqi
+Gao, Yifei Chen, Kaiqi Wang, Hongming Yang, et al. Uni-opd: Unifying on-policy distillation
+with a dual-perspective recipe. arXiv preprint arXiv:2605.03677, 2026.
+Jonas Hübotter, Frederike Lübeck, Lejs Behric, Anton Baumann, Marco Bagatella, Daniel Marta,
+Ido Hakimi, Idan Shenfeld, Thomas Kleine Buening, Carlos Guestrin, et al. Reinforcement learning via self-distillation. arXiv preprint arXiv:2601.20802, 2026.
+Nan Jia, Haojin Yang, Xing Ma, Jiesong Lian, Shuailiang Zhang, Weipeng Zhang, Ke Zeng, Xunliang Cai, and Zequn Sun. Asymmetric on-policy distillation: Bridging exploitation and imitation
+at the token level. arXiv preprint arXiv:2605.06387, 2026.
+Simran Kaur, Narutatsu Ri, Yinghui He, Liam Fowl, and Sanjeev Arora. Rethinking on-policy
+self-distillation for thinking models. arXiv preprint arXiv:2607.05184, 2026.
+Jiawei Liu, Chunqiu Steven Xia, Yuyao Wang, and Lingming Zhang. Is your code generated by chatgpt really correct? rigorous evaluation of large language models for code generation. Advances
+in neural information processing systems, 36:21558–21572, 2023.
+Kevin Lu and Thinking Machines Lab. On-policy distillation. Thinking Machines Lab: Connectionism, 2025. doi: 10.64434/tml.20251026. https://thinkingmachines.ai/blog/on-policy-distillation.
+14
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+Wenhan Ma, Jianyu Wei, Liang Zhao, Hailin Zhang, Bangjun Xiao, Lei Li, Qibin Yang, Bofei Gao,
+Yudong Wang, Rang Li, et al. Mopd: Multi-teacher on-policy distillation for capability integration
+in llm post-training. arXiv preprint arXiv:2606.30406, 2026.
+Team Olmo, Allyson Ettinger, Amanda Bertsch, Bailey Kuehl, David Graham, David Heineman,
+Dirk Groeneveld, Faeze Brahman, Finbarr Timbers, Hamish Ivison, et al. Olmo 3. arXiv preprint
+arXiv:2512.13961, 2025.
+Guilherme Penedo, Anton Lozhkov, Hynek Kydlı́ček, Loubna Ben Allal, Edward Beeching,
+Agustı́n Piqueres Lajarı́n, Quentin Gallouédec, Nathan Habib, Lewis Tunstall, and Leandro von
+Werra. Codeforces. https://huggingface.co/datasets/open-r1/codeforces,
+2025.
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R Bowman. Gpqa: A graduate-level google-proof q&a benchmark. arXiv preprint arXiv:2311.12022, 2023.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300, 2024.
+Idan Shenfeld, Mehul Damani, Jonas Hübotter, and Pulkit Agrawal. Self-distillation enables continual learning. arXiv preprint arXiv:2601.19897, 2026.
+Qwen Team. Qwen3.5: Accelerating productivity with native multimodal agents, February 2026.
+URL https://qwen.ai/blog?id=qwen3.5.
+Bing Wang, Shaotian Yan, Chen Shen, Sinan Fan, Ximing Li, Rui Miao, Xiaosong Yuan, Zhanming
+Shen, Jieping Ye, et al. Backtracking when it strays: Mitigating dual exposure biases in llm
+reasoning distillation. arXiv preprint arXiv:2605.19433, 2026a.
+Haozhe Wang, Chao Qu, Zuming Huang, Wei Chu, Fangzhen Lin, and Wenhu Chen. Vl-rethinker:
+Incentivizing self-reflection of vision-language models with reinforcement learning. Advances in
+Neural Information Processing Systems, 38:30865–30891, 2026b.
+Ke Wang and Xiaojun Wan. Sentigan: Generating sentimental texts via mixture adversarial networks. In IJCAI, pp. 4446–4452, 2018.
+Shenzhi Wang, Le Yu, Chang Gao, Chujie Zheng, Shixuan Liu, Rui Lu, Kai Dang, Xiong-Hui Chen,
+Jianxin Yang, Zhenru Zhang, et al. Beyond the 80/20 rule: High-entropy minority tokens drive
+effective reinforcement learning for llm reasoning. Advances in Neural Information Processing
+Systems, 38:115452–115486, 2026c.
+Yan Xie, Sijie Zhu, Tiansheng Wen, Bo Chen, and Yifei Wang. On the position bias of on-policy
+distillation. arXiv preprint arXiv:2606.22600, 2026.
+Xingrun Xing, Haoqing Wang, Boyan Gao, Ziheng Li, and Yehui Tang. Trust region on-policy
+distillation. arXiv preprint arXiv:2606.01249, 2026.
+Yuanda Xu, Hejian Sang, Zhengze Zhou, Ran He, Zhipeng Wang, and Alborz Geramifard. Tip:
+Token importance in on-policy distillation. arXiv preprint arXiv:2604.14084, 2026.
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu,
+Chang Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint
+arXiv:2505.09388, 2025.
+Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weiping Wang, Jiaqi Wang, and Nan Duan. Self-distilled rlvr. arXiv preprint arXiv:2604.03128, 2026.
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian
+Fan, Gaohong Liu, Lingjun Liu, et al. Dapo: An open-source llm reinforcement learning system
+at scale. Advances in Neural Information Processing Systems, 38:113222–113244, 2026.
+15
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+Weizhe Yuan, Richard Yuanzhe Pang, Kyunghyun Cho, Xian Li, Sainbayar Sukhbaatar, Jing Xu,
+and Jason Weston. Self-rewarding language models. arXiv preprint arXiv:2401.10020, 2024.
+Yu Yue, Yufeng Yuan, Qiying Yu, Xiaochen Zuo, Ruofei Zhu, Wenyuan Xu, Jiaze Chen, Chengyi
+Wang, TianTian Fan, Zhengyin Du, et al. Vapo: Efficient and reliable reinforcement learning for
+advanced reasoning tasks. arXiv preprint arXiv:2504.05118, 2025.
+Qingyang Zhang, Haitao Wu, Changqing Zhang, Peilin Zhao, and Yatao Bian. Right question is
+already half the answer: Fully unsupervised llm reasoning incentivization. Advances in neural
+information processing systems, 38:67345–67372, 2026a.
+Ruixiang Zhang, Richard He Bai, Huangjie Zheng, Navdeep Jaitly, Ronan Collobert, and Yizhe
+Zhang. Embarrassingly simple self-distillation improves code generation. arXiv preprint
+arXiv:2604.01193, 2026b.
+Jiachen Zhao, Yiyou Sun, Weiyan Shi, and Dawn Song. Can aha moments be fake? towards quantifying decorative and true thinking in chain-of-thought. arXiv preprint arXiv:2510.24941, 2025a.
+Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover.
+Self-distilled reasoner: On-policy self-distillation for large language models. arXiv preprint
+arXiv:2601.18734, 2026.
+Xuandong Zhao, Zhewei Kang, Aosong Feng, Sergey Levine, and Dawn Song. Learning to reason
+without external rewards. arXiv preprint arXiv:2505.19590, 2025b.
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang,
+Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, et al. Judging llm-as-a-judge with mt-bench and
+chatbot arena. Advances in neural information processing systems, 36:46595–46623, 2023.
+Xinyu Zhu, Mengzhou Xia, Zhepei Wei, Wei-Lin Chen, Danqi Chen, and Yu Meng. The surprising effectiveness of negative reinforcement in llm reasoning. Advances in Neural Information
+Processing Systems, 38:126546–126573, 2026.
+Zilin Zhu, Chengxing Xie, Xin Lv, and slime Contributors. slime: An llm post-training framework
+for rl scaling. https://github.com/THUDM/slime, 2025. GitHub repository. Corresponding author: Xin Lv.
+Yuxin Zuo, Kaiyan Zhang, Li Sheng, Shang Qu, Ganqu Cui, Xuekai Zhu, Haozhan Li, Xinwei
+Long, Ermo Hua, Biqing Qi, et al. Ttrl: Test-time reinforcement learning. Advances in Neural
+Information Processing Systems, 38:131459–131483, 2026.
+
+16
+
+On-Policy Self-Adaptation
+
+A
+
+September 25, 2026
+
+L IMITATIONS AND F UTURE D IRECTIONS
+
+Due to limited computational resources, our experiments focus on relatively small models of up
+to 9B parameters. It therefore remains unclear whether OPSA scales effectively to larger models
+or mixture-of-experts architectures. Moreover, our analysis suggests that OPSA primarily operates
+by redistributing the policy’s existing probability mass. Its benefits may therefore be limited for
+heavily post-trained models whose output distributions are already overly sharp and exhibit very
+low entropy. Although OPSA requires no external annotations and can serve as a plug-and-play
+post-training method, it may not substantially expand the policy’s underlying exploration frontier,
+as reflected by the relatively modest improvements in thinking-mode Pass@k. A promising direction
+is to combine OPSA’s fine-grained negative-advantage assignment with other reinforcement learning
+methods to further improve policy exploration. In addition, OPSA outperforms OPD without teacher
+supervision while exhibiting similar training dynamics, including response-length growth. This
+finding calls for a reexamination of the mechanism underlying OPD with the K1 estimator and
+motivates further theoretical analysis to identify the true source of OPD’s performance gains.
+
+B
+
+E XPERIMENTAL D ETAILS
+
+B.1
+
+T RAINING C ONFIGURATION
+Hyperparameter
+
+Value
+
+Framework
+Training engine
+Rollout engine
+GPUs
+Learning rate
+Rollout batch size
+n samples per prompt
+Enable Thinking
+Global batch size
+Training decoding
+Evaluation decoding
+Save & Evaluation frequency
+Checkpoint selection metric
+
+slime (0.2.4)
+Megatron (0.16.0rc0)
+SGLang (0.5.14)
+8xH100 GPUs
+1×10−6
+64
+1
+False
+64
+Temperature 1.0, top-k -1, top-p 1.0, max response length 12000
+Temperature 0.7, top-k 20, top-p 0.8, max response length 32768
+Save every 20 steps, validate every 20 steps
+Avg@4 on validation set
+
+Table 4: Training hyperparameters for OPSA.
+Models
+
+Default Thinking Mode
+
+Training Thinking Mode
+
+Hybrid
+Hybrid
+Hybrid
+Non-Thinking
+Thinking
+
+Non-Thinking
+Non-Thinking
+Non-Thinking
+Non-Thinking
+Thinking
+
+Qwen3-1.7B
+Qwen3-4B
+Qwen3.5-9B
+Olmo3-7B-Instruct
+Olmo3-7B-Think
+
+Table 5: Detailed training setting for different models.
+We provide the detailed OPSA training configuration in Table 4. For rollout during training, we
+adopt the default decoding parameters from the slime repository. For evaluation, we use the decoding parameters recommended in the Qwen3 model card. Following prior work (Zhao et al., 2026;
+Hou et al., 2026), we select the best checkpoint for each method based on Avg@4 performance. To
+avoid ambiguity arising from different reasoning modes across models, Table 5 summarizes each
+model’s default reasoning mode and the mode used for rollout generation during training.
+B.2
+
+E VALUATION C ONFIGURATION
+
+We provide the detailed evaluation configuration in Table 6. We use SGLang for inference, generate
+32 responses per prompt with thinking mode disabled, and report both Avg@32 and Pass@32.
+17
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+Hyperparameter
+
+Value
+
+Rollout engine
+Temperature
+Top-k
+Top-p
+Max new tokens
+Enable thinking
+Samples per prompt
+Metric
+
+SGLang (0.5.14)
+0.7
+20
+0.8
+32768
+False
+32
+Avg@32 & Pass@32
+
+Table 6: Evaluation hyperparameters for OPSA.
+B.3
+
+M ORE D ETAILS
+Training
+Step Time (s)
+
+Methods
+
+Inference
+Token Counts Time (s)
+
+Avg@32
+
+Qwen3-1.7B
++ GRPO
++ OPD
++ OPSA
+
+186.2
+61.2
+46.3
+
+4457
+19108
+15286
+23205
+
+1.78
+5.27
+5.73
+6.58
+
+13.44
+33.96
+32.08
+48.85
+
+Qwen3-4B
++ OPSA
+
+68.6
+
+8015
+20972
+
+3.31
+6.97
+
+23.33
+62.08
+
+Qwen3.5-9B
++ OPSA
+
+214.7
+
+6847
+9695
+
+5.29
+6.31
+
+76.35
+87.81
+
+Table 7: Training and inference overhead of OPSA compared to baselines.
+Training and Inference Overhead of OPSA. We compare the training and inference overhead of
+different methods in Table 7. OPSA and OPD train faster than GRPO because they do not require
+extensive rollout sampling to construct response groups. OPSA is even more efficient than OPD,
+as it neither deploys an additional teacher model nor performs forward passes through a larger and
+slower teacher. This allows more GPUs to be allocated to policy rollout and optimization. At
+inference time, OPSA steers the policy toward more reflective reasoning branches, producing longer
+responses while achieving higher accuracy.
+Reflective Word Set for Experiments in Fig. 8.
+experiments in Fig. 8 as follows:
+
+We list the detailed reflective word set used in
+
+Reflective Word Set
+"wait", "however", "but", "alternatively", "hmm", "perhaps",
+"check", "might", "actually"
+Following the standard OPSA training procedure, we first identify the 20% of token positions with
+the lowest student log-probabilities. At each selected position, we inspect the student’s top-5 candidate tokens. If any candidate belongs to the predefined reflective word set, we classify the position
+as a reflective fork and exclude it from the training objective.
+Jaccard Distance in Section 5.3.2. We measure response diversity using the pairwise Jaccard
+distance between sets of token-level 4-grams. For each response, we retain its first L tokens, where
+L ∈ {512, 1024, 2048, 4096, Full}, and denote the resulting set of unique 4-grams by G4 (r(≤L) ).
+The distance between two responses is defined as
+dJ (ri , rj ; L) = 1 −
+
+(≤L)
+
+) ∩ G4 (rj
+
+(≤L)
+
+) ∪ G4 (rj
+
+G4 (ri
+G4 (ri
+18
+
+(≤L)
+
+)
+
+(≤L)
+
+)
+
+.
+
+(6)
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+For each AIME24 problem, we average the distance over all response pairs among the R = 32
+sampled responses, and then report the macro-average over all P = 30 problems:
+P
+
+1 X
+2
+DJ (L) =
+P p=1 R(R − 1)
+
+X
+
+dJ (rp,i , rp,j ; L).
+
+(7)
+
+1≤i<j≤R
+
+A larger DJ (L) indicates greater response diversity. We additionally report the difference between
+OPSA and the base model as
+∆DJ (L) = DJOPSA (L) − DJBase (L).
+
+C
+
+A DDITIONAL R ESULTS
+
+C.1
+
+P ERFORMANCE OF T RAINING ON C ODE G ENERATION TASKS
+
+(8)
+
+In this section, we evaluate OPSA in a broader domain to further assess its applicability. Unlike the
+main experiments, which focus primarily on mathematical reasoning, we study OPSA training on
+code-generation tasks.
+Models and Datasets. We train OPSA on two model families with different reasoning modes,
+using Qwen3-4B in non-thinking mode and Olmo3-7B-Instruct. Training hyperparameters
+follow the settings described in Appendix B.1. We use Open-R1 Codeforces (Penedo et al., 2025) as
+the training dataset and select the best checkpoint based on MBPP+ validation performance. Final
+in-domain evaluation is conducted on LiveCodeBench v6 and HumanEval+, while out-of-domain
+generalization is evaluated on the mathematical reasoning benchmark AIME24 and the general
+question-answering benchmark GPQA-Diamond (Rein et al., 2023).
+Code (I.D.)
+Methods
+
+O.O.D.
+
+LCB v6
+avg@32 pass@32
+
+HumanEval+
+avg@32 pass@32
+
+AIME24
+avg@32 pass@32
+
+GPQAD
+avg@32
+
+Qwen3-4B
+w/ OPSA
+∆
+
+25.71
+37.57
++11.86
+↑ 46.1%
+
+37.14
+52.00
++14.86
+↑ 40.0%
+
+78.75
+85.79
++7.03
+↑ 8.9%
+
+93.90
+97.56
++3.66
+↑ 3.9%
+
+23.33
+28.96
++5.63
+↑ 24.1%
+
+56.67
+66.67
++10.00
+↑ 17.6%
+
+38.46
+41.04
++2.58
+↑ 6.7%
+
+Olmo3-7B-Instruct
+w/ OPSA
+∆
+
+24.14
+32.09
++7.95
+↑ 32.9%
+
+49.14
+55.43
++6.29
+↑ 12.8%
+
+81.52
+83.62
++2.10
+↑ 2.6%
+
+96.95
+98.17
++1.22
+↑ 1.3%
+
+54.48
+56.25
++1.77
+↑ 3.2%
+
+83.33
+86.67
++3.34
+↑ 4.0%
+
+34.12
+35.66
++1.54
+↑ 4.5%
+
+Table 8: Performance of OPSA across different models on in-domain code generation and out-ofdomain mathematical and general Q&A tasks.
+Main Results. Table 8 shows that OPSA consistently improves both in-domain code-generation
+performance and out-of-domain generalization across the two model families. On Qwen3-4B,
+OPSA improves Avg@32 by 11.86 points on LCB v6 and 7.03 points on HumanEval+, with
+corresponding Pass@32 gains of 14.86 and 3.66 points. Similar improvements are observed on
+Olmo3-7B-Instruct, where Avg@32 increases by 7.95 points on LCB v6 and 2.10 points on
+HumanEval+. These results demonstrate that OPSA remains effective when trained directly on codegeneration tasks. Interestingly, the gains also transfer beyond the training domain. On Qwen3-4B,
+OPSA improves AIME24 Avg@32 and Pass@32 by 5.63 and 10.00 points, respectively, and increases GPQA-Diamond Avg@32 by 2.58 points. Olmo3-7B-Instruct shows the same trend,
+with consistent improvements on both AIME24 and GPQA-Diamond. These results further demonstrate the robustness of OPSA across training domains, model families, and reasoning modes.
+C.2
+
+M ULTI -D OMAIN O N -P OLICY S ELF -A DAPATATION
+
+Multi-Teacher On-Policy Distillation (MOPD) (Ma et al., 2026) has been shown to enable effective
+capability merging during model post-training. In our previous experiments, we also found that
+19
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+Math
+Methods
+
+Qwen3-4B
+w/ OPSAmath
+w/ OPSAcode
+w/ MD-OPSA
+
+Code
+
+AIME24
+AIME25
+avg@32 pass@32 avg@32 pass@32
+
+HMMT25
+LCB v6
+HumanEval+
+avg@32 pass@32 avg@32 pass@32 avg@32 pass@32
+
+23.33
+62.08
+28.96
+66.77
+
+13.13
+37.40
+13.85
+36.88
+
+56.67
+83.33
+66.67
+83.33
+
+20.52
+58.44
+22.92
+60.83
+
+56.67
+83.33
+63.33
+80.00
+
+33.33
+60.00
+36.67
+70.00
+
+25.71
+27.95
+37.57
+36.09
+
+37.14
+45.71
+52.00
+56.00
+
+78.75
+83.35
+85.79
+84.96
+
+93.90
+96.34
+97.56
+98.78
+
+Table 9: Performance comparison of single-domain OPSA (OPSAmath and OPSAcode ) and multidomain OPSA (MD-OPSA) across math and code benchmarks. Bold and underlined values indicate
+the best and second-best results, respectively. Training and evaluation use non-thinking mode.
+OPSA trained on data from different domains achieves strong performance on both in-domain and
+out-of-domain evaluations. In particular, the substantial in-domain gains suggest that capability
+improvement may arise from reshaping the policy distribution through training on domain-specific
+data. This naturally raises a question: can we eliminate the domain-specific teacher models required
+by MOPD and instead achieve substantial multi-domain capability improvements by allowing the
+student policy to reshape its own distribution across data from different domains?
+To investigate this question, we introduce Multi-Domain On-Policy Self-Adaptation (MD-OPSA).
+MD-OPSA requires neither modifications to the training objective nor domain-specific routing or
+credit assignment. We simply randomly mix training data from different domains and optimize the
+policy using the same OPSA objective in Eq. 5. More specifically, we randomly sample an equal
+number of math and code-generation prompts from DAPO-17k and Open-R1 Codeforces, respectively, which are the same training datasets used in our previous experiments. We train Qwen3-4B
+on the mixed dataset, with non-thinking mode enabled for both training rollouts and evaluation.
+Table 9 compares MD-OPSA with OPSA trained separately on math and code data. As expected, single-domain training primarily improves performance within its own domain: OPSAmath
+yields substantial gains on mathematical reasoning, while OPSAcode performs best on several codegeneration metrics. In contrast, MD-OPSA successfully combines the benefits of both domains,
+achieving strong improvements across all math and code benchmarks without domain-specific teachers, routing, or credit assignment. Notably, MD-OPSA even surpasses the corresponding singledomain specialists on several metrics, including Avg@32 on AIME24 and AIME25 and Pass@32
+on LCB v6 and HumanEval+. On the remaining benchmarks, its performance remains close to
+the best single-domain model. These results suggest that simply mixing multi-domain data allows
+OPSA to reshape the student policy toward capabilities from multiple domains with little apparent
+interference, providing a simple teacher-free alternative for capability merging. Interestingly, the
+effects of distribution reshaping across domains may not be entirely orthogonal: adaptation on one
+domain can also provide transferable benefits to others, which may help explain the strong crossdomain performance of MD-OPSA.
+C.3
+
+C OMPARISON TO N EGATIVE S AMPLE R EINFORCEMENT
+Methods
+
+AIME24
+avg@32 pass@32
+
+AIME25
+avg@32 pass@32
+
+HMMT25
+avg@32 pass@32
+
+Average
+avg@32 pass@32
+
+Qwen3-1.7B
++ GRPO
++ NSR
++ OPSA
+
+13.44
+33.96
+32.08
+48.85
+
+9.69
+25.31
+24.17
+35.31
+
+5.73
+15.10
+16.15
+23.33
+
+9.62
+24.79
+24.13
+35.83
+
+40.00
+70.00
+73.33
+80.00
+
+30.00
+50.00
+60.00
+66.67
+
+23.33
+43.33
+43.33
+50.00
+
+31.11
+54.44
+58.89
+65.56
+
+Table 10: Comparison of different on-policy RL methods on Qwen3-1.7B.
+NSR (Zhu et al., 2026) decomposes RLVR trajectories into correct and incorrect samples and performs trajectory-level reinforcement learning with negative advantages. Specifically, it assigns a
+fixed negative advantage to every token in an incorrect trajectory, thereby improving exploration
+while maintaining stable policy entropy during training. The key distinction between OPSA and
+NSR is that OPSA requires no supervisory signal, including verifiable rewards. Instead, it assigns
+20
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+token-level negative advantages to low-log-probability tokens across all trajectories and dynamically modulates these advantages according to token entropy, enabling substantially finer-grained
+optimization. Combined with our analysis in Section 4.3, these results suggest that OPSA suppresses low-probability tail tokens and redistributes their probability mass more evenly among highprobability head tokens. This mechanism preserves accuracy at low-entropy positions while enhancing exploration at high-entropy fork tokens. As shown in Table 10, OPSA consistently outperforms
+both GRPO and NSR in single-sample accuracy and pass@k, validating the effectiveness of our approach. The results further demonstrate that applying negative advantages to low-probability tokens
+even within correct trajectories is important for improving model performance.
+C.4
+
+L OW E NTROPY C AN S TILL S UPPORT E FFECTIVE E XPLORATION
+GRPO
+
+0.4
+
+NSR
+
+0.3
+0.2
+0.1
+0.0
+
+100
+
+OPSA
+
+Pass@32 (%)
+
+Training Entropy
+
+0.5
+
+80
+60
+
+GRPO
+70.0 66.7
+
+NSR
+
+OPSA
+
+80.0
+
+50.0
+
+60.0
+
+66.7
+
+40
+
+43.3 40.0
+
+50.0
+
+20
+0
+
+100
+
+200
+Training Steps
+
+0
+
+300
+
+(a) Training Entropy
+
+AIME24
+
+AIME25
+
+HMMT25
+
+(b) Pass@32 Performance
+
+Figure 11: Training dynamics of different methods on Qwen3-1.7B and pass@32 performance.
+As shown in Figure 11, OPSA exhibits substantially lower training entropy than GRPO and NSR
+while consistently achieving higher pass@32 on AIME24, AIME25, and HMMT25. This result
+demonstrates that aggregate entropy alone is not a reliable indicator of a model’s exploration ability.
+Effective exploration depends more critically on how uncertainty is allocated across token positions. At high-entropy fork tokens, OPSA maintains a relatively balanced probability distribution
+among plausible head tokens, enabling the model to explore multiple promising reasoning branches.
+At low-entropy positions, it further concentrates probability mass on high-confidence tokens, improving sampling accuracy and preventing trajectories from entering implausible, low-confidence
+branches. Consequently, OPSA achieves lower overall entropy without sacrificing diversity and
+meaningful exploration at critical decision points, consistent with our analysis in Section 5.3.2.
+C.5
+
+P ERFORMANCE C OMPARISON U NDER S IMILAR T OKEN B UDGETS
+Methods
+Qwen3-1.7B
++ GRPO
++ GRPO (“wait”)
++ OPD
++ OPD (“wait”)
++ OPSA
+
+Token Counts
+
+Avg@32
+
+4457
+19108
+23261
+15286
+23472
+23205
+
+13.44
+33.96
+32.81
+32.08
+31.67
+48.85
+
+Table 11: AIME24 performance of different RL strategy on similar inference token budgets.
+To verify that OPSA’s gains are not merely a consequence of generating longer responses, we construct a token-budget-matched inference control for the GRPO and OPD baselines. Specifically, we
+first generate a baseline response, remove its terminal \boxed{} answer, append a single “wait”
+token to the remaining reasoning trace, and then resume decoding. A minimum generation-length
+constraint is applied so that the resulting responses approximately match the average response length
+of the OPSA-trained model. We evaluate the first complete \boxed{} answer produced after
+21
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+reaching the target token budget while keeping all other decoding settings unchanged. As shown in
+Table 11, allocating additional inference-time tokens does not improve the baselines, and OPSA continues to substantially outperform both GRPO and OPD under comparable response lengths. These
+results indicate that OPSA’s improvements cannot be explained by response length alone. Instead,
+they are consistent with OPSA reshaping the policy distribution to improve precision at low-entropy
+positions and encourage exploration at high-entropy positions, thereby steering generation toward
+more effective reflective reasoning branches.
+OPSA AS A C OLD -S TARTING FOR GRPO T RAINING
+0.07
+
+Response Length
+
+Training Entropy
+
+C.6
+
+0.06
+0.05
+0.04
+10
+
+20
+30
+40
+Training Steps
+(a) Training Entropy
+
+20000
+18000
+16000
+
+50
+
+0.96
+
+AIME24 Avg@4
+
+Training Reward
+
+0
+
+22000
+
+0.90
+0.84
+0.78
+0
+
+10
+
+20
+30
+40
+Training Steps
+(c) Training Reward
+
+0
+
+10
+
+20
+30
+40
+Training Steps
+(b) Response Length
+
+50
+
+0
+
+10
+
+20
+30
+40
+Training Steps
+(d) AIME24 Avg@4
+
+50
+
+0.72
+0.69
+0.66
+0.63
+0.60
+
+50
+
+Figure 12: Training dynamics of GRPO training started from the OPSA cold-starting 4B model.
+OPSA demonstrates strong effectiveness during post-training, improving both accuracy and Pass@k
+while preserving sampling diversity. In this section, we investigate whether OPSA, as an externalsupervision-free method, can serve as a “free-lunch” cold start before further RL training and enable
+additional performance gains. We conduct experiments on Qwen3-4B, using an OPSA checkpoint
+as the initialization and further training it with GRPO on DAPO-17k. Figure 12 reports the resulting
+training dynamics. On the validation set, Avg@4 continues to improve steadily, increasing by approximately 9 points after 40 training steps, while the training curve remains smooth without signs
+of collapse. These results suggest that OPSA can provide an effective cold start for subsequent RL
+training, further extending the model’s capabilities.
+OPSA E LICITS R EASONING C APABILITIES FROM AN I NSTRUCT M ODEL
+100
+
+Counts / Response
+
+Response Length
+
+16k
+12k
+8k
+4k
+0
+
+0
+
+40 80 120 160 200 240 280 320
+
+Training Steps
+(a) Training response length
+
+Base
+
+80
+
+OPSA
+
+60
+
+65
+60
+
+40
+
+55
+
+20
+0
+
+70
+
+AIME24 Avg@4
+
+C.7
+
+wait
+
+but perhaps alternatively
+
+Token
+(b) Reflective token count
+
+50
+
+0
+
+40 80 120 160 200 240 280 320
+
+Training Steps
+(c) Validation accuracy
+
+Figure 13: Training dynamics of OPSA on Olmo3-7B-Instruct
+Our previous analysis in Section 5.3.1 suggests that OPSA improves reasoning by steering the policy toward longer and more reflective reasoning branches. Since Qwen3 is a hybrid model with
+an explicit thinking mode, it remains unclear whether this behavior simply reflects the recovery of
+22
+
+On-Policy Self-Adaptation
+
+September 25, 2026
+
+reasoning patterns already encoded in the model. To examine whether OPSA can induce similar
+behavior beyond hybrid models, we further apply OPSA to Olmo3-7B-Instruct. As shown in
+Fig. 13, OPSA steadily increases response length together with validation accuracy, while substantially increasing the frequency of reflective tokens such as “wait” and “but”. These results suggest
+that OPSA does not merely recover a pre-existing thinking mode. Instead, by reshaping the policy
+distribution at high-entropy fork positions, it increases the likelihood of exploring reflective reasoning branches and can elicit stronger reasoning behavior even from an instruct model.
+T UNING I NFERENCE -T IME S AMPLING H YPERPARAMETERS C AN ’ T R EPLACE OPSA
+
+0.00
+
+13.6
+
+12.4
+
+10.8 14.3 10.5
+
+12.6
+
+10.8
+
+9.7
+
+9.3
+
+7.2
+
+5.6
+
+3.0
+
+2.2
+
+0.9
+
+0.8
+
+0.0
+
+0.02
+
+11.9
+
+12.3
+
+12.2
+
+12.4
+
+12.3
+
+11.2
+
+11.5
+
+11.8
+
+10.3
+
+11.6
+
+10.0
+
+10.8
+
+9.2
+
+10.4
+
+8.6
+
+5.6
+
+0.04
+
+12.2
+
+12.5
+
+12.2
+
+13.0
+
+12.0
+
+12.9
+
+12.3
+
+13.1
+
+10.8
+
+10.8
+
+10.9
+
+10.4
+
+9.6
+
+9.2
+
+10.3
+
+8.3
+
+0.06
+
+13.4
+
+12.1
+
+12.1
+
+10.9
+
+11.9
+
+12.0
+
+11.8
+
+12.0
+
+10.6
+
+11.4
+
+11.6
+
+11.4
+
+10.1
+
+11.2
+
+9.4
+
+9.8
+
+0.08
+
+13.5
+
+13.0
+
+12.7
+
+12.8
+
+12.9
+
+12.6
+
+12.2
+
+12.2
+
+11.1
+
+11.0
+
+12.5
+
+10.4
+
+11.5
+
+10.1
+
+9.8
+
+10.2
+
+0.10
+
+12.5
+
+12.3
+
+13.1
+
+13.8
+
+11.8
+
+12.6
+
+12.1
+
+11.7
+
+12.4
+
+13.1
+
+11.2
+
+12.0
+
+11.0
+
+10.8
+
+10.2
+
+11.5
+
+0.12
+
+12.7
+
+13.3
+
+12.8
+
+13.0
+
+12.4
+
+10.9
+
+11.2
+
+10.9
+
+12.4
+
+10.2
+
+11.8
+
+12.3
+
+10.4
+
+9.8
+
+10.3
+
+8.6
+
+0.14
+
+13.1
+
+11.4
+
+12.3
+
+12.4
+
+11.6
+
+12.0
+
+12.4
+
+12.4
+
+13.3
+
+12.0
+
+12.4
+
+10.1
+
+9.9
+
+11.9
+
+11.8
+
+11.6
+
+0.16
+
+12.7
+
+13.8
+
+11.8
+
+13.3
+
+14.2
+
+12.4
+
+12.7
+
+12.1
+
+12.6
+
+12.0
+
+13.1
+
+12.4
+
+12.2
+
+11.4
+
+12.6
+
+12.1
+
+0.18
+
+11.5
+
+12.3
+
+12.0
+
+11.5
+
+11.2
+
+12.5
+
+11.9
+
+13.9
+
+11.6
+
+12.3
+
+11.9
+
+12.0
+
+12.1
+
+11.0
+
+11.1
+
+11.7
+
+0.20
+
+12.6
+
+13.1
+
+12.7
+
+13.3
+
+13.0
+
+12.4
+
+12.2
+
+12.8
+
+12.0
+
+12.5
+
+11.8
+
+11.0
+
+12.7
+
+10.9
+
+10.7
+
+10.9
+
+15
+
+10
+
+min_p
+
+min_p
+
+C.8
+
+5
+
+0.00
+
+40.0
+
+46.7
+
+33.3 56.7 46.7
+
+43.3
+
+43.3
+
+40.0
+
+46.7
+
+36.7
+
+26.7
+
+13.3
+
+3.3
+
+3.3
+
+3.3
+
+0.0
+
+0.02
+
+40.0
+
+33.3
+
+36.7
+
+46.7
+
+40.0
+
+46.7
+
+43.3
+
+46.7
+
+43.3
+
+43.3
+
+40.0
+
+40.0
+
+43.3
+
+46.7
+
+33.3
+
+0.04
+
+43.3
+
+46.7
+
+36.7 56.7 43.3
+
+43.3
+
+36.7
+
+46.7
+
+43.3
+
+40.0
+
+40.0
+
+50.0
+
+43.3
+
+40.0
+
+43.3
+
+43.3
+
+0.06
+
+40.0
+
+40.0
+
+30.0
+
+33.3
+
+43.3
+
+46.7
+
+40.0
+
+46.7
+
+30.0
+
+46.7
+
+43.3
+
+33.3
+
+43.3
+
+43.3
+
+43.3
+
+40.0
+
+0.08
+
+46.7
+
+40.0
+
+40.0
+
+43.3
+
+53.3
+
+46.7
+
+43.3
+
+46.7
+
+40.0
+
+46.7
+
+40.0
+
+36.7
+
+46.7
+
+43.3
+
+46.7
+
+40.0
+
+0.10
+
+40.0
+
+36.7
+
+40.0
+
+36.7
+
+36.7
+
+43.3
+
+43.3
+
+50.0
+
+36.7
+
+53.3
+
+46.7
+
+46.7
+
+43.3
+
+53.3
+
+43.3
+
+46.7
+
+0.12
+
+40.0
+
+46.7
+
+46.7
+
+43.3
+
+43.3
+
+46.7
+
+43.3
+
+43.3
+
+43.3
+
+33.3
+
+46.7
+
+50.0
+
+36.7
+
+50.0
+
+46.7
+
+46.7
+
+0.14
+
+46.7
+
+40.0
+
+40.0
+
+36.7
+
+43.3
+
+40.0
+
+36.7
+
+53.3
+
+53.3
+
+46.7
+
+43.3
+
+36.7
+
+43.3
+
+50.0
+
+36.7
+
+53.3
+
+0.16
+
+33.3
+
+43.3
+
+43.3
+
+40.0
+
+40.0
+
+46.7
+
+40.0
+
+40.0
+
+46.7
+
+43.3
+
+43.3
+
+43.3
+
+40.0
+
+40.0
+
+50.0
+
+46.7
+
+0.18
+
+36.7
+
+36.7
+
+46.7
+
+36.7
+
+43.3
+
+43.3
+
+50.0
+
+46.7
+
+40.0
+
+46.7
+
+43.3
+
+46.7
+
+43.3
+
+46.7
+
+43.3 56.7
+
+0.20
+
+36.7
+
+46.7
+
+43.3
+
+36.7
+
+43.3
+
+50.0
+
+46.7
+
+43.3
+
+50.0
+
+46.7
+
+40.0
+
+36.7
+
+43.3
+
+40.0
+
+50.0
+
+50.0
+
+0.5
+
+0.6
+
+0.7
+
+0.8
+
+0.9
+
+1.0
+
+1.1
+
+1.2
+
+1.3
+
+1.4
+
+1.5
+
+1.6
+
+1.7
+
+1.8
+
+1.9
+
+2.0
+
+43.3
+
+0
+0.5
+
+0.6
+
+0.7
+
+0.8
+
+0.9
+
+1.0
+
+1.1
+
+1.2
+
+1.3
+
+1.4
+
+1.5
+
+1.6
+
+1.7
+
+1.8
+
+1.9
+
+2.0
+
+60
+
+40
+
+20
+
+0
+
+Temperature
+
+Temperature
+
+(a) avg@32 (%)
+
+(b) pass@32 (%)
+
+Figure 14: Results on AIME24 with Qwen3-1.7B in non-thinking mode under different min-p and
+temperature settings: (a) Avg@32 and (b) Pass@32. All values are percentages, and bold entries
+indicate the best result in each panel.
+Although tuning inference-time sampling parameters can also suppress low-probability tail tokens
+and redistribute sampling probability among head tokens, Fig. 14 shows that it cannot reproduce
+the gains of OPSA. We attribute this gap to two key differences. First, inference-time sampling
+applies a fixed transformation to the base policy at every decoding step without changing the underlying policy itself. However, the desired amount of tail suppression and head-token redistribution
+can vary substantially across token positions and reasoning states, making it difficult to determine a
+single optimal temperature or min-p value in advance. In contrast, OPSA adapts the magnitude of
+its updates according to the policy’s token-level uncertainty, enabling state-dependent distribution
+reshaping through training rather than relying on a globally fixed sampling rule. Second, OPSA
+performs this reshaping iteratively: each policy update changes the distribution from which subsequent trajectories are sampled, exposing new reasoning branches that can be further optimized.
+Such parameter updates can also generalize across contexts and alter the modes of the token distribution, while inference-time sampling continues to operate on the same underlying base-policy
+modes. Thus, although both approaches can suppress tail tokens, OPSA learns a new reasoning
+policy rather than merely sampling differently from the original one.
+
+23
+
+
