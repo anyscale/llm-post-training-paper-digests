@@ -4,7 +4,7 @@
 
 **Lens:** how training stages are ordered and combined — pretrain→SFT→preference→RL→distillation, multi-stage RL, self-play loops, warmup/anneal schedules, cross-stage data mixing — and the rationale behind each curriculum.
 
-**Coverage:** 67 of the 99 papers contribute substantive content on this lens; papers for which this lens was not a focus are omitted here and appear under their relevant topic files.
+**Coverage:** 94 of the 148 papers contribute substantive content on this lens; papers for which this lens was not a focus are omitted here and appear under their relevant topic files.
 
 ---
 
@@ -956,3 +956,381 @@ Pretraining is split into three stages: S1 Encoder Alignment (LLM frozen, vision
 **Key results:** Qwen3.5-Omni-Plus is SOTA across 215 audio/audio-visual benchmarks, beating Gemini-3.1 Pro on audio (FLEURS WER 6.6% vs 7.3%) with SEED-TTS WER 1.26.
 
 *Evolution:* Builds on Qwen2.5-Omni/Qwen3-Omni Thinker-Talker design, scaling native omnimodal training to hundreds of billions of parameters toward omni-agents that act and code.
+
+### The MiniMax-M2 Series: Mini Activations Unleashing Max Real-World Intelligence
+*2026 · report · `report_MiniMax-M2-Series_2605.26494.txt` · arXiv [2605.26494](https://arxiv.org/abs/2605.26494)*
+
+Pretraining extends context 8K→32K→192K and mixes high-quality and long-context data (code concatenation, long PDFs, document packing) into the decay phase. During decay, MTP grows from 1 to 3 modules by weight copying: the new heads first train with the main model frozen, then everything trains jointly. Post-training starts with an interleaved-thinking SFT cold start (chat, reasoning, code and cowork data built by rejection sampling), then runs multi-stage mixed-domain RL. Every RL stage draws reasoning, coding, agent and general data together. Across stages the mix shifts from reasoning/general toward agent/coding, context length grows per domain, and difficulty moves toward harder tasks. The stated aim is to avoid both forgetting and negative transfer between domains. The series iterates M2→M2.5→M2.7.
+
+- Pretrain context 8K→32K→192K; high-quality + long-context data mixed into decay.
+- MTP grown 1→3 modules during decay: frozen-trunk head training, then joint.
+- Interleaved-thinking SFT cold start → multi-stage mixed-domain RL.
+- Per-stage mix shifts toward agent/coding with longer context and harder tasks.
+
+**Key results:** M2.7 (~10B active) leads Multi-SWE-bench (52.7 vs 50.3 for Opus 4.6), scores 56.2 on SWE-bench Pro and a 66.6% MLE Bench Lite medal rate; M2→M2.7 lifts BrowseComp by 33.8 points.
+
+*Evolution:* Follows MiniMax-01/M1, keeping CISPO but dropping hybrid Lightning Attention for full attention, and moves post-training from reasoning RL toward agent-native RL over black-box scaffolds.
+
+### Solar Open 2 Technical Report
+*2026 · report · `report_Solar-Open-2_2607.20062.txt` · arXiv [2607.20062](https://arxiv.org/abs/2607.20062)*
+
+Pre-training has four stages: (1) selective weight transfer from Solar Open 1; (2) General Pre-training on 10T tokens; (3) Intensive Pre-training on the best 1T tokens, re-filtered at a higher quality threshold; (4) Length Expansion (~865B tokens) to 1M context with long documents, repo-level code, and injected reasoning/agent data. Stage 4 causes a performance drop, so four intermediate checkpoints are merged (the merge scores 0.745 on a 50+-metric PLM average). Post-training also has four stages: SFT covering reasoning and agent tasks, multi-domain RL with verifiable rewards on STEM-centered tasks, a Specialist stage that trains twelve domain teachers (SFT + domain RL) in parallel, and Multi-teacher On-Policy Distillation (MOPD) that consolidates them into one model. Office tasks use an expertise curriculum that progressively strips scaffolding from prompts.
+
+- Pretrain: weight transfer → 10T general → 1T intensive (stricter filter) → 1M length expansion.
+- Four-checkpoint merge offsets the Stage-4 performance drop.
+- Post-train: SFT → STEM RLVR → 12 parallel specialists → MOPD consolidation.
+- Office-task curriculum progressively removes prompt scaffolding.
+
+**Key results:** Solar Open 2 leads comparably sized open-weight models on MMLU-Pro (86.2) and LiveCodeBench v6 (92.4), tops the Korean average (85.4), and scores 86.8 on Ko-GDPval (Solar Open 1: 3.4); trails on SWE-Bench Verified (70.4 vs 73.0-73.8).
+
+*Evolution:* Scales Solar Open 1 into a Korean sovereign agentic model, adopting the specialist-then-on-policy-distillation consolidation of DeepSeek-V4/Nemotron/MiMo with exact full-vocabulary KL.
+
+### From RLVR to RLSVR: Task Transformation Induces Self-Verifiable Rewards for Open-Ended LLM Self-Improvement
+*2026 · rl · `rl_RLSVR_2607.23802.txt` · arXiv [2607.23802](https://arxiv.org/abs/2607.23802)*
+
+Not a staged pipeline but an RL self-play loop from Qwen3 models (Qwen3-4B-Instruct-2507 as the actor) run for 100 iterations. The key schedule alternates a Performing stage and a Detection stage, updating only one at a time. A hysteresis gate controls the switch: Detection→Performing when EMA detection accuracy is ≥0.9 and the N/A rate ≤0.1; back to Detection when the error rate is ≥0.4 or the N/A rate ≥0.5; each phase lasts at least 5 updates. Updating both roles jointly instead degrades math (5-benchmark average 42.4→35.3), while alternation raises it to 50.8.
+
+- Single self-play RL loop, 100 iterations, no SFT/preference stages.
+- Performing and Detection stages alternate; only one updates at a time.
+- Hysteresis gate on EMA accuracy / N/A / error rates; minimum 5 updates per phase.
+- Joint updating hurts math (42.4→35.3); alternation reaches 50.8.
+
+**Key results:** SpyRL beats R-Zero and Absolute Zero on every summarization and creative-writing benchmark, lifts Qwen3-4B math average 41.4→50.4, and beats a Qwen3.5-27B rubric-as-reward baseline (59.3% win on WritingPrompts) with no external verifier.
+
+*Evolution:* Extends proposer-solver self-play (Absolute Zero, R-Zero) to information-asymmetric multi-agent games, arguing verifiability can be engineered for open-ended generation rather than taken as a fixed task property.
+
+### Qwen-UI-Agent Technical Report: Toward Next-Generation Real-World Centric Foundation GUI Agents
+*2026 · report · `report_Qwen-UI-Agent_2607.28227.txt` · arXiv [2607.28227](https://arxiv.org/abs/2607.28227)*
+
+Training has three stages, SFT → Action RL → Online RL, wrapped in a data flywheel. Bootstrapping uses multiple rounds of rejection sampling (following MAI-UI) to build the initial SFT corpus; each later iteration evaluates the model, diagnoses failures, synthesizes targeted tasks and retrains. In SFT, one expert per domain (mobile, desktop, web, DeepSearch) trains mainly on its own domain plus a controlled cross-domain mix, and the experts are merged into one checkpoint. A small share of verified-correct, self-sampled general/math/code/tool data preserves general ability; questions the starting model already solves work better than ones it fails. Online RL uses a model-adaptive curriculum: an active pool holds intermediate-success tasks, unsolved tasks sit in a low-budget monitoring pool until they start succeeding, and mastered tasks are monitored and reactivated if performance drops.
+
+- SFT → Action RL → Online RL inside an evaluate-diagnose-synthesize flywheel.
+- Per-domain SFT experts with controlled cross-domain mix, then merged.
+- Self-sampled, already-solved general data preserves general ability.
+- Online RL pools: active (intermediate success), monitoring (unsolved), mastered (reactivated on regression).
+
+**Key results:** The 27B model sets mobile SOTA at 82.1% MobileWorld (vs Seed 2.1 Pro 73.2) and 92.2% MobileWorld-Real, reaching 73.6% WebArena and 79.5% OSWorld-Verified; Action RL lifts task SR >7% while cutting reasoning tokens 21.3%.
+
+*Evolution:* Continues MAI-UI and the 2026 native-GUI-agent wave (UI-TARS-2, GUI-Owl-1.5, EvoCUA), with an agent-driven flywheel pointing toward agents that partly build their own training curricula.
+
+### Frontis-MA1: Training an AI4AI Model towards Recursive Self-Improvement in Machine Learning Engineering
+*2026 · rl · `rl_Frontis-MA1_2607.28568.txt` · arXiv [2607.28568](https://arxiv.org/abs/2607.28568)*
+
+The pipeline is base model → execution-grounded full-parameter SFT warm start → online RL from sandbox execution feedback → deployment inside the OpenMLE-Evo search harness. SFT collection is budget-adaptive: each task stops sampling at an accepted-example quota or when its execution budget runs out, shifting verification compute toward sparse-success tasks. SFT runs 3 epochs at LR 3e-5 with cosine decay and 0.1 warmup, global batch 128, 32K context (SLIME + Megatron-LM). RL samples operators with fixed probabilities (Draft 0.50, Improve 0.17, Debug 0.17, Crossover 0.16) and selects parent states by F(p) = norm(reward) + norm(child-reward variance) + norm(visit-cooling), so training follows informative states rather than a fixed curriculum.
+
+- SFT warm start → online sandbox RL → deployment in the evolutionary harness.
+- Budget-adaptive SFT sampling shifts compute toward sparse-success tasks.
+- SFT: 3 epochs, LR 3e-5 cosine, 0.1 warmup, batch 128, 32K context.
+- RL parent selection by reward, child-reward variance and visit-cooling replaces a fixed curriculum.
+
+**Key results:** Under the same OpenMLE-Evo harness, post-training lifts Medal Average 39.39%→60.61% (Qwen3.6-35B-A3B); with OpenMLE-Evo-Max it reaches 71.21%, above GPT-5.5+Codex (68.18%).
+
+*Evolution:* Unites evolutionary MLE search (AIDE/AIRA), executable MLE environments and MLE-agent RL by training the same operators the inference-time evolution composes, as an open testbed toward AI4AI self-improvement.
+
+### Qwen-CUA: Native Computer Use for (almost) Everything
+*2026 · report · `report_Qwen-CUA_2608.02352.txt` · arXiv [2608.02352](https://arxiv.org/abs/2608.02352)*
+
+Training is iterative over several runs. In each run, failed SFT queries and weak domains drive teacher rerolls, new human trajectories and targeted data, which together form a refreshed SFT mixture. Every SFT run restarts from the same mid-training checkpoint rather than the previous agent, so gains transfer through data rather than through optimization drift. The new SFT model then calibrates the RL pool: from eight trial rollouts per query, tasks with 0 < successes < 8 are kept, and SAPO RL on that pool yields the next-iteration model. In the final RL run, held-out validation rose 0.734→0.770 and checkpoint 40 (update 800 of 1,000) was selected.
+
+- Iterative SFT-refresh → RL-calibration loop across generations.
+- Each SFT run restarts from the same mid-training checkpoint (data carries gains, not drift).
+- RL pool keeps tasks with 0 < successes < 8 of eight trials under the new SFT model.
+- OSWorld-Verified across generations: 38 → 46 → 62 → 73 → 86.2.
+
+**Key results:** Qwen-CUA reaches 86.2 OSWorld-Verified, above GPT-5.5 (78.7) and Claude Opus 4.8 (83.4), and cuts RedTeamCUA attack success 36.6→16.4; Qwen-CUA-Max reaches 87.6.
+
+*Evolution:* Continues the native screenshot-only agent line (UI-TARS, OpenCUA, Qwen3-VL) on CUA-Gym and SAPO, distinguished by an SFT-refresh/RL-calibration loop that always restarts SFT from mid-training.
+
+### Macaron-V1: Towards Open Continual Learning with Self-Improvement and Mixture-of-LoRA
+*2026 · method · `method_Macaron-MoL_2608.09819.txt` · arXiv [2608.09819](https://arxiv.org/abs/2608.09819)*
+
+Every model starts from a frozen pretrained base (GLM-5.2 744B for Venti, Qwen3.6-35B-A3B for Tall); only LoRA specialists are trained. The recursive self-improvement loop has three stages per generation: Discovery builds a harder task bank; Expansion runs tasks under a fixed model-plus-harness configuration and searches prompt/skill/tool/hook edits in "language space"; Update applies GRPO to the adapters from selected trajectories and registers the accepted harness configuration as the next generation's. Base, specialists and harness are released on separate schedules. The four specialists share one recipe — AdamW, LR 5e-6, batch 4, 4 epochs, linear-warmup cosine with 0.1 warmup — except Agent (1 epoch) and GenUI (batch 2, 1 epoch). Only one snapshot is released; gains across generations are not measured.
+
+- Frozen base; only LoRA specialists train.
+- Per-generation loop: Discovery → Expansion (harness search) → Update (GRPO on adapters).
+- Base, adapters and harness versioned on separate schedules.
+- Shared specialist recipe: LR 5e-6, 4 epochs, 0.1 warmup cosine (Agent/GenUI 1 epoch).
+
+**Key results:** Macaron-V1-Venti leads compared frontier models on ChatBench (58.3), UI4A-Bench (87.8 vs 75.9 for Opus 4.8) and TerminalBench 2.1 (87.6); Tall beats its base on all seven matched rows; MoL stores ~74% fewer parameters than four merged-base copies.
+
+*Evolution:* Shifts post-training from monolithic checkpoints toward an agent system with separately versioned base, adapters and harness, coupling harness search with adapter RL; compounding gains across generations are not yet shown.
+
+### Palmyra x6 Technical Report: An Agentic, Tool-Use Model Post-Trained via Anchored Supervised Fine-Tuning
+*2026 · report · `report_Palmyra-x6_2608.16620.txt` · arXiv [2608.16620](https://arxiv.org/abs/2608.16620)*
+
+A single offline post-training stage on an existing base, GLM-5.2 (744B total / ~40B active MoE), with no pretraining, no preference stage and no on-policy RL. Development used a matrix of 12 SFT/ASFT runs varying the objective, K (0.1 or 0.02), LR (5e-7 or 1e-6), batch (16 or 32), context (64K with CP2, or 32K) and data mix (12-dataset reasoning-trace, 10-dataset, a panel-pruned 240-trajectory subset, 8/9-dataset short-context mixes, and a broad mix at doubled batch), plus a zero-LR sanity run. The final run changes exactly two things — a newer base and the Muon optimizer — and trains one epoch with a 0.1 warmup fraction from LR 1e-8 and cosine decay 5e-7→5e-8.
+
+- Single anchored-SFT stage on GLM-5.2; no preference or RL stage.
+- 12-run ablation matrix over objective, K, LR, batch, context and data mix.
+- Zero-LR sanity run included as a control.
+- Final: 1 epoch, Muon, 0.1 warmup from 1e-8, cosine 5e-7→5e-8.
+
+**Key results:** Palmyra x6 beats the prior Writer Agent default on all six benchmarks (+0.320 MCP-Atlas, +0.305 FinanceBench), tops BFCL Core (0.785) and has the highest six-benchmark mean (0.765) against five frontier models.
+
+*Evolution:* Post-trains an existing open frontier MoE rather than training end to end, combining Anchored SFT with self-distillation and data minimalism to avoid eroding base capabilities and skipping RL entirely.
+
+### Apodex 1.1: Scaling Agentic Intelligence for Complex Work
+*2026 · report · `report_Apodex-1.1_2608.23283.txt` · arXiv [2608.23283](https://arxiv.org/abs/2608.23283)*
+
+Post-training is unified SFT followed by agentic RL inside a controlled capability-development loop. SFT variants are trained per major domain (general, agentic, coding) and model-soup merged into a single behavioral initialization for RL. RL then runs over environment and coordination trajectories, with batches mixing localized pivot continuations and unhinted full tasks. After each round, failed trajectories, benchmark errors and runtime failures are abstracted into capability gaps; a Task Pipeline turns these into new tasks and worlds that re-enter family-specific verification, and expert and user feedback decide the next allocation of training effort. The authors call this "self-evolution" but restrict it to this managed engineering loop. Pre-training and base-model details are not described.
+
+- Per-domain SFT variants (general/agentic/coding) model-soup merged as RL init.
+- Agentic RL over environment and coordination trajectories.
+- RL batches mix pivot continuations with unhinted full tasks.
+- Round-by-round gap → new tasks/worlds → re-verification loop steers training effort.
+
+**Key results:** With Agent Team, Apodex 1.1 leads its tables on FrontierFinance (54.3 vs 49.2) and FrontierScience-Research (63.3), improves APEX-Agents 16.5→38.5 and reaches GDPVal 78.8; trails on SWE-bench Verified (77.7 vs 92.2).
+
+*Evolution:* Extends Apodex 1.0's Agent Team toward long-horizon working agents, treating environment construction and multi-agent coordination as explicit scaling axes.
+
+### A.X K2 Technical Report
+*2026 · report · `report_A.X-K2_2608.30181.txt` · arXiv [2608.30181](https://arxiv.org/abs/2608.30181)*
+
+Pre-training follows a WSD schedule. Stage 1 trains 6.4T tokens at 4K context, ramping to a 2.2e-4 peak LR and 64M-token batch; Stage 2 trains 1.4T tokens of reasoning/STEM/synthetic data while the LR cosine-decays to 7e-5; Stage 3A extends to 32K (~0.22T, RoPE base 1e4→1e6), Stage 3B to 128K, and Stage 3C performs SGA sparse-attention adaptation on the same mix (3B+3C ~0.14T). Instruction-format data enters during pre-training, and the last six checkpoints are merged (WSM-style). Post-training runs an indexer SFT (0.4M samples, indexer KL 0.1), then main SFT on packed 128K sequences (LR 1.5e-5, batch 128) with the indexer frozen. Multi-stage RL follows: every stage jointly trains instruction following, preference and agentic tool use, safety joins in later stages, and the mix is re-weighted at each boundary around the weakest behaviors.
+
+- WSD pretrain: 6.4T @4K → 1.4T reasoning/STEM decay → 32K → 128K → sparse-attention adaptation.
+- Instruction data in pretraining; last six checkpoints merged.
+- Indexer SFT → main 128K SFT with frozen indexer.
+- Multi-stage joint RL; safety added late; mix re-weighted toward weakest behaviors.
+
+**Key results:** A.X K2 leads compared open-weight models on AIME26 (97.1), Apex (45.8, from 1.0), KMMLU-Pro (80.5) and tau2-Telecom (98.0), reaching IMO 2025 gold threshold on ~8.5T tokens; trails on Terminal Bench (36.0) and BrowseComp (9.3).
+
+*Evolution:* SK Telecom's successor to A.X K1, adding DeepSeek-V3.2/GLM-5-style indexer sparse attention with a simplified sparse-only warmup and replacing dual-track training with paired-response Think-Fusion and CISPO.
+
+### NeoHorse-1: Towards Recursive Self-Improvement via Agentic Post-Training with Routing Harness
+*2026 · method · `method_NeoHorse-1_2609.08183.txt` · arXiv [2609.08183](https://arxiv.org/abs/2609.08183)*
+
+SFT runs as a three-stage routing-guided curriculum: each stage holds roughly a third of the examples, ordered by a routing score (hard tier index k_i, or soft score s_i = Σ_k k·π_i,k over C0-C3), progressively adding higher-demand examples while reserving some low-score examples for later stages. Every example is used once per pass, with no optimizer or LR-schedule reset between stages. Routing-guided on-policy distillation follows with the same three-stage context allocation. Outside training, a capability-guided allocation step evaluates each checkpoint on a decontaminated stratified suite, builds a model-deficiency profile, and shifts the next mixture toward weak regions; the paper runs only one pass of this evaluation-selection-update loop.
+
+- Three-stage SFT curriculum ordered by router capability-demand score.
+- Low-score examples partly reserved for later stages; no optimizer/LR reset.
+- Routing-guided on-policy distillation reuses the three-stage allocation.
+- Deficiency-profile mixture update, run for a single loop iteration.
+
+**Key results:** Agentic post-training raises the 10-benchmark macro average 58.94→64.87 (4B) and 65.60→69.04 (9B); routing-harness data beats Toucan by +6.26 avg under a matched recipe.
+
+*Evolution:* Extends trajectory-SFT lines (FireAct, AgentTuning, Agent-FLAN) with on-policy distillation, using router capability-demand predictions as a cheap difficulty signal for curriculum ordering; compounding across loops is left open.
+
+### An Open Recipe for IMO Gold: Training Nemotron for Olympiad Mathematics
+*2026 · rl · `rl_Nemotron-IMO_2609.10712.txt` · arXiv [2609.10712](https://arxiv.org/abs/2609.10712)*
+
+Two independent specialists are branched from the Nemotron-3-Ultra 550B-A55B general-availability checkpoint rather than chained. One is long-context SFT: 426K max sequence, ~1.6K optimizer steps at global batch 64, peak LR 1.5e-5 with warmup over 1,024 samples and cosine decay to 2e-6, with step 1300 selected on 133 proof problems. The other is proof-generation RL started directly from GA. At test time a staged inference curriculum follows: round-1 ensemble generation, up to eight generate-verify-refine rounds, then a separate high-compute final-selection stage.
+
+- Parallel SFT and RL specialists branched from GA, not chained.
+- SFT: 426K context, ~1.6K steps, LR 1.5e-5 cosine to 2e-6.
+- RL proof generation starts directly from the GA checkpoint.
+- Inference: ensemble round 1 → up to 8 generate-verify-refine rounds → final selection.
+
+**Key results:** The natural-language system scored 30/42 at IMO 2026 (gold cutoff 29) within ~707M tokens and 1,464 GPU-hours; splitting round-1 budget across checkpoints beats doubling one (RL128+SFT64 159 vs RL256 139).
+
+*Evolution:* Follows the IMO 2025 natural-language gold results and DeepSeekMath-V2's generate-verify-refine line, contributing a fully open recipe, data and compute accounting.
+
+### DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression
+*2026 · report · `report_DeepSeek-V4.1-Flash_2609.19969.txt` · arXiv [2609.19969](https://arxiv.org/abs/2609.19969)*
+
+Pretraining runs from scratch with sparse attention at 64K, extends to 1M at 34T tokens, and cosine-decays the LR 2.6e-4→2.6e-5 over 28T-40T tokens. DeepSeek-ViT is trained beforehand with SigLIP on 47B pairs, then autoregressively on 236B tokens, and a DSpark drafter is trained on the frozen backbone after pretraining. Post-training follows the "standard" DeepSeek-V4 paradigm: SFT, then large-scale asynchronous RL, then a final full-vocabulary on-policy distillation stage over all domains from more than 40 heterogeneous teachers. RL is scaled across compute and scaffolds (Claude Code versions, OpenCode, Pi, DeepSeek Harness), and successive RL runs are re-initialized by merging checkpoints from different scaffolds or configurations. The Hierarchical Sparse Indexer, FP4 KV QAT and bounded-replay simulation are introduced during post-training.
+
+- Sparse-attention pretraining from scratch at 64K, extended to 1M at 34T tokens.
+- ViT pretrained separately; DSpark drafter trained on the frozen backbone.
+- SFT → async RL → full-vocabulary OPD from 40+ teachers.
+- Successive RL runs re-initialized from cross-scaffold checkpoint merges.
+
+**Key results:** With 16B active parameters, V4.1-Flash lifts DeepSWE 54.4→74.2 over V4-Flash and matches or beats Opus-5 on DeepSWE, Terminal-Bench 2.1 (89.1) and AutomationBench, with ~1/4 the global KV cache.
+
+*Evolution:* Refines DeepSeek-V4's sparse attention and OPD recipe, claiming post-training algorithms barely matter at this stage and gains come from scaling verifiable tasks, environments and scaffold diversity.
+
+### Qwen3.8-Omni: Towards Native Omni-Modal Agents
+*2026 · report · `report_Qwen3.8-Omni_2609.25611.txt` · arXiv [2609.25611](https://arxiv.org/abs/2609.25611)*
+
+Thinker pretraining runs four stages, all at a 262,144-token native length. S1 freezes the LLM (initialized from Qwen3.8-Next) and aligns the vision, AuT and Spatial AuT encoders, training the adapters first; S2 unfreezes everything on the 2.5T mix; S3 freezes the backbone and warms up the Qwen Sparse Attention (QSA) indexer with dense-attention supervision; S4 enables QSA and jointly trains backbone and indexer. Post-training has two stages: multi-teacher distillation of specialists into one student, then unified RL. Context is extended 256K→1M after post-training. The Talker has its own five stages: pretraining, CPT, per-language experts merged via MOPD, speaker fine-tuning, then RL.
+
+- Thinker pretrain: encoder alignment → full unfreeze (2.5T) → QSA indexer warmup → joint sparse training.
+- Post-train: multi-teacher specialist distillation → unified RL.
+- Context extended 256K→1M after post-training.
+- Talker: pretrain → CPT → MOPD-merged language experts → speaker FT → RL.
+
+**Key results:** Against Qwen3.5-Omni-Plus it raises the 29-eval audio/audio-visual/agent average by >25% while matching text-only Qwen3.8-Flash (SWE-bench Pro 63.3 vs 62.5); agentic evidence gathering lifts OmniVideoBench 63.4→67.8 with ~45.7% fewer tokens.
+
+*Evolution:* Succeeds Qwen3.5-Omni, moving the omni line toward long-horizon agentic productivity and following the 2026 pattern of consolidating specialist teachers via multi-teacher distillation before unified RL.
+
+### Hunyuan-A13B Technical Report
+*2026 · report · `report_Hunyuan-A13B_2609.27284.txt` · arXiv [2609.27284](https://arxiv.org/abs/2609.27284)*
+
+Pretraining is a 20T-token foundation stage (LR warmup to 3e-4, cosine decay to 3e-5 over 13.5T tokens, 4K context), then a 300B-token fast-annealing stage (3e-5→8e-6, 8K context), then long-context extension to 32K and 256K with NTK-aware RoPE (alpha 50 and 1000). Post-training has four sequential steps: reasoning-oriented SFT, reasoning-oriented RL, all-scenarios SFT (reasoning samples mixed with general-domain data), then all-scenarios RL. Reasoning RL itself runs in two context phases, 24K then 32K.
+
+- Pretrain 20T @4K → 300B fast anneal @8K → 32K/256K NTK-aware extension.
+- Reasoning SFT → reasoning RL → all-scenarios SFT → all-scenarios RL.
+- All-scenarios SFT mixes reasoning samples with general-domain data.
+- Reasoning RL staged by context: 24K then 32K.
+
+**Key results:** With 13B active parameters, Hunyuan-A13B (slow-thinking) scores 87.3 on AIME2024, ahead of Qwen3-A22B (85.7) and DeepSeek-R1 (79.8), and leads BFCL v3 (78.3); the base beats Hunyuan-Large on 12/14 benchmarks with 1/4 the active parameters.
+
+*Evolution:* Builds on Hunyuan-Large/TurboS, borrowing DAPO's KL-free GRPO and DeepScaleR's context-length staging; internally dated mid-2025 despite its 2609 arXiv ID.
+
+### Scaling properties of same-family on-policy distillation
+*2026 · method · `method_OPD-Scaling-SameFamily_2609.32722.txt` · arXiv [2609.32722](https://arxiv.org/abs/2609.32722)*
+
+Each model follows SFT → GRPO RL (teachers) or SFT → OPD (students). The grid has 25 Vanilla-OPD teacher-student pairs (weak-to-strong, same-base, strong-to-weak) and 17 Delta-OPD pairs, each OPD run capped at 10 epochs (580 updates). Design-choice studies compare pure OPD, an off-policy SFT cold start followed by OPD, and pure OffPD. Bootstrapped chains apply RL only to the 0.5B model and then distill upward stage by stage (e.g. 0.5B→1.5B→3B→7B→14B), each stage's best OPD checkpoint becoming the next teacher (5 Vanilla and 3 Delta chains).
+
+- Teachers: SFT → GRPO; students: SFT → OPD.
+- 25 Vanilla + 17 Delta OPD pairs, ≤10 epochs (580 updates) each.
+- Compares pure OPD vs off-policy SFT cold start + OPD vs pure OffPD.
+- Bootstrapped chains distill upward 0.5B→…→14B, best checkpoint as next teacher.
+
+**Key results:** Every weak-to-strong student peaks above its teacher; the joint law extrapolates to held-out sizes within 0.7/0.4 points; off-policy cold start costs 6.6/15.7/19.4 points for 3B/7B/14B; every bootstrapped chain peaks below direct OPD (76.8 vs 77.7 at 14B).
+
+*Evolution:* Carries Gao et al.'s overoptimization scaling-law method to on-policy distillation, making weak-to-strong OPD predictable and overturning Burns et al.'s bootstrapping gain in this setting (one family, single seeds).
+
+### WEFT: Scaling Tool-Use Post-Training for General-Purpose Agents
+*2026 · code · `code_WEFT_2609.36887.txt` · arXiv [2609.36887](https://arxiv.org/abs/2609.36887)*
+
+The pipeline is SFT then RL from the base models (Qwen3-8B, Qwen3-14B, Qwen3.5-35B-A3B; RL results reported for 8B and 14B). Data construction is iterative: execution-driven self-evolution runs up to three rounds in which rollouts are attributed, components revised and fresh rollouts re-collected. Training mixtures vary task disclosure (Agentic full brief vs SimUser incremental requests; vague/partial/full explicitness) and harness (ReAct, then OpenClaw, then Hermes) while holding objectives, dependencies, initial state and completion conditions fixed.
+
+- Two stages: SFT → RL from Qwen3/Qwen3.5 bases.
+- Up to three rounds of execution-driven data self-evolution before training.
+- Mixtures vary task disclosure and explicitness with fixed task semantics.
+- Harness diversity across ReAct, OpenClaw and Hermes.
+
+**Key results:** WEFT-8B/14B beat every matched-size environment-scaling baseline on BFCL V4, tau2-Bench and Claw-Eval (14B +6.41/+2.23/+12.27 over Agent-World-14B); trajectory-level GRPO regresses tau2-Bench vs SFT while atomic-turn GRPO improves all three.
+
+*Evolution:* Responds to environment-scaling work (EnvScaler, ScaleEnv, Agent-World) by repairing tools, tasks and verifiers and adding harness diversity, with finer-grained atomic-turn credit than GiGPO/PivotRL.
+
+### MiMo-V2.6: Scaling Reinforcement Learning Towards Self-Improvement
+*2026 · report · `report_MiMo-V2.6_2610.11959.txt` · arXiv [2610.11959](https://arxiv.org/abs/2610.11959)*
+
+Pretraining is two-stage: text first, then omni-modal joint training with an in-house ViT (4T+ image tokens) and an audio encoder, with context extended 32K→256K. Flash sees 48T tokens (26T text + 22T omni) and Pro sees 30T (27T + 3T). Agent-centric mid-training then runs at 256K and finally 1M context, switches hidden matrices from AdamW to the Muown optimizer, applies MXFP4 QAT, and adds reward-hacking self-correction examples. A short SFT follows, then a single large mixed-task RL run ("You Only RL Once", about 30 steps), and finally MOPD2 multi-teacher on-policy distillation merges domain teachers, including SFT teachers for hard-to-verify open domains.
+
+- Pretrain text → omni joint (32K→256K); Flash 48T, Pro 30T tokens.
+- Agentic mid-training 256K→1M with optimizer switch to Muown and MXFP4 QAT.
+- Short SFT → one mixed-task RL run (~30 steps) → MOPD2.
+- MOPD2 includes SFT teachers for hard-to-verify open domains.
+
+**Key results:** ~$2.6M of RL compute lifts MiMo-V2.6-Pro's DeepSWE 58.4→72.6 (Opus 5: 74.0) and held-out-harness pass@1 ~50%→66%; confirmed hacking stays <2% of trajectories; the open 9B distill + RL reaches 66.2 SWE-bench Verified.
+
+*Evolution:* Builds on MiMo-V2-Flash's MOPD and RL infrastructure, moving from verifiable-reward RLVR toward compute spent on agentic graders with systematic leakage and reward-hacking defenses.
+
+### AutoEnvScaling: Automating the Data Flywheel with Terminal Agents
+*2026 · code · `code_AutoEnvScaling_2610.14163.txt` · arXiv [2610.14163](https://arxiv.org/abs/2610.14163)*
+
+The curriculum is an online data flywheel. The solver trains on an active pool (256 tasks in the shared-model run); every 16 solver updates the pool is re-checked against the updated solver, out-of-band tasks are dropped, and the proposer builds replacements from the newest rollouts. With frontier proposers (GPT-5.6-sol, Claude Opus 5), weights are fixed and the proposer improves only its harness (memory, skills, tools) across rounds. In the self-improvement setting, Qwen3.6-35B-A3B is first cold-started by SFT on 600 high-quality proposer trajectories (valid rate 32.3%→86.8%), then RL-trained as both proposer and solver. HiL-Bench training uses SFT on 75 ask-for-help trajectories before up to 150 RL steps.
+
+- Active 256-task pool re-banded against the solver every 16 updates.
+- Proposer replaces dropped tasks from the newest rollouts.
+- Frontier proposers improve harness only; weights fixed.
+- Self-improvement: proposer SFT cold start (32.3%→86.8% valid) → joint proposer-solver RL.
+
+**Key results:** Terminal-task generation raises the valid-environment rate up to 25x at up to 75% lower cost; with Qwen3.6-35B-A3B as both roles, Terminal-Bench 2.1 rises 12.2 points (6.1 above Tmax), and without proposer training training collapses.
+
+*Evolution:* Builds on terminal-environment synthesis (Tmax, TermiGen) and proposer-solver self-play (Absolute Zero, R-Zero), letting an agent run the environment-design workflow end to end as a step toward self-built training data.
+
+### Apertus 1.5: From Open Text Models to Open Multimodal Reasoners
+*2026 · report · `report_Apertus-1.5_2610.15542.txt` · arXiv [2610.15542](https://arxiv.org/abs/2610.15542)*
+
+Training starts from Apertus 1.0 checkpoints. Continued pretraining (4T tokens for 8B, 2T for 70B) has four stages: (1) unpaired image/audio/text with all-modality targets; (2) paired image-text and audio-transcript data with text-only targets; (3) a cooldown on higher-quality math/code/translation data plus ~3B instruction tokens; (4) long-context extension 8K→32K→65K→131K→262K (50-63B tokens per step, with synthetic CWE/DocOrder/needle tasks). Post-training runs SFT (16K) → long-context SFT at 262K → RLVR → DPO → SDPO charter alignment (8B only). The long-context SFT is needed because RULER@262K fell from 54.8 to 8.3 after SFT. DPO is online only for the 8B, offline then online for the 70B. Thinking is a chat-template flag, not a separate model.
+
+- CPT: unpaired multimodal → paired (text targets) → quality cooldown → 8K→262K extension.
+- SFT → long-context SFT → RLVR → DPO → SDPO (8B).
+- Long-context SFT restores RULER@262K lost in SFT (54.8→8.3).
+- 70B uses offline then online DPO; 8B online only.
+
+**Key results:** Apertus 1.5 8B leads all compared 8B-class models on instruction following (IFEval 87.1, Multi-IF 83.7); thinking lifts MATH-500 51.2→71.4; the 70B improves over Apertus 1.0 everywhere but trails Qwen3.5 and Gemma 4.
+
+*Evolution:* Upgrades fully open Apertus 1.0 in place to image and audio via early fusion, borrowing OLMo 3 prompts, DAPO clipping and online DPO, and adding SDPO self-distillation for charter alignment.
+
+### Efficiently Learning To Reason or Not to Reason: Root-token Policy Optimization for Adaptive Thinking
+*2026 · rl · `rl_RPO-AdaptiveThinking_2610.17767.txt` · arXiv [2610.17767](https://arxiv.org/abs/2610.17767)*
+
+Three stages: original LRM → SFT for mode selection → RPO. The SFT loop iteratively refreshes correctness-filtered self-distilled data and keeps training only while default-template accuracy stays within a tolerance ε of the original model; one iteration usually sufficed. SFT is framed as a controllability enabler rather than a capability stage, because over-training degrades the solver (R1-Distill-1.5B MATH500 drops 83.2→75.1 after 1 epoch). RPO then runs fewer than 60 update steps on a balanced easy/hard prompt mix.
+
+- Original LRM → mode-selection SFT → RPO.
+- SFT loop stops when accuracy leaves an ε band around the original model.
+- SFT kept minimal: one epoch drops R1-Distill-1.5B MATH500 83.2→75.1.
+- RPO: <60 updates on a balanced easy/hard prompt mix.
+
+**Key results:** RPO uses ~0.02x AdaptThink's training compute (10,241 vs 522,240 PFLOPs at 8B) and reaches 51.3 average Pass@1 at 20.5% MATH500 Think% on R1-1.5B; at an equal ~10K-PFLOP budget full-trajectory GRPO stays at 90.2% Think%.
+
+*Evolution:* Follows the learn-when-to-think line (AdaptThink, Thinkless, ARM), pushing token-selective RL to a single root routing token as a controllable layer on top of SFT.
+
+### LLM-jp-4 Technical Report
+*2026 · report · `report_LLM-jp-4_2610.19331.txt` · arXiv [2610.19331](https://arxiv.org/abs/2610.19331)*
+
+Each model is trained from scratch on ~12T tokens. Pre-training Phase 1 (6.3T tokens, LLM-jp Corpus v4) builds broad knowledge, with sampling weights set from 13 small-scale 7.7B/400B-token runs. Phase 2 (4.2T tokens, Corpus v4.1) emphasizes math and code (The Stack v2, MMWPM-OSS), chosen via a 2^(5-2) fractional-factorial study. Mid-training (1.26T tokens) uses a 50:50 mix of instruction corpus and Phase 2 pretraining data at half the pretraining LR, extending context 4K→16K→64K (0.84T + 0.21T + 0.21T tokens). Post-training is SFT (2 epochs, ~10.83B tokens) then DPO (2 epochs), with no RL. All stages use WSD schedules with 1-sqrt decay to zero; Phase 1 decay branches are forked from the stable run.
+
+- Phase 1 6.3T broad → Phase 2 4.2T math/code, weights set by small-scale and factorial studies.
+- Mid-training 1.26T: 50:50 instruction/pretrain mix at half LR, 4K→16K→64K.
+- SFT (2 epochs) → DPO (2 epochs); no RL.
+- WSD with 1-sqrt decay throughout; decay branches forked from the stable run.
+
+**Key results:** LLM-jp-4-32B-A3B roughly doubles llm-jp-eval (0.307→0.605), matching Qwen3-8B (0.608) and gpt-oss-20b (0.604), and beats gpt-oss-20b on MT-Bench JA (7.82 vs 7.33); still trails on English, GPQA-EN and AIME.
+
+*Evolution:* Successor to LLM-jp-3/3.1 as a fully open Japanese sovereign model, rebuilding license-contaminated datasets and using SFT+DPO distilled from gpt-oss-120b without RL.
+
+### Priming Base Models for Agentic Post-Training: An Open Midtraining Recipe
+*2026 · method · `method_Open-Midtraining-Recipe_2610.22019.txt` · arXiv [2610.22019](https://arxiv.org/abs/2610.22019)*
+
+Midtraining is inserted between pretraining (8K context) and post-training: hundreds of billions of tokens at 256K context, ideally before the final 1M long-context stage, so that much agentic learning moves out of SFT and SFT can stay short to preserve later RL trainability. Traces are capped at 10-15% of the blend to avoid SFT-like overfitting, and replay is fixed at 20% (40% gave no clear benefit). LR warms up briefly then stays constant (5e-5 for Lightning, 1e-5 for Super). In experiments, runs start from the 1M long-context checkpoint and go straight to SFT, short (33B tokens) or full (100B tokens; ~430K agentic trajectories, LR 2e-5 cosine to 5e-6). A ~9B-token long-context stage restores Super's RULER@1M 33.0→81.0, and a 20-step GRPO check follows full SFT on Lightning-8K.
+
+- 256K midtraining placed between 8K pretraining and the final 1M stage.
+- Agent traces capped at 10-15% of the blend; 20% replay.
+- Brief warmup then constant LR; SFT kept short to preserve RL trainability.
+- ~9B-token long-context stage restores RULER@1M 33.0→81.0.
+
+**Key results:** On Nemotron 3.5 Lightning, 500B midtraining tokens add 3.8/7.0/3.5 points on SWE-bench Verified/Multilingual/Pro after identical SFT; on Super, 280B tokens lift DeepSWE 11.7→15.7 and improve every harness tested.
+
+*Evolution:* Opens up the midtraining stage that Qwen3-Coder-Next, GLM-5 and Kimi-Dev describe only at a high level, moving natural SWE data and traces out of long SFT; whether it raises what RL can add remains open.
+
+### Self-Evolving Coding Agents via Harness-Policy Optimization
+*2026 · code · `code_Self-HPO_2610.22791.txt` · arXiv [2610.22791](https://arxiv.org/abs/2610.22791)*
+
+Self-HPO alternates H-steps (harness search with the policy frozen) and P-steps (RL with the harness frozen) on the schedule Base → H1 → P1 → H2 → P2, stopping when the hard-task set stabilizes, which happened after two rounds. Each H-step evaluates K=6 candidates once per search task, each revising the current best harness from all accumulated experience. Each P-step runs 50 RL updates starting from the previous policy. The evolving hard-task search set acts as an adaptive curriculum for harness search, keeping it pointed at the updated policy's failures.
+
+- Alternating harness search (policy frozen) and RL (harness frozen).
+- Schedule Base → H1 → P1 → H2 → P2; stops when hard-task set stabilizes.
+- H-step: K=6 candidates; P-step: 50 RL updates from the previous policy.
+- Evolving hard-task set beats a frozen initial set (71.6 vs 70.1).
+
+**Key results:** Self-HPO lifts Qwen3.5-35B-A3B's three-benchmark average 57.8%→64.8% (Verified 61.0→69.5), beating RLVR by 2.9 points; evolved harness alone +3.5, trained policy alone +3.4, joint +8.5.
+
+*Evolution:* Joins frozen-policy harness optimization and fixed-harness policy RL, making the RL-trained policy its own next harness proposer with search tasks drawn from what RL left unsolved.
+
+### Muse Glimmer 30B: An On-Device Agentic Model
+*2026 · report · `report_Muse-Glimmer_2610.24628.txt` · arXiv [2610.24628](https://arxiv.org/abs/2610.24628)*
+
+Pretraining is logit co-distillation from Muse Spark's top-256 logits, using only a KL loss for the first 95% of training and only CE for the final 5% to correct top-k truncation bias; the final checkpoint is uniformly averaged with three earlier checkpoints spaced 600 steps apart. Mid-training Phase 1 (domain infusion) adds synthetic reasoning traces at a reduced LR. Phase 2 (agentic) extends context 32K→128K, adds tool-use and agent trajectories, and switches to CE because teacher logits are less reliable on that data. Post-training runs SFT (about one epoch per dataset), on-policy distillation from Muse Spark, then multi-objective RL over reward models, verifiers, task success and RLHF. Inserting OPD between SFT and RL consistently gives better downstream RL than going straight from SFT to RL.
+
+- Pretrain: KL-only distillation for 95%, CE-only for final 5%; 4-checkpoint average.
+- Mid-train: reasoning-trace infusion at reduced LR → agentic phase 32K→128K on CE.
+- SFT → on-policy distillation → multi-objective RL.
+- OPD before RL beats going straight from SFT to RL.
+
+**Key results:** At high reasoning Muse Glimmer beats Gemma4-31B and Qwen3.6-27B on MCPAtlas (75.5 vs 54.2/62.5) and SWE-Bench Pro (51.2); trails Qwen3.6-27B on OSWorld-Verified (65.9 vs 75.6); 4-bit EvoPress keeps 75.6 of 75.7 average accuracy.
+
+*Evolution:* Meta's on-device follow-up to Llama 4 distills frontier Muse Spark, pairing pretraining logit co-distillation with Qwen3-style on-policy distillation before RL in a dense model.
+
+### Arctic-SWE: Revisiting the Long Horizon Agent Training by Modeling-System Co-Design
+*2026 · code · `code_Arctic-SWE_2610.24914.txt` · arXiv [2610.24914](https://arxiv.org/abs/2610.24914)*
+
+There is no SFT stage: RL starts directly from Qwen3.5-4B/9B. The recipe is first stress-tested by prolonged overfitting on 160 solvable R2E-Gym tasks (32 tasks × 5 rollouts), then trained on 3,606 unchanged R2E-Gym tasks for 800 updates, then on a 7,500-row curated deck (the reported 9B run uses 12,389 rows including strengthened suites). Tasks are drawn without replacement from one global shuffled deck; easy eviction retires a task once a group solves it 8/8, and in the R2E-Gym run hard eviction retires it after three consecutive 0/8 groups. Optimization uses AdamW at constant LR 1e-6, beta2 0.98, with no warmup or decay.
+
+- RL-only from Qwen3.5-4B/9B; no SFT.
+- Overfitting stress test → 800 updates on R2E-Gym → curated deck.
+- Single shuffled deck without replacement; easy (8/8) and hard (3× 0/8) eviction.
+- Constant LR 1e-6, no warmup or decay.
+
+**Key results:** On unchanged R2E-Gym data Arctic-SWE lifts Qwen3.5-4B 47.4%→62.0% SWE-bench Verified, matching FrogNano (61.5%) with ~1/6 the rollouts; with curated data the 9B reaches 65.7/39.6/70.2 on Verified/Pro-v1/Pro-v2.
+
+*Evolution:* Reacts to hard-to-reproduce SWE-agent RL baselines (R2E-Gym, DeepSWE, SkyRL) by assembling known pieces into a reproducible async recipe validated by an RL-overfitting stress test.
+
+### Self-Credit: Credit Assignment for Long-Horizon Agentic RL via Intra-group Rescaling
+*2026 · rl · `rl_Self-Credit_2610.28388.txt` · arXiv [2610.28388](https://arxiv.org/abs/2610.28388)*
+
+A single RL stage from the base models (Qwen3-8B, Qwen3-32B, Gemma4-E4B, thinking mode) with no SFT warm-up. The only schedule is an annealing curriculum on the repeated-failure penalty weight w_f, decayed linearly from 1.5 to 1.0: strong penalties early discourage repeatedly unsuccessful retrieval, and weaker ones later allow exploration. Training runs 115 steps on BrowseComp-Plus and 100 steps for deep research, with 16 prompts × 16 rollouts (256 trajectories) per step split into 8 optimizer updates.
+
+- Single RL stage, no SFT warm-up.
+- Repeated-failure penalty w_f annealed linearly 1.5→1.0.
+- Strong early penalty curbs repeated failed retrieval; weaker late penalty allows exploration.
+- 115 / 100 steps; 256 trajectories per step over 8 optimizer updates.
+
+**Key results:** On BrowseComp-Plus Self-Credit lifts Qwen3-8B/32B by 37.0/36.2 points over zero-shot (to 40.6/47.0), beating the strongest RL baselines by 8.5/5.6; with Gemma4-E4B it beats the best baselines by 4.9 on GAIA (39.2).
+
+*Evolution:* Combines compaction-augmented agentic RL with GiGPO-style group turn-level credit matched by retrieved evidence, showing a policy's own summaries can supply process supervision for long-horizon search agents.

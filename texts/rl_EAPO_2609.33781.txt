@@ -1,0 +1,2705 @@
+Surprising Success, Repeated Failure:
+Entropy-Guided Credit Assignment for
+Exploration in LLM Reasoning
+Woongyeong Yeo1 , Minki Kang1 , Chanuk Lee1 , Sangwoo Park1 , Jinheon Baek1† , Sung Ju Hwang1,2†
+KAIST 2 DeepAuto.ai († : Corresponding authors)
+# {wgcyeo, jinheon.baek, sungju.hwang}@kaist.ac.kr
+ Project Page: https://eapo-explore.github.io
+
+arXiv:2609.33781v1 [cs.LG] 27 Sep 2026
+
+1
+
+Reinforcement learning with verifiable rewards (RLVR) enhances reasoning in large language models (LLMs)
+through outcome-level feedback, yet recent approaches to finer-grained credit assignment often require auxiliary
+models, additional sampling, or privileged information. Although policy entropy provides a readily available
+signal, prioritizing uncertain positions under both reinforcement and penalization concentrates penalties where
+failed responses still retain alternatives for recovery, which can suppress opportunities for exploration. To
+address this, we introduce Entropic Advantage Policy Optimization (EAPO), an entropy-guided credit assignment
+method that treats success and failure asymmetrically. Specifically, motivated by the observation that success
+under uncertainty is less repeatable while confident failures tend to recur, EAPO couples normalized policy
+entropy with the sign of the response advantage to reinforce surprising success and correct repeated failure.
+It assigns stronger reinforcement to high-entropy decisions in successful responses and stronger penalties
+to low-entropy decisions in failed responses, while attenuating penalties at uncertain positions to preserve
+opportunities for recovery. By redistributing the response advantage across tokens, EAPO derives token-level
+credit directly from existing rollout signals without additional supervision. We validate EAPO on a range of
+reasoning tasks across both base and reasoning backbones, demonstrating that it achieves the best overall
+performance. We further show that EAPO promotes more effective exploration, broadening problem coverage
+and generating more diverse candidate answers.
+(a) Surprising Success, Repeated Failure
+
+(b) EAPO: Entropic Advantage Policy Optimization
+
+Find a constrained minimum
+Apply AM–GM
+directly
+Invalid
+substitution
+
+Unattempted
+
+···
+···
+
+Repeated Failure
+
+Split a
+term first
+
+Try Lagrange
+multipliers
+
+Surprising
+Success
+Alternative
+Remains
+
+High Entropy
+Successful
+Response
+
+Failed
+Response
+
+Low Entropy
+
+· · · Hmm, let’s try · · ·
+
+· · · the answer is 16 · · ·
+
+Reinforce exploration
+
+Smaller reinforcement
+
+· · · Wait , let’s add · · ·
+
+· · · so 2 + 2 = 5 · · ·
+
+Retain alternatives
+
+Correct repeated failure
+
+Figure 1: Conceptual illustration. (a) Success under uncertainty is rarely sampled and thus less repeatable, whereas
+confident failures keep recurring across many rollouts. (b) EAPO reweights token-level advantages by entropy to reinforce
+surprising success at high-entropy positions and correct repeated failure at low-entropy positions, while preserving
+uncertain alternatives.
+
+1. Introduction
+Reinforcement learning with verifiable rewards (RLVR) (Shao et al., 2024; Lambert et al., 2025; Guo et al.,
+2025a) improves the reasoning capabilities of large language models (LLMs) through outcome-level supervision.
+The resulting reward evaluates a trajectory as a whole, although the decisions within it may contribute
+differently to the final outcome. This motivates finer-grained credit assignment that allocates learning feedback
+to individual reasoning decisions. However, existing approaches to obtaining such feedback require auxiliary
+models, additional sampling, or access to privileged information (Kazemnejad et al., 2025; Cui et al., 2026;
+Kim et al., 2026a).
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+These requirements motivate the use of policy entropy, a measure of next-token uncertainty directly
+available from the rollout policy, as a signal for token-level feedback allocation. High entropy reflects competing
+continuations and potential branching points for exploration, whereas low entropy indicates concentrated
+preferences (Wang et al., 2025; Cheng et al., 2026a). Beyond entropy regularization for exploration (Mnih
+et al., 2016), existing methods select high-entropy tokens for policy updates (Wang et al., 2025) or reshape
+token-level advantages (Cheng et al., 2026a; He et al., 2026). However, these methods treat uncertainty in
+the same way under success and failure, either adding nonnegative entropy bonuses regardless of outcome or
+favoring high-entropy positions under both positive and negative feedback. Such a shared preference places
+the strongest penalties on uncertain positions in failed responses, where competing continuations may still
+lead to recovery through alternative reasoning paths, potentially constraining further exploration. This raises a
+central question: should uncertainty guide both reinforcement and penalization in the same way?
+We examine this question through the asymmetry between reinforcing success and penalizing failure. In a
+successful trajectory, a high-entropy decision selects among competing continuations, so the observed success
+may reflect an exploratory path that has not yet become a stable behavioral preference. Stronger reinforcement
+at these points can help consolidate successful exploration into more repeatable behavior. In contrast, lowentropy decisions within an unsuccessful trajectory can reflect concentrated preferences that favor similar
+failing continuations, motivating stronger correction of confident patterns associated with failure to discourage
+their recurrence. Meanwhile, in the same unsuccessful trajectory, high-entropy positions retain competing
+alternatives, so concentrating penalties on these positions risks constraining opportunities for exploration and
+recovery. These two observations motivate reinforcing surprising success and correcting repeated failure
+while preserving uncertain alternatives, without treating entropy as a measure of individual-token correctness.
+To incorporate this asymmetry into token-level credit assignment, we introduce Entropic Advantage Policy
+Optimization (EAPO), which couples policy entropy with the correctness feedback (i.e., the advantage sign)
+to reverse the entropy preference between reinforcement and penalization (Figure 1). Specifically, EAPO
+reweights the response advantage across tokens, assigning stronger reinforcement to high-entropy decisions
+when the advantage is positive and stronger penalties to low-entropy decisions when it is negative. By
+reinforcing surprising success and correcting repeated failure in this way, EAPO makes successful exploration
+more repeatable while attenuating penalties at uncertain positions within unsuccessful responses to preserve
+alternative reasoning paths.
+We validate EAPO on a range of tasks, including mathematical, logical, and algorithmic reasoning, across
+both base and reasoning backbones. EAPO achieves the best overall performance, surpassing existing methods
+for promoting exploration in both average accuracy and problem coverage. Our analyses show that EAPO
+broadens problem coverage under varying test-time sampling budgets and maintains greater answer diversity
+on challenging problems, while also confirming the benefits of reinforcing high-entropy decisions and penalizing
+low-entropy decisions. Together, these findings highlight the benefits of treating uncertainty differently under
+success and failure to promote more effective exploration in LLM reasoning while preserving alternative
+reasoning paths.
+
+2. Preliminaries
+Group Relative Policy Optimization. Reinforcement learning with verifiable rewards (RLVR) trains a policy
+𝜋𝜃 using rewards computed by task-specific verifiers (Lambert et al., 2025; Guo et al., 2025a). As one
+instantiation, group relative policy optimization (GRPO) (Shao et al., 2024) samples a group of 𝐺 > 1
+responses {𝑦1 , . . . , 𝑦𝐺 } ∼ 𝜋𝜃 ( · | 𝑥) for each prompt 𝑥 and normalizes the corresponding response-level rewards
+𝑟𝑖 = 𝑟(𝑥, 𝑦𝑖 ) to obtain the response advantage
+𝐴ˆ𝑖 =
+
+𝑟𝑖 − mean({𝑟𝑗 }𝐺
+𝑗=1 )
+.
+𝐺
+𝑗
+std({𝑟 }𝑗=1 ) + 𝜀
+
+(1)
+
+The resulting advantage is shared uniformly across all tokens within the response, 𝐴ˆ𝑖𝑡 = 𝐴ˆ𝑖 , and therefore
+provides no position-specific weighting of the learning signal, treating all token decisions within a response as
+equally responsible for the final reward.
+
+2
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+log10 word count
+
+(a) Correct responses
+
+(b) Incorrect responses
+4.0
+
+3.0
+
+let’s
+root
+
+2.0
+
+theorem
+theorem
+try
+
+output
+
+−4
+
+−2
+
+3.0
+
+check
+check consider
+analyze
+however
+but verify
+see
+however
+
+1.5
+−6
+
+therefore thus
+
+answer
+
+2.5
+
+3.5
+
+0
+
+2
+
+4
+
+6
+
+8
+
+log2 (high/low)
+
+2.5
+2.0
+
+check
+finally but answer however
+see
+suppose
+confirm
+let’s
+reconsider
+analyze
+final
+try
+verify
+verify
+instead
+might
+
+1.5
+−6
+
+−4
+
+−2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+log2 (high/low)
+
+Figure 2: Word usage by token entropy. Green and red mark words with higher relative frequencies in the top and bottom
+10% entropy tails of each Qwen3-4B-Base response, respectively. Exploratory expressions are enriched at high-entropy
+positions in both correct and incorrect responses, whereas conclusion markers are enriched at low-entropy positions in
+incorrect responses.
+
+Policy Entropy. For a generation prefix (𝑥, 𝑦𝑖,<𝑡 ) and vocabulary 𝒱, we define the policy entropy as the
+Shannon entropy (Shannon, 1948) of the policy’s next-token distribution:
+∑︁
+𝐻𝑖,𝑡 = −
+𝜋𝜃 (𝑣 | 𝑥, 𝑦𝑖,<𝑡 ) log 𝜋𝜃 (𝑣 | 𝑥, 𝑦𝑖,<𝑡 ).
+(2)
+𝑣∈𝒱
+
+Unlike sampled-token surprisal, − log 𝜋𝜃 (𝑦𝑖,𝑡 | 𝑥, 𝑦𝑖,<𝑡 ), which measures the unexpectedness of a single realized
+token, 𝐻𝑖,𝑡 characterizes uncertainty over the full next-token distribution. Higher entropy indicates greater
+uncertainty among possible continuations, whereas lower entropy reflects more concentrated preferences, with
+high-entropy positions often associated with branching and exploratory behavior in reasoning (Wang et al.,
+2025; Cheng et al., 2026a).
+
+3. Surprising Success, Repeated Failure
+Then, how does policy entropy relate to reasoning success? While prior work has highlighted high-entropy
+positions as branching points for exploring alternatives (Wang et al., 2025; Cheng et al., 2026a), this link to
+exploration does not by itself indicate whether success under uncertainty can be reproduced or whether failure
+can be avoided even when the policy is confident. In this section, we examine the relationship between policy
+entropy and successful exploration in reasoning.
+High-entropy success is less repeatable, while failure retains alternatives. To examine how entropy
+relates to reproducible success and recovery from failure, we analyze Qwen3-4B/8B-Base on 20 moderately
+difficult mathematical reasoning problems per model. For each problem, we randomly select two correct and
+two incorrect responses. Within each selected response, we compare contiguous 32-token windows with high
+and low mean token entropy, matching their relative-position ranges to control for where resampling begins
+in the reasoning trajectory. From the fixed prefix preceding each window, we sample 64 continuations and
+measure their overlap within the first 32 generated tokens and their final-answer accuracy. Further details are
+provided in Section B.1.
+As shown in Table 1, originally correct responses are
+substantially less likely to succeed again when resampled from high- rather than low-entropy windows, which
+makes success through uncertainty a surprising success.
+In contrast, originally incorrect responses tend to remain
+incorrect when resampled from low-entropy windows, indicating repeated failure despite the policy’s confidence.
+Meanwhile, resampling from high-entropy windows of
+the same incorrect responses yields higher accuracy, suggesting that these responses retain alternative paths to
+success despite recurrent failure at low-entropy windows.
+High-entropy windows also yield lower overlap across
+
+Table 1: Continuation resampling by original response
+outcome and window entropy. Δ¯
+𝑟 denotes the reward
+difference (High − Low).
+Overlap
+Source
+
+Reward
+
+Low
+
+High
+
+Low
+
+High
+
+Δ¯
+𝑟 (pp)
+
+Qwen3-4B-Base
+Correct
+29.1
+Incorrect 27.8
+
+4.1
+7.3
+
+0.578
+0.070
+
+0.390
+0.163
+
+−18.8
++9.3
+
+Qwen3-8B-Base
+Correct
+29.6
+Incorrect 30.2
+
+4.3
+6.9
+
+0.625
+0.032
+
+0.418
+0.159
+
+−20.7
++12.7
+
+3
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+both outcomes, supporting their role in exploratory branching. We provide a qualitative example illustrating
+these trends in Section E. These findings highlight the need to make surprising success more repeatable and
+correct repeated failure at low-entropy positions, while preserving alternative paths to recovery at high-entropy
+positions in unsuccessful responses.
+Token patterns reflect successful exploration and confident failure. To characterize the reasoning behaviors behind these trends, we analyze 2,376 Qwen3-4B-Base responses to mathematical reasoning problems,
+comparing normalized word frequencies between the top and bottom 10% entropy tails of each correct and
+incorrect response. As shown in Figure 2, high-entropy positions in correct responses are enriched with
+exploratory expressions (e.g., “let’s” and “consider”), whereas conclusion markers (e.g., “finally” and “confirm”)
+are more prevalent at low-entropy positions in incorrect responses. These patterns mirror the resampling
+results, suggesting that surprising success arises from successful exploration that has not yet become a stable
+preference, while repeated failure reflects confident failure, in which the policy firmly commits to an incorrect
+conclusion. Meanwhile, exploratory expressions (e.g., “try” and “instead”) also appear at high-entropy positions
+in incorrect responses, indicating that failed responses still retain alternatives for recovery, consistent with
+the gains from high-entropy resampling in Table 1. Together, these observations motivate asymmetric credit
+assignment: stronger reinforcement of high-entropy decisions can make successful exploration repeatable,
+whereas concentrating penalties on low-entropy decisions can correct confident failure while sparing the
+exploratory alternatives that unsuccessful responses retain.
+
+4. Entropic Advantage Policy Optimization
+We present Entropic Advantage Policy Optimization (EAPO), which operationalizes this asymmetric credit
+assignment by redistributing the response advantage across completion tokens using only the policy’s own
+entropy, assigning stronger reinforcement to uncertain decisions in positive-advantage rollouts and stronger
+penalties to confident decisions in negative-advantage rollouts.
+4.1. Asymmetric Advantage Reweighting via Sign–Entropy Coupling
+An entropy preference shared across advantage signs would prioritize the same positions under reinforcement
+and penalization, so favoring high entropy would also concentrate penalties on uncertain decisions in negativeadvantage responses. To address this, we couple entropy with the advantage sign, reversing the preference
+between reinforcement and penalization.
+Policy Entropy Normalization. Absolute token entropies can vary substantially across responses and fluctuate
+sharply within a response, making absolute entropy-based reweighting sensitive to noise and potentially
+destabilizing policy optimization. To address this, we normalize token entropies using shared percentiles
+within each rollout batch ℬ. Specifically, we evaluate the entropy 𝐻𝑖,𝑡 in Equation (2) under the old policy
+𝜋old . For response 𝑖, let ℐ𝑖 denote valid completion positions, excluding prompt and padding tokens, and let
+𝑇𝑖 = |ℐ𝑖 | > 0. We define
+[︂
+(︂
+)︂]︂
+𝐻𝑖,𝑡 − 𝑄lo
+ℎ𝑖,𝑡 = stopgrad clip
+, 0, 1 ,
+𝑡 ∈ ℐ𝑖 ,
+(3)
+𝑄hi − 𝑄lo + 𝜀𝐻
+where 𝑄lo and 𝑄hi are the 10th and 90th percentiles of valid completion-token entropies in ℬ. We use clipping
+to limit the influence of extreme entropies and stopgrad to use the entropies as detached credit assignment
+signals, preventing gradients from propagating through the reweighting factors.
+Asymmetric Advantage Redistribution. We design token-level credit to depend jointly on the advantage
+sign and normalized entropy. Given the response advantage 𝐴ˆ𝑖 in Equation (1), we express this coupling
+through the signed uncertainty sign(𝐴ˆ𝑖 )ℎ𝑖,𝑡 . For 𝑡 ∈ ℐ𝑖 and 𝜅 ≥ 0, we define
+(︁
+)︁
+exp 𝜅 sign(𝐴ˆ𝑖 )ℎ𝑖,𝑡
+(︁
+)︁ ,
+𝑤𝑖,𝑡 =
+𝐴ˆ𝑖,E
+= 𝐴ˆ𝑖 𝑤𝑖,𝑡 .
+(4)
+𝑡
+∑︀
+1
+ˆ𝑖 )ℎ𝑖,𝑢
+exp
+𝜅
+sign(
+𝐴
+𝑢∈ℐ𝑖
+𝑇𝑖
+
+4
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+The exponential weighting in Equation (4) favors larger signed uncertainty, with 𝜅 controlling concentration.
+For 𝜅 > 0, this assigns greater weight to high-entropy decisions when 𝐴ˆ𝑖 > 0 and to low-entropy decisions
+when 𝐴ˆ𝑖 < 0, with the ratio between any two weights within a response bounded by 𝑒𝜅 . Dividing by the
+within-response mean of the exponential scores ensures that the advantage is redistributed across tokens rather
+than rescaled for the response as a whole. We then multiply 𝐴ˆ𝑖 by 𝑤𝑖,𝑡 to obtain the token-level advantage
+ˆ𝑖
+𝐴ˆ𝑖,E
+𝑡 . Since the weights are positive, they preserve the sign of 𝐴 while determining how strongly each decision
+is reinforced or penalized.
+Policy Optimization. EAPO simply replaces the response-level advantage 𝐴ˆ𝑖 with the token-level advantage
+𝐴ˆ𝑖,E
+𝑡 in the original policy objective, leaving the rest of the optimization procedure unchanged. Since token-level
+credit is derived directly from the policy’s own entropy and the existing response advantage, EAPO requires no
+auxiliary models, token-level supervision, or substantial additional computation, making it readily applicable
+to existing policy optimization pipelines.
+4.2. Theoretical Interpretation
+We now turn to the theoretical interpretation of EAPO, connecting its asymmetric credit allocation to KL
+anchoring in token space and examining how penalty attenuation affects conditional entropy and distributional
+distortion among unchosen alternatives compared with uniform weighting.
+Reinterpreting KL Anchoring in Token Space. KL-regularized RLVR anchors the policy to a reference policy
+𝜋ref through 𝐷KL (𝜋𝜃 ‖𝜋ref ) while optimizing verifiable rewards (Shao et al., 2024). We transfer this principle
+from policy space to credit allocation over token positions, with uniform credit as the reference and signed
+uncertainty sign(𝐴ˆ𝑖 )ℎ𝑖,𝑡 as the utility.
+Proposition 1 (KL-regularized uncertainty allocation). Let 𝑢𝑖,𝑡 = 1/𝑇𝑖 be uniform credit over ℐ𝑖 , and let ∆(ℐ𝑖 )
+denote the probability simplex on these positions. For 𝜅 > 0, the problem
+}︂
+{︂
+1
+max sign(𝐴ˆ𝑖 )E𝑡∼𝑞 [ℎ𝑖,𝑡 ] − 𝐷KL (𝑞‖𝑢𝑖 )
+(5)
+𝜅
+𝑞∈Δ(ℐ𝑖 )
+(︁
+)︁
+*
+has the unique solution 𝑞𝑖,𝑡
+∝ 𝑢𝑖,𝑡 exp 𝜅 sign(𝐴ˆ𝑖 )ℎ𝑖,𝑡 .
+We defer the proof to Section D.1. Our formulation in Equation (4) is therefore an operationalization of
+asymmetric credit assignment based on signed uncertainty, obtained by transferring KL anchoring to token
+space with uniform allocation as the reference. Increasing 𝜅 weakens this anchor and strengthens the preference
+for high entropy under positive advantages and low entropy under negative advantages, while 𝜅 → 0 recovers
+uniform credit.
+Understanding the Role of Penalty Attenuation. Motivated by the observation that updates with negative
+advantages can shift probability toward already likely alternatives (Ren & Sutherland, 2025), we analyze
+how this effect depends on update strength to understand EAPO’s penalty attenuation at uncertain positions.
+Specifically, at a fixed prefix, we consider a single policy-gradient step on the logits with negative advantage
+ˆ ≥ 0, where 𝑤 is the allocation weight and 𝜂 > 0 is the effective step size.
+𝐴ˆ < 0 and update strength 𝛽 = 𝜂|𝐴|𝑤
+(𝛽)
+Let 𝜈
+denote the conditional distribution over unchosen tokens after the update, with 𝜈 = 𝜈 (0) denoting
+their initial conditional distribution.
+Proposition 2 (Concentration under negative updates). For a single negative logit update with finite logits
+and the initial distribution held fixed, the sampled-token probability strictly decreases with 𝛽, while 𝐻(𝜈 (𝛽) ) is
+nonincreasing and 𝐷KL (𝜈 (𝛽) ‖𝜈) is nondecreasing.
+Stronger penalties suppress the sampled token and favor already likely alternatives, sharpening the distribution over the remaining alternatives. Within this single-step logit model, reducing the penalty at a given
+position limits this sharpening and KL distortion. The proof and additional analyses are provided in Sections D.2
+and D.3. Together with the findings in Section 3, this analysis supports attenuating penalties at uncertain
+positions while concentrating correction on repeated failure.
+
+5
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Table 2: Results of diverse RLVR methods with base and reasoning models across six mathematical reasoning benchmarks.
+Bold denotes the best performance within each backbone.
+
+Method
+
+AIME24
+
+AIME25
+
+AIME26
+
+HMMT26
+
+AMC23
+
+MATH500-H
+
+Avg@32 Pass@32 Avg@32 Pass@32 Avg@32 Pass@32 Avg@32 Pass@32 Avg@32 Pass@32 Avg@32 Pass@32
+
+Qwen3-4B-Base
+GRPO
+EntropyAdv
+HAPO
+80/20
+RLRT
+EAPO (Ours)
+
+10.7
+12.5
+13.1
+12.2
+11.9
+15.3
+20.2
+
+43.3
+33.3
+46.7
+36.7
+33.3
+50.0
+53.3
+
+5.6
+10.4
+12.5
+11.0
+12.7
+12.7
+17.1
+
+30.0
+36.7
+36.7
+40.0
+40.0
+33.3
+46.7
+
+6.8
+7.5
+10.0
+8.9
+8.6
+14.2
+15.7
+
+23.3
+33.3
+33.3
+30.0
+30.0
+40.0
+50.0
+
+3.9
+5.9
+6.3
+6.5
+6.6
+8.9
+13.4
+
+24.2
+24.2
+27.3
+24.2
+24.2
+36.4
+33.3
+
+42.3
+54.5
+53.8
+52.0
+54.1
+54.9
+56.3
+
+90.0
+90.0
+90.0
+87.5
+95.0
+95.0
+92.5
+
+43.0
+56.1
+56.7
+53.2
+52.8
+57.4
+63.3
+
+82.8
+85.1
+86.6
+85.1
+84.3
+86.6
+91.8
+
+Qwen3-8B-Base
+GRPO
+EntropyAdv
+HAPO
+80/20
+RLRT
+EAPO (Ours)
+
+12.8
+15.4
+15.9
+15.6
+17.2
+21.7
+24.1
+
+46.7
+40.0
+33.3
+40.0
+46.7
+56.7
+63.3
+
+13.4
+13.4
+15.2
+12.9
+15.1
+20.1
+19.3
+
+43.3
+40.0
+43.3
+26.7
+33.3
+46.7
+46.7
+
+9.0
+10.5
+9.9
+8.4
+13.9
+17.3
+17.9
+
+33.3
+33.3
+40.0
+36.7
+40.0
+56.7
+60.0
+
+5.8
+5.5
+6.0
+5.1
+8.5
+10.6
+11.2
+
+27.3
+24.2
+27.3
+27.3
+27.3
+30.3
+30.3
+
+54.0
+57.3
+57.8
+61.5
+60.6
+64.2
+65.7
+
+92.5
+87.5
+87.5
+87.5
+92.5
+95.0
+97.5
+
+47.7
+58.6
+59.2
+57.4
+63.1
+64.6
+65.9
+
+85.1
+88.1
+85.8
+87.3
+87.3
+91.0
+95.5
+
+Qwen3-4B
+GRPO
+EntropyAdv
+HAPO
+80/20
+RLRT
+EAPO (Ours)
+
+67.9
+70.6
+73.0
+72.0
+71.4
+72.5
+73.5
+
+83.3
+83.3
+86.7
+86.7
+86.7
+86.7
+86.7
+
+61.7
+62.8
+62.2
+64.1
+63.2
+63.2
+65.0
+
+86.7
+86.7
+86.7
+83.3
+83.3
+86.7
+90.0
+
+60.6
+63.2
+64.0
+62.0
+61.0
+62.7
+64.8
+
+86.7
+83.3
+86.7
+83.3
+86.7
+83.3
+86.7
+
+40.1
+40.9
+42.2
+41.6
+40.8
+42.8
+43.2
+
+66.7
+69.7
+69.7
+66.7
+66.7
+69.7
+72.7
+
+95.2
+94.9
+95.9
+94.9
+94.3
+95.9
+97.7
+
+100.0
+100.0
+100.0
+100.0
+100.0
+100.0
+100.0
+
+90.0
+89.8
+90.6
+89.9
+90.5
+90.6
+90.2
+
+95.5
+96.3
+96.3
+96.3
+96.3
+96.3
+97.0
+
+Olmo-3-7B-Think-DPO
+GRPO
+EntropyAdv
+HAPO
+80/20
+RLRT
+EAPO (Ours)
+
+74.1
+75.9
+74.1
+74.2
+75.6
+77.3
+76.7
+
+90.0
+93.3
+93.3
+93.3
+93.3
+93.3
+93.3
+
+60.1
+62.2
+64.3
+63.3
+65.1
+63.4
+65.3
+
+80.0
+83.3
+83.3
+86.7
+83.3
+83.3
+90.0
+
+66.3
+68.4
+69.4
+66.4
+69.4
+68.1
+70.3
+
+90.0
+90.0
+90.0
+90.0
+90.0
+86.7
+90.0
+
+42.7
+46.0
+45.7
+43.8
+44.9
+44.6
+45.5
+
+72.7
+69.7
+72.7
+69.7
+75.8
+69.7
+78.8
+
+95.5
+95.8
+94.6
+95.7
+96.0
+95.2
+96.2
+
+100.0
+100.0
+100.0
+100.0
+100.0
+100.0
+100.0
+
+90.1
+91.4
+90.4
+90.6
+91.3
+91.3
+91.8
+
+96.3
+96.3
+96.3
+96.3
+96.3
+96.3
+96.3
+
+5. Experiments
+5.1. Experimental Setup
+Benchmarks & Metrics. We evaluate EAPO on six competition-level mathematical reasoning benchmarks:
+AIME24/25/26 (MAA, 2026), HMMT26 (HMMT, 2026), AMC23 (MAA, 2023), and the level-5 subset of
+MATH500 (Lightman et al., 2024). We report avg@32, the mean accuracy over 32 sampled responses per
+problem, and pass@32, the probability of generating at least one correct response within 32 samples, which
+we estimate using the unbiased estimator of Chen et al. (2021).
+Baselines. We compare EAPO against the initial backbone and five RLVR methods, including GRPO (Shao
+et al., 2024). EntropyAdv (Cheng et al., 2026a) adds an entropy term to the advantage to encourage exploration,
+while HAPO (He et al., 2026) applies a bounded, sign-preserving adjustment based on normalized policy entropy
+to emphasize high-entropy positions. 80/20 (Forking Tokens) (Wang et al., 2025) restricts policy-gradient
+updates to the highest-entropy 20% of tokens. Finally, RLRT (Kim et al., 2026a) reverses the self-distillation
+signal on correct rollouts, reinforcing tokens more probable under the student than under a teacher conditioned
+on privileged information.
+Implementation Details. We primarily evaluate EAPO across two model types, with Qwen3-4B-Base and
+Qwen3-8B-Base (Qwen Team, 2025) as base backbones and Qwen3-4B (Qwen Team, 2025) and Olmo-3-
+
+6
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Table 3: OOD generalization on Reasoning Gym tasks (avg@16). Bold denotes best performance.
+
+Method
+
+Graph
+
+Cube
+
+Sudoku Family
+
+K&K
+
+Anag.
+
+Zebra
+
+Palin.
+
+Avg.
+
+Qwen3-4B-Base
+GRPO
+EntropyAdv
+HAPO
+80/20
+RLRT
+EAPO (Ours)
+
+6.75
+7.50
+8.38
+10.13
+11.38
+7.38
+12.88
+
+24.63
+28.13
+27.00
+27.13
+26.75
+26.75
+28.25
+
+40.00
+41.88
+37.00
+40.38
+39.25
+38.50
+42.13
+
+17.00
+25.38
+27.00
+30.13
+31.50
+26.50
+30.88
+
+29.13
+38.63
+41.00
+43.63
+49.63
+43.38
+52.88
+
+37.50
+43.50
+45.38
+47.88
+46.38
+42.88
+46.00
+
+29.50
+41.88
+41.88
+47.50
+47.38
+44.13
+48.38
+
+9.00
+11.38
+14.50
+14.13
+15.13
+13.63
+17.75
+
+24.19
+29.78
+30.27
+32.61
+33.43
+30.39
+34.89
+
+Qwen3-8B-Base
+GRPO
+EntropyAdv
+HAPO
+80/20
+RLRT
+EAPO (Ours)
+
+12.25
+18.50
+16.75
+20.13
+17.75
+19.00
+20.50
+
+22.88
+25.63
+22.25
+24.63
+23.13
+22.38
+26.25
+
+39.38
+40.25
+47.88
+40.88
+37.38
+46.25
+52.25
+
+38.38
+42.50
+44.25
+45.63
+44.75
+40.75
+46.25
+
+33.88
+56.88
+49.38
+59.13
+60.13
+48.50
+60.50
+
+38.63
+54.00
+55.63
+56.50
+52.63
+43.88
+62.63
+
+44.88
+49.50
+54.25
+54.25
+51.00
+51.75
+54.50
+
+9.00
+19.13
+18.13
+18.88
+18.88
+18.75
+21.25
+
+29.91
+38.30
+38.56
+40.00
+38.21
+36.41
+43.02
+
+GRPO
+
+EntropyAdv
+
+Response length
+Length (tokens)
+
+0.4
+
+Score
+
+0.3
+0.2
+0.1
+0
+
+100
+Step
+
+EAPO
+
+200
+
+Average entropy
+Entropy (nats)
+
+Training reward
+
+HAPO
+
+4k
+3k
+2k
+0
+
+100
+Step
+
+200
+
+0.36
+0.32
+0.28
+
+0
+
+100
+Step
+
+200
+
+Figure 3: Training dynamics. (Left) Training reward on Qwen3-4B-Base; (Center) response length and (Right) average
+entropy on Qwen3-4B, using a trailing 15-step moving average.
+1
+
+7B-Think-DPO (Olmo Team, 2025) as reasoning backbones. All optimization-based methods are trained on
+DAPO-Math-17k-Processed with a DAPO-style training configuration (Yu et al., 2025). Further experimental
+and implementation details are provided in Section B.
+5.2. Main Results
+Table 2 compares EAPO with baseline methods across six mathematical reasoning benchmarks. EAPO achieves
+the best overall performance, with the highest mean avg@32 and pass@32 for all four backbones. Specifically,
+with Qwen3-4B-Base and Qwen3-8B-Base, EAPO attains mean accuracies of 31.0% and 34.0%, surpassing the
+strongest entropy-based baselines (EntropyAdv and 80/20, respectively) by substantial margins of 5.6 and
+4.3 percentage points. Notably, EAPO also outperforms the strongest baseline, RLRT, in both metrics on both
+base backbones even without relying on privileged information. Meanwhile, the gains extend to reasoning
+backbones, where EAPO achieves mean accuracies of 72.4% with Qwen3-4B and 74.3% with Olmo-3-7B-ThinkDPO, surpassing the strongest baseline in each case despite their substantially stronger initial performance.
+These results demonstrate consistent gains across benchmarks and model types.
+OOD Generalization. To examine whether these improvements extend beyond mathematical reasoning, we
+evaluate the two base backbones on eight tasks from Reasoning Gym (Stojanovski et al., 2025), spanning logical,
+spatial, and algorithmic reasoning (with details of each task in Section B). As shown in Table 3, EAPO achieves
+the highest macro-averaged scores of 34.89% and 43.02% with Qwen3-4B-Base and Qwen3-8B-Base, improving
+upon the respective best baselines, 80/20 and HAPO, by 1.46 and 3.02 percentage points. These results suggest
+that the benefits of EAPO generalize to diverse reasoning tasks beyond the mathematical problems used for the
+optimization.
+
+7
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Initial
+
+GRPO
+
+EntropyAdv
+
+HAPO
+
+Pass@k
+
+80/20
+
+RLRT
+
+EAPO
+
+Epistemic markers
+Markers / 1k tokens
+
+Pass@k (%)
+
+6
+
+60
+
+4
+
+40
+
+2
+
+20
+0
+
+1
+
+4
+
+16
+64
+Sampling budget, k
+
+256
+
+0
+
+AIME24
+
+AIME25
+
+AIME26
+
+HMMT26
+
+AMC23
+
+MATH500-H
+
+Benchmark
+
+Figure 4: Analysis of exploration. (Left) Pass@𝑘 curves for Qwen3-4B-Base on AIME26. (Right) Frequency of epistemic
+markers (per 1,000 generated tokens) across six mathematics benchmarks.
+1
+
+5.3. Training Dynamics
+To understand how EAPO behaves during training, we examine the evolution of training reward, response
+length, and average entropy. Figure 3 shows that EAPO maintains higher training rewards than the baselines
+over most of training, with its advantage becoming particularly pronounced near the end, further supporting its
+superiority over the baselines even during training. Meanwhile, entropy-based RLVR approaches consistently
+exhibit an overall increase in response length, producing longer responses than GRPO. EAPO also follows this
+trend, sustaining longer reasoning trajectories as training progresses. However, longer responses alone do not
+establish more effective exploration. To examine whether response length explains the performance gains, we
+extend baseline responses following Muennighoff et al. (2025) and compare accuracy at comparable mean
+response lengths in Section C.3, where additional continuations do not close the gap to EAPO.
+The average entropy exhibits an interesting trend throughout training. While retaining higher entropy
+than GRPO during later training, EAPO ends with lower average entropy than EntropyAdv and HAPO. A key
+distinction is that EAPO redistributes the original response-level advantage across tokens while preserving its
+within-response mean, whereas these baselines apply entropy-dependent additive adjustments. In particular,
+EntropyAdv adds a nonnegative entropy term to the advantage to encourage high-entropy actions and exhibits
+the highest final entropy in our experiments. EAPO, however, achieves stronger reasoning performance without
+a substantial increase in entropy, suggesting that higher average entropy is not a prerequisite for more effective
+exploration.
+5.4. Analysis of Exploration
+To assess whether EAPO’s asymmetric design broadens exploration, we compare pass@𝑘, response diversity,
+and epistemic marker frequency across different exploration methods.
+Exploration across Sampling Budgets. We evaluate pass@𝑘 on AIME26 with Qwen3-4B-Base, varying
+the sampling budget from 1 to 256. As shown in Figure 4 (Left), entropy-based methods, EntropyAdv and
+HAPO, expand coverage over GRPO, but the gains remain modest. RLRT, which uses privileged information to
+guide exploration, also yields only a limited improvement over GRPO. In contrast, EAPO consistently achieves
+the highest pass@𝑘 across all sampling budgets, maintaining a substantial margin over GRPO and the other
+baselines. In particular, at 𝑘 = 256, EAPO solves an additional problem that none of the baselines solve,
+suggesting that its exploration strategy broadens problem coverage even after extensive sampling.
+Response Diversity & Exploratory Cues. We further analyze the generated responses to assess whether
+EAPO also promotes exploratory behavior during reasoning. Since precisely measuring diversity across full
+reasoning trajectories is impractical, we use final-answer diversity as a tractable proxy on challenging problems.
+Specifically, we consider all problems from the main Qwen3-4B-Base experiments, using 𝑁 = 32 sampled
+responses per problem and selecting those with avg@32 ≤ 25% under the initial model. We measure normalized
+answer entropy (𝐻norm ) and the collision rate, the fraction of pairs of distinct sampled responses that produce
+
+8
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Table 4: Normalized answer entropy and collision rate on low-accuracy problems.
+Method
+GRPO
+EntropyAdv
+HAPO
+80/20
+RLRT
+EAPO (Ours)
+
+𝐻norm (↑) Collision (↓)
+0.657
+0.659
+0.647
+0.672
+0.659
+0.751
+
+0.166
+0.159
+0.173
+0.161
+0.168
+0.101
+
+Table 5: Ablation on sign–entropy coupling. Macro average of avg@32 /
+pass@32 (%) across six benchmarks. Our default EAPO configuration is
+shaded. Best scores are bolded.
+Entropy
+Preference
+
+Penalization (𝐴^𝑖 < 0): 𝑏−
+Low (−1)
+
+Uniform (0)
+
+High (+1)
+
+High (+1) 31.00 / 61.27 26.73 / 53.83 25.36 / 52.09
+Reinforcement
+Uniform (0) 26.08 / 51.26 24.48 / 50.43 22.89 / 50.03
+(𝐴^𝑖 > 0): 𝑏+
+Low (−1)
+23.99 / 49.84 23.07 / 48.62 22.56 / 47.83
+
+the same final answer:
+
+∑︀
+
+𝑖 𝑛𝑖 (𝑛𝑖 − 1)
+
+,
+(6)
+𝑁 (𝑁 − 1)
+∑︀
+where 𝑛𝑖 counts responses with final answer 𝑖, with 𝑖 𝑛𝑖 = 𝑁 . Table 4 shows that the other RLVR methods
+exhibit final-answer diversity comparable to GRPO, whereas EAPO achieves higher normalized answer entropy
+and a lower collision rate. This suggests that EAPO maintains broader exploration on challenging problems,
+producing a more diverse range of candidate solutions even when they are incorrect. Such diversity offers more
+opportunities to discover correct solutions, consistent with the broader coverage in the pass@𝑘 analysis above.
+𝐶=
+
+Beyond answer diversity, we further examine exploratory behavior within the generated responses via
+epistemic markers, tokens that signal exploratory behavior during reasoning (e.g., “wait”), following Kim et al.
+(2026b). Figure 4 (Right) shows that, while other exploration-oriented methods tend to generate epistemic
+tokens more frequently than GRPO, EAPO exhibits the highest frequency per 1,000 generated tokens across
+all six mathematical benchmarks by a substantial margin. This pattern suggests that EAPO’s combination of
+exploration promotion and penalty attenuation encourages the generation of such cues, supporting continued
+exploration of alternative reasoning paths.
+5.5. Ablation Studies
+Effect of Sign–Entropy Coupling. To isolate how entropy preferences under reinforcement and penalization
+affect performance, we independently vary the allocation direction for positive- and negative-advantage
+responses. Specifically, we replace sign(𝐴ˆ𝑖 ) in Equation (4) with 𝑏+ when 𝐴ˆ𝑖 > 0 and 𝑏− when 𝐴ˆ𝑖 < 0.
+Each coefficient is chosen from {−1, 0, +1}, corresponding to low-entropy preference, uniform credit, or
+high-entropy preference, respectively. Thus, (𝑏+ , 𝑏− ) = (+1, −1) recovers EAPO, whereas (0, 0) yields uniform
+token credit. We evaluate all nine combinations on Qwen3-4B-Base, reporting macro-averaged scores across
+the six benchmarks. Table 5 shows that performance improves as the entropy preference shifts from low to
+high for positive advantages and from high to low for negative advantages. Specifically, fixing high-entropy
+reinforcement (𝑏+ = +1) and shifting penalization from high to low entropy improves accuracy by 5.64
+percentage points. Consequently, (𝑏+ , 𝑏− ) = (+1, −1), the allocation used by EAPO, achieves the highest
+avg@32 and pass@32, improving avg@32 over uniform credit by 6.52 percentage points, which supports
+EAPO’s asymmetric allocation directions for reinforcement and penalization. We provide extended results with
+Qwen3-8B-Base, showing similar trends, in Section C.2.
+Sensitivity to 𝜅. EAPO introduces a single hyperparameter, 𝜅, to control the concentration of entropy-guided
+token credit, with 𝜅 = log 𝐾 allowing token weights within a response to differ by up to a factor of 𝐾.
+During training, we observe that larger 𝜅 generally leads to faster Table 6: Sensitivity to 𝜅. We report avg@32 /
+improvements but also greater instability, indicating a trade-off pass@32 (%) across different values of 𝜅.
+between credit concentration and optimization stability. We select
+AIME25
+AIME26
+𝜅 = log 4 as the default based on the observed training stability. 𝜅
+Table 6 shows that increasing 𝜅 generally improves overall perfor- 0
+10.42 / 36.67
+7.50 / 33.33
+mance. As 𝜅 approaches zero, the allocation converges to uniform log 2
+10.73 / 33.33
+10.63 / 26.67
+token credit (i.e., GRPO), and the accompanying performance log 4
+17.08 / 46.67
+15.73 / 50.00
+18.23 / 46.67
+15.83 / 40.00
+drop supports using entropy to distinguish token contributions log 8
+log 16
+15.73 / 43.33
+16.15 / 46.67
+to reinforcement and penalization.
+
+9
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+6. Related Work
+Fine-Grained Credit Assignment. Recent work supplements sparse outcome-level rewards in RLVR with
+finer-grained signals from learned process rewards (Wang et al., 2024; Cui et al., 2026), intermediate value
+estimates (Kazemnejad et al., 2025; Guo et al., 2025b), or teacher- and oracle-conditioned likelihoods (Yang
+et al., 2026a; Li et al., 2026a). These often require auxiliary models, rollouts, or privileged information. Other
+approaches use the policy’s internal signals, deriving token importance from outcome sensitivity (Li et al.,
+2026b; Pala et al., 2026) or combining entropy with correctness (Chen et al., 2026). Token-level advantages
+are also reweighted using selected-token probabilities or surprisal to modulate policy updates (Tang et al.,
+2026; Ding & Zhang, 2026).
+RLVR for Exploratory Reasoning. To broaden exploration in RLVR, existing approaches allocate more samples
+to difficult problems (Yang et al., 2026b), revisit promising states (Dou et al., 2025), or branch over alternative
+continuations (Wu et al., 2026; Cao et al., 2026). Explicit diversity objectives encourage complementary
+outcomes and reasoning traces (Song et al., 2025; Hu et al., 2026; Bahlous-Boldi et al., 2026). Other methods
+regulate policy concentration (Cui et al., 2025; Hao et al., 2026; Zhang et al., 2026) or preserve low-probability
+alternatives (Huang et al., 2026). Token-level credit assignment supports exploration through reversed teacher
+signals (Kim et al., 2026a) or updates focused on high-entropy tokens (Wang et al., 2025; He et al., 2026;
+Cheng et al., 2026a). In contrast, EAPO couples policy entropy with the advantage sign for asymmetric credit
+assignment, without requiring auxiliary models, additional rollouts, or privileged information.
+
+7. Conclusion
+In this work, we proposed EAPO, an entropy-guided credit assignment method for improving exploration in
+LLM reasoning. By coupling entropy with the advantage sign, EAPO reinforces uncertain decisions in successful
+responses and penalizes confident decisions in unsuccessful responses, while attenuating penalties on uncertain
+alternatives. Evaluations on reasoning tasks demonstrate consistent overall improvements over RLVR baselines
+designed to promote exploration, across both base and reasoning models. Our analyses further show that
+EAPO effectively broadens problem coverage and increases response diversity. These findings highlight the
+value of asymmetric credit assignment for reinforcing surprising success and correcting repeated failure while
+sustaining exploration.
+
+Limitations and Future Directions
+EAPO uses the policy’s own entropy as an intrinsic signal for token-level credit assignment, allowing it to guide
+exploration without auxiliary models, additional information, or extra compute. However, this signal reflects
+the model’s learned preferences and confidence, making the resulting allocation sensitive to its existing biases.
+The reliability of entropy-guided credit assignment therefore depends on how well the model’s uncertainty
+aligns with the actual contribution of individual reasoning decisions to the final outcome.
+While our work effectively expands exploration in LLM reasoning, our analysis of the underlying mechanism
+focuses on alternative continuations from a given reasoning state, leaving the explicit combination of findings
+across different states or trajectories unexplored. Recent advances in scientific discovery, however, illustrate the
+value of maintaining diverse candidate solutions and iteratively reusing or combining their useful components
+to generate new hypotheses and algorithms (Novikov et al., 2025; Gottweis et al., 2026). Motivated by these
+approaches, an important direction for future work is to investigate how exploration can be strengthened in
+such iterative discovery settings.
+
+Ethics Statement
+This work aims to improve exploration in LLM reasoning using existing models and reasoning datasets. However,
+models trained with EAPO may retain biases from their underlying models and data, and improved reasoning
+performance does not guarantee reliable or safe outputs. We therefore encourage appropriate safeguards when
+applying the method beyond the reasoning tasks studied here or in real-world applications.
+
+10
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+References
+Ryan Bahlous-Boldi, Isha Puri, Idan Shenfeld, Akarsh Kumar, Mehul Damani, Sebastian Risi, Omar Khattab,
+Zhang-Wei Hong, and Pulkit Agrawal. Vector policy optimization: Training for diversity improves test-time
+search. In COLM 2026 Workshop on Efficient Reasoning, 2026.
+Lang Cao, Hui Ruan, Yongqian Li, Peng Chao, Wu Ning, Haonan Song, Renhong Chen, and Yitong Li. Treeadv:
+Tree-structured advantage redistribution for group-based rl. arXiv preprint arXiv:2601.03703, 2026.
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared Kaplan, Harri
+Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large language models trained on
+code. arXiv preprint arXiv:2107.03374, 2021.
+Xinzhu Chen, Xuesheng Li, Zhongxiang Sun, and Weijie Yu. Beyond high-entropy exploration: Correctnessaware low-entropy segment-based advantage shaping for reasoning LLMs. In Findings of the Association for
+Computational Linguistics: ACL 2026, pp. 32970–32984, San Diego, California, United States, July 2026.
+Association for Computational Linguistics.
+Daixuan Cheng, Shaohan Huang, Xuekai Zhu, Bo Dai, Xin Zhao, Zhenliang Zhang, and Furu Wei. Reasoning
+with exploration: An entropy perspective. In Fortieth AAAI Conference on Artificial Intelligence, Thirty-Eighth
+Conference on Innovative Applications of Artificial Intelligence, Sixteenth Symposium on Educational Advances in
+Artificial Intelligence, AAAI 2026, Singapore, January 20-27, 2026, pp. 30377–30385. AAAI Press, 2026a.
+Guangran Cheng, Chengqi Lyu, Songyang Gao, Wenwei Zhang, and Kai Chen. Group entropy-controlled policy
+optimization. arXiv preprint arXiv:2607.16850, 2026b.
+Ganqu Cui, Yuchen Zhang, Jiacheng Chen, Lifan Yuan, Zhi Wang, Yuxin Zuo, Haozhan Li, Yuchen Fan, Huayu
+Chen, Weize Chen, et al. The entropy mechanism of reinforcement learning for reasoning language models.
+arXiv preprint arXiv:2505.22617, 2025.
+Ganqu Cui, Lifan Yuan, Zefan Wang, Hanbin Wang, Yuchen Zhang, Jiacheng Chen, Wendi Li, Bingxiang He,
+Yuchen Fan, Tianyu Yu, Qixin Xu, Weize Chen, Jiarui Yuan, Huayu Chen, Kaiyan Zhang, Xingtai Lv, Shuo
+Wang, Yuan Yao, Xu Han, Hao Peng, Yu Cheng, Zhiyuan Liu, Maosong Sun, Bowen Zhou, and Ning Ding.
+Process reinforcement through implicit rewards. Transactions on Machine Learning Research, 2026. ISSN
+2835-8856.
+Yi Ding and Ruqi Zhang. Does on-policy distillation really distill? from noisy teacher to self-improvement. arXiv
+preprint arXiv:2608.31046, 2026.
+Monroe D Donsker and SR Srinivasa Varadhan. Asymptotic evaluation of certain markov process expectations
+for large time, i. Communications on pure and applied mathematics, 28(1):1–47, 1975.
+Shihan Dou, Muling Wu, Jingwen Xu, Rui Zheng, Tao Gui, and Qi Zhang. Improving RL exploration for LLM
+reasoning through retrospective replay. In Natural Language Processing and Chinese Computing - 14th National
+CCF Conference, NLPCC 2025, Urumqi, China, August 7-9, 2025, Proceedings, Part I, volume 16102 of Lecture
+Notes in Computer Science, pp. 594–606. Springer, 2025.
+Juraj Gottweis, Wei-Hung Weng, Alexander Daryin, Tao Tu, Petar Sirkovic, Artiom Myaskovsky, Grzegorz
+Glowaty, Felix Weissenberger, Alessio Orlandi, Dan Popovici, et al. Accelerating scientific discovery with
+co-scientist. Nature, 655(8122):487–496, 2026.
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang,
+Shirong Ma, Xiao Bi, et al. Deepseek-r1 incentivizes reasoning in llms through reinforcement learning.
+Nature, 645(8081):633–638, 2025a.
+Yiran Guo, Lijie Xu, Jie Liu, Dan Ye, and Shuang Qiu. Segment policy optimization: Effective segment-level
+credit assignment in RL for large language models. In Advances in Neural Information Processing Systems
+38: Annual Conference on Neural Information Processing Systems 2025, NeurIPS 2025, San Diego, CA, USA,
+December 2-7, 2025 / Mexico City, Mexico, November 30 - December 5, 2025, 2025b.
+
+11
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Zhezheng Hao, Hong Wang, Haoyang Liu, Jian Luo, Jiarui Yu, Hande Dong, Qiang Lin, Can Wang, and Jiawei
+Chen. Rethinking entropy interventions in RLVR: An entropy change perspective. In Proceedings of the 64th
+Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 31105–31133,
+San Diego, California, United States, July 2026. Association for Computational Linguistics.
+Yuhang He, Haodong Wu, Siyi Liu, Hongyu Ge, Hange Zhou, Keyi Wu, Zhuo Zheng, Qihong Lin, Zixin Zhong,
+and Yongqi Zhang. Where hindsight credit can reside: A signed-capacity view of token updates in rlvr. arXiv
+preprint arXiv:2604.11056, 2026.
+HMMT. Harvard–mit mathematics tournament (HMMT) problems and solutions, 2026. URL https://www.
+hmmt.org/www/archive/problems.
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu
+Chen. Lora: Low-rank adaptation of large language models. In The Tenth International Conference on Learning
+Representations, ICLR 2022, Virtual Event, April 25-29, 2022, 2022.
+Zican Hu, Shilin Zhang, Yafu Li, Jianhao Yan, Xuyang Hu, Leyang Cui, Xiaoye Qu, Chunlin Chen, Yu Cheng,
+and Zhi Wang. Diversity-incentivized exploration for versatile reasoning. In The Fourteenth International
+Conference on Learning Representations, ICLR 2026, Rio de Janeiro, Brazil, April 23-27, 2026, 2026.
+Guanhua Huang, Tingqiang Xu, Mingze Wang, Qi Yi, Xue Gong, Siheng Li, Ruibin Xiong, Kejiao Li, Yuhao
+Jiang, and Bo Zhou. Low-probability tokens sustain exploration in reinforcement learning with verifiable
+reward. In Findings of the Association for Computational Linguistics: ACL 2026, pp. 24158–24188, San Diego,
+California, United States, July 2026. Association for Computational Linguistics.
+Amirhossein Kazemnejad, Milad Aghajohari, Eva Portelance, Alessandro Sordoni, Siva Reddy, Aaron C. Courville,
+and Nicolas Le Roux. Vineppo: Refining credit assignment in RL training of llms. In Forty-second International
+Conference on Machine Learning, ICML 2025, Vancouver, BC, Canada, July 13-19, 2025, volume 267 of
+Proceedings of Machine Learning Research, 2025.
+Jeonghye Kim, Jiwon Jeon, Dongsheng Li, and Yuqing Yang. Rebellious student: Reversing teacher signals for
+reasoning exploration with self-distilled RLVR. In COLM 2026 Workshop on Efficient Reasoning, 2026a.
+Jeonghye Kim, Xufang Luo, Minbeom Kim, Sangmook Lee, Dongsheng Li, and Yuqing Yang. Understanding
+reasoning in llms through strategic information allocation under uncertainty. arXiv preprint arXiv:2603.15500,
+2026b.
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao
+Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention.
+In Proceedings of the 29th Symposium on Operating Systems Principles, SOSP 2023, Koblenz, Germany, October
+23-26, 2023, pp. 611–626. ACM, 2023.
+Hynek Kydlíček. Math-verify: Math verification library, 2025. URL https://github.com/huggingface/
+math-verify.
+Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, Faeze Brahman, Lester
+James Validad Miranda, Alisa Liu, Nouha Dziri, Xinxi Lyu, Yuling Gu, Saumya Malik, Victoria Graf, Jena D.
+Hwang, Jiangjiang Yang, Ronan Le Bras, Oyvind Tafjord, Christopher Wilhelm, Luca Soldaini, Noah A. Smith,
+Yizhong Wang, Pradeep Dasigi, and Hannaneh Hajishirzi. Tulu 3: Pushing frontiers in open language model
+post-training. In Second Conference on Language Modeling, COLM 2025, Montreal, Canada, October 7-10,
+2025, 2025.
+Yu Li, Rui Miao, Tian Lan, and Zhengling Qi. Oppo: Bayesian value recursion for token-level credit assignment
+in llm reasoning. arXiv preprint arXiv:2605.21851, 2026a.
+Ziheng Li, Liu Kang, Feng Xiao, Luxi Xing, Qingyi Si, Zhuoran Li, Weikang Gong, Deqing Yang, Yanghua
+Xiao, and Hongcheng Guo. Outcome-grounded advantage reshaping for fine-grained credit assignment in
+mathematical reasoning. In Proceedings of the 64th Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), pp. 24681–24693, San Diego, California, United States, July 2026b.
+Association for Computational Linguistics.
+
+12
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John
+Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In The Twelfth International Conference
+on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024, 2024.
+Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In 7th International Conference on
+Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019, 2019.
+MAA. American mathematics competitions (AMC) 12 problems and solutions, 2023. URL https://
+artofproblemsolving.com/wiki/index.php/AMC_12_Problems_and_Solutions.
+MAA. American invitational mathematics examination (AIME) problems and solutions, 2026. URL https:
+//artofproblemsolving.com/wiki/index.php/AIME_Problems_and_Solutions.
+Volodymyr Mnih, Adrià Puigdomènech Badia, Mehdi Mirza, Alex Graves, Timothy P. Lillicrap, Tim Harley,
+David Silver, and Koray Kavukcuoglu. Asynchronous methods for deep reinforcement learning. In Proceedings
+of the 33rd International Conference on Machine Learning, ICML 2016, New York City, NY, USA, June 19-24,
+2016, volume 48 of Proceedings of Machine Learning Research, pp. 1928–1937, 2016.
+Niklas Muennighoff, Zitong Yang, Weijia Shi, Xiang Lisa Li, Li Fei-Fei, Hannaneh Hajishirzi, Luke Zettlemoyer,
+Percy Liang, Emmanuel Candès, and Tatsunori Hashimoto. s1: Simple test-time scaling. In Proceedings of the
+2025 Conference on Empirical Methods in Natural Language Processing, pp. 20275–20321, Suzhou, China,
+November 2025. Association for Computational Linguistics.
+Alexander Novikov, Ngân Vũ, Marvin Eisenberger, Emilien Dupont, Po-Sen Huang, Adam Zsolt Wagner, Sergey
+Shirobokov, Borislav Kozlovskii, Francisco JR Ruiz, Abbas Mehrabian, et al. Alphaevolve: A coding agent for
+scientific and algorithmic discovery. arXiv preprint arXiv:2506.13131, 2025.
+Olmo Team. Olmo 3. arXiv preprint arXiv:2512.13961, 2025.
+Tej Deep Pala, Vernon Toh, and Soujanya Poria. Grail: Gradient-reweighted advantages for reinforcement
+learning with verifiable rewards. arXiv preprint arXiv:2606.04889, 2026.
+Qwen Team. Qwen3 technical report. arXiv preprint arXiv:2505.09388, 2025.
+Yi Ren and Danica J. Sutherland. Learning dynamics of LLM finetuning. In The Thirteenth International
+Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025, 2025.
+Claude Elwood Shannon. A mathematical theory of communication. The Bell System Technical Journal, 27(3):
+379–423, 1948.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang,
+YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300, 2024.
+Yuda Song, Julia Kempe, and Rémi Munos. Outcome-based exploration for LLM reasoning. In NeurIPS 2025
+Workshop: Second Workshop on Aligning Reinforcement Learning Experimentalists and Theorists, 2025.
+Zafir Stojanovski, Oliver Stanley, Joe Sharratt, Richard Jones, Abdulhakeem Adefioye, Jean Kaddour, and
+Andreas Köpf. Reasoning gym: Reasoning environments for reinforcement learning with verifiable rewards.
+In Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing
+Systems 2025, NeurIPS 2025, San Diego, CA, USA, December 2-7, 2025 / Mexico City, Mexico, November 30 December 5, 2025, 2025.
+Xinyu Tang, Yuliang Zhan, Zhixun Li, Xin Zhao, Zhenduo Zhang, Zujie Wen, Zhiqiang Zhang, and Jun Zhou.
+Rethinking sample polarity in reinforcement learning with verifiable rewards. In Proceedings of the 64th
+Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 2928–2954, San
+Diego, California, United States, July 2026. Association for Computational Linguistics.
+Leandro von Werra, Younes Belkada, Lewis Tunstall, Edward Beeching, Tristan Thrush, Nathan Lambert,
+Shengyi Huang, Kashif Rasul, and Quentin Gallouédec. Trl: Transformers reinforcement learning, 2020.
+URL https://github.com/huggingface/trl.
+
+13
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Peiyi Wang, Lei Li, Zhihong Shao, Runxin Xu, Damai Dai, Yifei Li, Deli Chen, Yu Wu, and Zhifang Sui. Mathshepherd: Verify and reinforce LLMs step-by-step without human annotations. In Proceedings of the 62nd
+Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 9426–9439,
+Bangkok, Thailand, August 2024. Association for Computational Linguistics.
+Shenzhi Wang, Le Yu, Chang Gao, Chujie Zheng, Shixuan Liu, Rui Lu, Kai Dang, Xiong-Hui Chen, Jianxin
+Yang, Zhenru Zhang, Yuqiong Liu, An Yang, Andrew Zhao, Yang Yue, Shiji Song, Bowen Yu, Gao Huang, and
+Junyang Lin. Beyond the 80/20 rule: High-entropy minority tokens drive effective reinforcement learning
+for LLM reasoning. In Advances in Neural Information Processing Systems 38: Annual Conference on Neural
+Information Processing Systems 2025, NeurIPS 2025, San Diego, CA, USA, December 2-7, 2025 / Mexico City,
+Mexico, November 30 - December 5, 2025, 2025.
+Fang Wu, Weihao Xuan, Heli Qi, Aaron Tu, Ximing Lu, Li Erran Li, and Yejin Choi. Deepsearch: Overcome
+the bottleneck of reinforcement learning with verifiable rewards via tree-based search. In The Fourteenth
+International Conference on Learning Representations, ICLR 2026, Rio de Janeiro, Brazil, April 23-27, 2026,
+2026.
+Can Xie, Ruotong Pan, Xiangyu Wu, Zhang Yunfei, Jiayi Fu, Tingting Gao, and Guorui Zhou. Unlocking
+exploration in RLVR: Uncertainty-aware advantage shaping for deeper reasoning. In Findings of the Association
+for Computational Linguistics: ACL 2026, pp. 19057–19076, San Diego, California, United States, July 2026.
+Association for Computational Linguistics.
+Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weiping Wang, Jiaqi
+Wang, and Nan Duan. Self-distilled rlvr. arXiv preprint arXiv:2604.03128, 2026a.
+Zhicheng Yang, Zhijiang Guo, Yinya Huang, Yongxin Wang, Dongchun Xie, Hanhui Li, Yiwei Wang, Xiaodan
+Liang, and Jing Tang. Depth-breadth synergy in RLVR: unlocking LLM reasoning gains with adaptive
+exploration. In Forty-third International Conference on Machine Learning, ICML 2026, Seoul, Korea (South),
+July 6-11, 2026, 2026b.
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong
+Liu, Juncai Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan Tong, Chi
+Zhang, Mofan Zhang, Ru Zhang, Wang Zhang, Hang Zhu, Jinhua Zhu, Jiaze Chen, Jiangjie Chen, Chengyi
+Wang, Hongli Yu, Yuxuan Song, Xiangpeng Wei, Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin
+Yan, Yonghui Wu, and Mingxuan Wang. DAPO: an open-source LLM reinforcement learning system at scale.
+In Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing
+Systems 2025, NeurIPS 2025, San Diego, CA, USA, December 2-7, 2025 / Mexico City, Mexico, November 30 December 5, 2025, 2025.
+Jiazheng Zhang, Ziche Fu, Junrui Shen, Yunbin Zhao, Yunke Zhang, Zhiheng Xi, Long Ma, Chenxin An, Zhihao
+Zhang, Shichun Liu, et al. Entropy polarity in reinforcement fine-tuning: Direction, asymmetry, and control.
+arXiv preprint arXiv:2605.11775, 2026.
+
+14
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+A. Extended Related Work
+Uncertainty-Guided RLVR. Many existing RLVR approaches concentrate learning on high-entropy regions or
+seek to increase policy entropy to promote exploration. Specifically, 80/20 (Wang et al., 2025) restricts policy
+gradients to the highest-entropy 20% of tokens, while HAPO (He et al., 2026) increases advantage magnitudes
+at high-entropy positions under both advantage signs. EntropyAdv (Cheng et al., 2026a) and UCAS (Xie et al.,
+2026) promote exploration by adding a nonnegative entropy bonus or subtracting a certainty-based penalty
+from token advantages, respectively, while limiting token-level shaping to one-sided additive adjustments.
+LESS (Chen et al., 2026), on the other hand, targets confident reasoning patterns in low-entropy segments,
+reinforcing those associated with success and suppressing those associated with failure. Recent approaches also
+regulate updates to low-probability tokens, protecting useful alternatives from excessive suppression (Huang
+et al., 2026) or suppressing low-probability branches to favor more confident reasoning alternatives (Ding
+& Zhang, 2026). These approaches weight or filter tokens by uncertainty without distinguishing between
+reinforcement and penalization. In contrast, EAPO couples policy entropy with the response advantage sign to
+reverse this preference, strengthening uncertain successes while concentrating correction on confident positions
+in failed responses and attenuating penalties at uncertain positions to preserve exploratory alternatives.
+Outcome-Conditioned Credit Assignment. Several recent approaches also seek to promote exploration
+by assigning credit differently to successful and failed responses. GEPO (Cheng et al., 2026b) attenuates
+positive advantages in low-entropy response groups to reduce over-exploitation and negative advantages in
+high-entropy groups to preserve exploration, while leaving token-level credit uniform within each response.
+RLRT (Kim et al., 2026a) reweights token-level advantages using reversed teacher–student likelihood ratios to
+reinforce successful exploration, but requires privileged context and additional teacher forward passes while
+leaving failed responses uniformly weighted. A3PO (Tang et al., 2026) leverages sampled-token probability to
+amplify advantage magnitudes for selected tokens, leaving the advantages of the remaining tokens unchanged.
+However, this can increase the overall advantage magnitude without attenuating penalties on potentially
+exploratory decisions, and sampled-token probability does not fully characterize predictive uncertainty, as
+replacing entropy with surprisal destabilizes asymmetric credit allocation (Section C.1). Our approach, EAPO,
+uses full-vocabulary policy entropy to redistribute advantage across all token positions while preserving its
+within-response mean. By conditioning token weights on entropy and the response advantage sign, EAPO both
+reinforces uncertain successes and preserves exploratory alternatives in failed responses without privileged
+context or additional teacher forward passes.
+
+15
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+B. Additional Experimental Details
+B.1. Additional Details on the Resampling Experiment
+We provide further details on the experimental setup and selection statistics for the high- and low-entropy
+windows used in the resampling experiment in Section 3. Specifically, for each of Qwen3-4B-Base and Qwen38B-Base, we select 20 moderately difficult problems from AIME24/25/26, HMMT26, and AMC23, where
+moderate difficulty is defined as 6–14 correct responses out of 32 attempts by the corresponding model. For
+each problem, we randomly select two correct and two incorrect responses from these attempts. Within each
+selected response, we exclude the first and last 20% of tokens and consider pairs of non-overlapping 32-token
+windows whose starting positions differ by at most 20% of the response length. We select the pair with the
+largest difference in mean token entropy. We then fix the original prefix preceding each selected window and
+sample 64 continuations, measuring overlap as the mean pairwise common-prefix length over their first 32
+generated tokens and reward as their final-answer accuracy.
+We additionally analyze the relative starting positions Table 7: Starting positions of selected windows (% of
+of the selected high- and low-entropy windows for each response length; mean ± std.).
+model, expressed as a percentage of the original response
+Model
+High entropy
+Low entropy
+length. Table 7 reports their means and standard devi47.29 ± 6.20
+53.73 ± 7.11
+ations. Across both models, the high- and low-entropy Qwen3-4B-Base
+Qwen3-8B-Base
+51.44
+±
+8.02
+49.86 ± 6.42
+windows have mean starting positions near the middle of
+the responses, with neither type consistently preceding
+the other, suggesting that window selection does not systematically favor earlier high-entropy windows or later
+low-entropy windows.
+B.2. Benchmark Details
+We evaluate on 297 problems across six mathematical reasoning benchmarks: AIME24, AIME25, and
+AIME26 (MAA, 2026), with 30 problems each; HMMT26 (HMMT, 2026), with 33 problems; AMC23 (MAA,
+2023), with 40 problems; and MATH500-H (Lightman et al., 2024), the level-5 subset of MATH500 containing
+134 problems. We automatically grade the generated answers against the reference answers using MathVerify (Kydlíček, 2025). We sample 32 responses per mathematical reasoning problem and report avg@32
+as the mean response accuracy and pass@32 as the probability of generating at least one correct response,
+using the unbiased estimator of Chen et al. (2021) for pass@𝑘. We average scores over problems within each
+benchmark and give equal weight to the six benchmarks when reporting an overall mean.
+To assess out-of-distribution generalization, we evaluate on eight tasks from Reasoning Gym (Stojanovski
+et al., 2025), covering logical, spatial, and algorithmic reasoning. The task headers in Table 3 correspond to
+graph coloring (Graph), color cube rotation (Cube), mini sudoku (Sudoku), family relationships (Family),
+knights & knaves (K&K), group anagrams (Anag.), zebra puzzles (Zebra), and palindrome generation (Palin.).
+We use the “easy” task configurations by default, but modify the settings for three tasks: graph coloring uses
+12–14 vertices and an edge probability of 0.15, mini sudoku uses 4–6 empty cells, and zebra puzzles use three
+people and three characteristics. For each task, we evaluate 50 problems, sampling 16 responses per problem
+and using the task-specific verifier to assess full correctness, without counting partial credit as success. We
+report avg@16 within each task and compute the macro average by assigning equal weight to all eight tasks
+before rounding.
+B.3. Training Hyperparameters
+Table 8 summarizes the shared training hyperparameters for EAPO and the baselines, including the optimizer,
+batching, generation, and adapter settings. We train on DAPO-Math-17k-Processed using a DAPO-style
+configuration (Yu et al., 2025), including asymmetric clipping, token-level loss aggregation, and a soft overlong
+penalty. Unless otherwise stated, all optimization-based methods use LoRA (Hu et al., 2022) and are optimized
+with AdamW (Loshchilov & Hutter, 2019). We implement training with TRL (von Werra et al., 2020) and use
+vLLM (Kwon et al., 2023) for rollout generation. All experiments are conducted using a single NVIDIA H200
+GPU. Parameters not listed in the table follow the defaults of the corresponding implementations.
+
+16
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Table 8: Training hyperparameters shared by EAPO and the baselines. Parameters not listed here follow the defaults of the
+original implementations.
+Category
+
+Parameter
+
+Value
+
+Data
+
+Maximum response length
+Soft overlong penalty onset
+
+10,240 (base); 38,912 (reasoning)
+8,192 (base); 32,768 (reasoning)
+
+Batching
+
+Prompts per rollout iteration
+Responses per prompt (𝐺)
+Generation batch size
+Mini-batch size
+Rollout iterations
+
+16
+8
+128
+64
+100
+
+Optimization
+
+Optimizer
+Learning rate
+Learning-rate schedule
+Warmup steps
+Weight decay
+Maximum gradient norm
+Random seed
+
+AdamW
+1 × 10−5
+Constant with warmup
+10
+0.01
+1.0
+42
+
+LoRA
+
+Rank (𝑟)
+Alpha (𝛼)
+Dropout
+Target modules
+
+32
+64
+0
+Attention and MLP projections
+
+Generation
+
+Inference engine
+Temperature / top-𝑝
+Top-𝑘 filtering
+
+vLLM
+1.0 / 1.0
+Disabled
+
+Policy loss
+
+Clipping thresholds (𝜖low , 𝜖high )
+Loss aggregation
+KL penalty coefficient
+Entropy bonus coefficient
+Importance sampling
+Advantage std normalization
+
+(0.2, 0.28)
+Token mean
+0
+0
+Token-level TIS (cap = 2.0)
+Group
+
+EAPO
+
+Concentration (𝜅)
+𝜀𝐻
+
+log 4
+10−8
+
+17
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Entropy (Ours)
+
+Surprisal
+
+Initial
+
+EntropyAdv
+
+HAPO
+
+RLRT
+
+EAPO
+
+50
+
+0.4
+0.3
+0.2
+0.1
+
+Macro Avg@32 (%)
+
+20
+
+Avg@32 (%)
+
+Training reward
+
+GRPO
+
+15
+10
+5
+
+0.0
+0
+
+50
+
+100
+Step
+
+150
+
+Figure 5: Entropy vs. Surprisal
+as signals for credit allocation.
+
+200
+
+0
+
+30
+20
+10
+1.7
+
+4k
+8k
+12k
+Mean response length (tokens)
+
+Figure 6: Response length vs.
+accuracy with budget forcing.
+
+40
+
+4
+
+8
+Model size (B)
+
+14
+
+Figure 7: Scaling with model
+size in the Qwen3-Base family.
+
+1
+
+C. Additional Experimental Results
+C.1. Entropy vs. Surprisal
+We examine whether sampled-token surprisal can substitute for policy entropy in EAPO. Specifically, the
+surprisal-based variant uses the normalized negative log-probability of the sampled token,
+𝒮𝑖,𝑡 = − log 𝜋old (𝑦𝑖,𝑡 | 𝑥, 𝑦𝑖,<𝑡 ),
+
+(7)
+
+in place of entropy as the signal for the sign-dependent credit allocation in Equation (4).
+Figure 5 shows the training dynamics of entropy-based EAPO and its surprisal-based variant on Qwen34B-Base. EAPO continues to improve its training reward, whereas the surprisal-based variant shows declining
+reward after a few training steps and eventually collapses to zero reward. Although the expectation of surprisal
+under the policy equals entropy at a fixed prefix, sampling a low-probability token can yield high surprisal
+even under a concentrated policy. Consequently, surprisal-based reweighting may conflate rare token selections
+with uncertain decisions, potentially destabilizing credit allocation. In contrast, entropy summarizes the full
+next-token distribution independently of which token is sampled. These results suggest that the sampled-token
+surprisal of A3PO (Tang et al., 2026) is less suitable than entropy for dense asymmetric advantage redistribution.
+C.2. Extended Ablation on Sign–Entropy Coupling
+We provide an additional ablation on sign–entropy coupling with Qwen3-8B-Base, extending the analysis in
+Section 5.5. As shown in Table 9, performance improves as the entropy preference shifts from high to low
+for penalization and from low to high for reinforcement, mirroring the trends observed with Qwen3-4B-Base.
+Specifically, with high-entropy reinforcement fixed (𝑏+ = +1), shifting penalization from high to low entropy
+improves avg@32 by 4.25 percentage points. Similarly, with low-entropy penalization fixed (𝑏− = −1), shifting
+reinforcement from low to high entropy improves avg@32 by 6.22 percentage points, indicating that both
+directions contribute to the gains of EAPO. Consequently, the default EAPO configuration (𝑏+ , 𝑏− ) = (+1, −1),
+which combines both preferences, achieves the highest avg@32 and pass@32 among all nine combinations.
+These results further support EAPO’s asymmetric allocation directions for reinforcement and penalization.
+Table 9: Sign–entropy coupling on Qwen3-8B-Base. Macro average of avg@32
+/ pass@32 (%) across six benchmarks. Our default EAPO configuration is shaded.
+Best scores are bolded.
+Entropy
+
+Reinforcement
+(𝐴^𝑖 > 0): 𝑏+
+
+Penalization (𝐴^𝑖 < 0): 𝑏−
+
+Preference
+
+Low (−1)
+
+Uniform (0)
+
+High (+1)
+
+High (+1)
+
+34.02 / 65.55
+
+32.14 / 63.62
+
+29.77 / 52.40
+
+Uniform (0)
+
+30.55 / 59.52
+
+26.78 / 52.18
+
+27.48 / 52.56
+
+Low (−1)
+
+27.80 / 54.68
+
+25.26 / 50.27
+
+24.63 / 49.82
+
+18
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Table 10: LoRA vs. full fine-tuning on Qwen3-4B-Base across mathematical reasoning benchmarks.
+
+Method
+
+Mode
+
+AIME24
+
+AIME25
+
+AIME26
+
+HMMT26
+
+AMC23
+
+MATH500-H
+
+Avg@32 Pass@32 Avg@32 Pass@32 Avg@32 Pass@32 Avg@32 Pass@32 Avg@32 Pass@32 Avg@32 Pass@32
+
+GRPO
+
+LoRA
+Full
+
+12.5
+13.1
+
+33.3
+36.7
+
+10.4
+12.8
+
+36.7
+36.7
+
+7.5
+10.2
+
+33.3
+33.3
+
+5.9
+6.9
+
+24.2
+27.3
+
+54.5
+53.7
+
+90.0
+92.5
+
+56.1
+58.2
+
+85.1
+87.3
+
+EntropyAdv
+
+LoRA
+Full
+
+13.1
+13.0
+
+46.7
+36.7
+
+12.5
+11.0
+
+36.7
+36.7
+
+10.0
+10.0
+
+33.3
+36.7
+
+6.3
+7.7
+
+27.3
+30.3
+
+53.8
+52.5
+
+90.0
+87.5
+
+56.7
+57.2
+
+86.6
+84.3
+
+HAPO
+
+LoRA
+Full
+
+12.2
+11.9
+
+36.7
+36.7
+
+11.0
+10.5
+
+40.0
+40.0
+
+8.9
+8.9
+
+30.0
+30.0
+
+6.5
+6.3
+
+24.2
+21.2
+
+52.0
+55.3
+
+87.5
+92.5
+
+53.2
+54.9
+
+85.1
+82.8
+
+80/20
+
+LoRA
+Full
+
+11.9
+11.6
+
+33.3
+33.3
+
+12.7
+9.2
+
+40.0
+40.0
+
+8.6
+6.9
+
+30.0
+30.0
+
+6.6
+6.1
+
+24.2
+27.3
+
+54.1
+55.3
+
+95.0
+90.0
+
+52.8
+53.0
+
+84.3
+87.3
+
+RLRT
+
+LoRA
+Full
+
+15.3
+19.1
+
+50.0
+56.7
+
+12.7
+13.9
+
+33.3
+36.7
+
+14.2
+14.0
+
+40.0
+36.7
+
+8.9
+8.5
+
+36.4
+30.3
+
+54.9
+57.0
+
+95.0
+92.5
+
+57.4
+59.7
+
+86.6
+88.1
+
+EAPO (Ours)
+
+LoRA
+Full
+
+20.2
+18.3
+
+53.3
+50.0
+
+17.1
+18.2
+
+46.7
+43.3
+
+15.7
+15.2
+
+50.0
+46.7
+
+13.4
+12.3
+
+33.3
+36.4
+
+56.3
+57.7
+
+92.5
+92.5
+
+63.3
+62.8
+
+91.8
+91.8
+
+C.3. Performance under Matched Token Budgets
+We examine whether longer responses alone explain the performance gains of EAPO, extending baseline
+generations with budget forcing following Muennighoff et al. (2025). Specifically, we evaluate Qwen3-4B-Base
+on all 30 AIME24 problems with 32 responses per problem, comparing the initial model, GRPO, EntropyAdv,
+HAPO, and RLRT against EAPO without forced continuations. For each baseline, we remove the termination
+token (or </think>) and append Wait to resume generation, allowing up to 𝐾 ∈ {0, 1, 2, 3, 4} continuations
+under a total output budget of 32,768 tokens. We use the same sampling settings as during training.
+Figure 6 suggests that additional continuations do not necessarily translate into more effective exploration.
+Specifically, EAPO achieves an avg@32 of 20.2% with a response length of 5.3k tokens, whereas the strongest
+baseline, RLRT, peaks at 15.7% with a mean response length of approximately 6.2k tokens. Most approaches
+show little benefit from early continuations and lose accuracy as responses are extended further. These results
+suggest that the performance gain of EAPO stems from enhanced exploration, with increased response length
+arising as a consequence of this process.
+C.4. Scaling with Model Size
+To examine the scaling behavior of EAPO as model size increases, we evaluate the Qwen3-Base family from
+1.7B to 14B parameters, reporting macro-averaged avg@32 across the six mathematical reasoning benchmarks
+with ±1 standard error bars.1 As shown in Figure 7, performance improves with model size, while the relative
+performance trends among methods remain broadly consistent across scales, with EAPO achieving the highest
+mean accuracy throughout. These results suggest that the benefits of asymmetric entropy-guided credit
+assignment persist as model capacity increases.
+C.5. LoRA vs. Full Fine-Tuning
+Exploration can depend on retaining useful low-probability alternatives, motivating us to examine whether
+the benefits of entropy-guided credit assignment depend on the fine-tuning strategy. Our main experiments
+use LoRA (Hu et al., 2022), which constrains weight updates to a low-rank form and may therefore produce
+different changes in token probabilities from full fine-tuning. To assess whether EAPO’s gains also hold under
+full fine-tuning, we compare EAPO and the baselines under LoRA and full fine-tuning on Qwen3-4B-Base across
+the six mathematical reasoning benchmarks. To ensure comparable training conditions, we use a learning rate
+of 1 × 10−6 for full fine-tuning while keeping all other experimental settings identical to those used for LoRA.
+1 We compute standard error as 𝐵 −1
+
+√︁∑︀
+𝐵
+
+2
+𝑏=1 𝑠𝑏 /𝑁 , where 𝐵 is the number of benchmarks (6), 𝑁 is the number of generations (32),
+
+and 𝑠𝑏 is the sample standard deviation of benchmark 𝑏’s accuracy over generations.
+
+19
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Table 10 shows that LoRA and full fine-tuning yield similar overall performance, with absolute differences
+in macro-averaged avg@32 of less than one percentage point on average across methods. Moreover, EAPO
+maintains the best overall performance under both strategies, with its margin over the strongest baseline
+exceeding these shifts in performance. These results suggest that the benefits of asymmetric entropy-guided
+credit assignment are robust to the choice of fine-tuning strategy.
+C.6. Performance across Random Seeds
+GRPO
+
+EntropyAdv
+
+HAPO
+
+EAPO
+
+150
+
+200
+
+0.4
+
+Training reward
+
+To evaluate whether the performance gains of EAPO are robust to random seed selection, we evaluate GRPO, EntropyAdv,
+HAPO, and EAPO on Qwen3-4B-Base across three distinct random seeds, extending our main experiment (which used a fixed
+seed of 42). Figure 8 reports the mean training reward and
+standard deviation across the three runs, with a 15-step moving
+average applied to the curves. EAPO maintains higher mean reward than all three baselines over most of training, and the gap
+becomes particularly pronounced in the final stages, where its
+standard-deviation band lies above those of the baselines. This
+separation suggests that the reward improvement is substantial
+relative to the observed variation across seeds. Overall, these
+results demonstrate the consistency of EAPO’s gains beyond
+single-seed evaluation.
+
+0.3
+0.2
+0.1
+0
+
+100
+Step
+
+50
+
+Figure 8: Training reward across three seeds
+(mean ± standard deviation).
+1
+
+20
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+D. Proofs and Additional Theoretical Analysis
+We provide the proofs of Propositions 1 and 2 (Sections D.1 and D.2) and present an information-theoretic
+motivation for entropy-guided allocation under a binary decision model (Section D.3).
+D.1. KL-Regularized Uncertainty Allocation
+The exponential allocation in Equation (4) is motivated by extending KL anchoring from policy optimization (Shao et al., 2024) to token-level credit allocation, favoring greater signed uncertainty while anchoring
+credit to a uniform reference. We formalize this motivation through Equation (5), where 𝑢𝑖 is the reference
+distribution and sign(𝐴ˆ𝑖 )ℎ𝑖,𝑡 is the utility. The resulting optimization is a finite-dimensional instance of the
+Gibbs variational principle (Donsker & Varadhan, 1975).
+Proposition 1 (Restated). Let 𝑢𝑖,𝑡 = 1/𝑇𝑖 be uniform credit over ℐ𝑖 , and let ∆(ℐ𝑖 ) denote the probability simplex
+on these positions. For 𝜅 > 0, the problem
+{︂
+}︂
+1
+𝑖
+ˆ
+max sign(𝐴 )E𝑡∼𝑞 [ℎ𝑖,𝑡 ] − 𝐷KL (𝑞‖𝑢𝑖 )
+(8)
+𝜅
+𝑞∈Δ(ℐ𝑖 )
+(︁
+)︁
+*
+∝ 𝑢𝑖,𝑡 exp 𝜅 sign(𝐴ˆ𝑖 )ℎ𝑖,𝑡 .
+has the unique solution 𝑞𝑖,𝑡
+Proof. Let 𝑠𝑖 = sign(𝐴ˆ𝑖 ) and define
+𝑍𝑖 =
+
+∑︁
+
+𝑢𝑖,𝑡 exp(𝜅𝑠𝑖 ℎ𝑖,𝑡 ) ,
+
+*
+𝑞𝑖,𝑡
+=
+
+𝑡∈ℐ𝑖
+
+𝑢𝑖,𝑡 exp(𝜅𝑠𝑖 ℎ𝑖,𝑡 )
+.
+𝑍𝑖
+
+(9)
+
+For any 𝑞 ∈ ∆(ℐ𝑖 ), the objective in Equation (8) can be written as
+𝑠𝑖 E𝑡∼𝑞 [ℎ𝑖,𝑡 ] −
+
+1
+log 𝑍𝑖
+1
+𝐷KL (𝑞‖𝑢𝑖 ) =
+− 𝐷KL (𝑞‖𝑞 * ).
+𝜅
+𝜅
+𝜅
+
+(10)
+
+Since 𝐷KL (𝑞‖𝑞 * ) ≥ 0, with equality if and only if 𝑞 = 𝑞 * , the allocation 𝑞 * is the unique global maximizer.
+*
+Moreover, 𝑢𝑖,𝑡 = 1/𝑇𝑖 and Equation (4) give 𝑞𝑖,𝑡
+= 𝑤𝑖,𝑡 /𝑇𝑖 .
+D.2. Concentration of Unchosen Alternatives
+We examine how stronger negative updates change the distribution over unchosen tokens, providing a theoretical
+rationale for EAPO’s penalty attenuation. At a fixed prefix, let 𝑧 be the initial logits, 𝑝 = softmax(𝑧) the
+corresponding token distribution, and 𝑎 the sampled token. For fixed 𝐴ˆ < 0 and allocation weight 𝑤, we
+consider one policy-gradient step on 𝑧:
+𝑧 (𝛽) = 𝑧 − 𝛽(𝑒𝑎 − 𝑝),
+
+ˆ ≥ 0,
+𝛽 = 𝜂|𝐴|𝑤
+
+𝑝(𝛽) = softmax(𝑧 (𝛽) ),
+
+(11)
+
+where 𝑒𝑎 is the one-hot vector for 𝑎, 𝜂 > 0 is the effective step size, and 𝛽 controls the strength of the negative
+update. We exclude the sampled token and renormalize the remaining probabilities to obtain the conditional
+distribution over unchosen tokens:
+(𝛽)
+
+𝜈𝑣(𝛽) =
+
+𝑝𝑣
+
+(𝛽)
+
+1 − 𝑝𝑎
+
+,
+
+𝑣 ∈ 𝒱 ∖ {𝑎}.
+
+(12)
+
+(𝛽)
+
+Here, 𝑝𝑣 is the probability of token 𝑣 after the update and 𝜈 = 𝜈 (0) is the initial conditional distribution. The
+entropy of 𝜈 (𝛽) measures concentration among the alternatives, while 𝐷KL (𝜈 (𝛽) ‖𝜈) measures their deviation
+from the initial proportions.
+
+21
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Proposition 2 (Restated). For a single negative logit update with finite logits and the initial distribution held
+fixed, the sampled-token probability strictly decreases with 𝛽, while 𝐻(𝜈 (𝛽) ) is nonincreasing and 𝐷KL (𝜈 (𝛽) ‖𝜈) is
+nondecreasing.
+Proof. Let us assume finite logits over a finite vocabulary with |𝒱| ≥ 2, so all initial and updated probabilities
+(𝛽)
+are positive and 0 < 𝑝𝑎 < 1. For any 𝑣 ̸= 𝑎, subtracting the updated logits gives
+(𝛽)
+
+log
+
+𝑝𝑎
+
+(𝛽)
+𝑝𝑣
+
+= log
+
+𝑝𝑎
+− 𝛽(1 − 𝑝𝑎 + 𝑝𝑣 ).
+𝑝𝑣
+(𝛽)
+
+(13)
+
+(𝛽)
+
+(𝛽)
+
+Every coefficient 1 − 𝑝𝑎 + 𝑝𝑣 is positive, so each ratio 𝑝𝑣 /𝑝𝑎 strictly increases with 𝛽. Therefore, 𝑝𝑎
+∑︀
+(𝛽)
+(𝛽)
+(1 + 𝑣̸=𝑎 𝑝𝑣 /𝑝𝑎 )−1 establishes strict decrease of the sampled-token probability.
+
+=
+
+For unchosen tokens, the update adds 𝛽𝑝𝑣 to each logit. Conditioning on this set cancels the full softmax
+normalizer, yielding
+∑︁
+𝜈𝑣 𝑒𝛽𝑝𝑣
+𝜈𝑣(𝛽) =
+,
+𝑍𝑎 (𝛽) =
+𝜈𝑢 𝑒𝛽𝑝𝑢 .
+(14)
+𝑍𝑎 (𝛽)
+𝑢̸=𝑎
+
+Differentiation gives 𝜓𝑎′ (𝛽) = E𝑣∼𝜈 (𝛽) [𝑝𝑣 ] and 𝜓𝑎′′ (𝛽) = Var𝑣∼𝜈 (𝛽) (𝑝𝑣 ).
+
+Let 𝜓𝑎 (𝛽) = log 𝑍𝑎 (𝛽).
+𝑑
+calculation gives 𝑑𝛽
+E𝜈 (𝛽) [log 𝜈𝑣 ] = Cov𝜈 (𝛽) (log 𝜈𝑣 , 𝑝𝑣 ).
+
+The same
+
+Writing 𝐻(𝜈 (𝛽) ) = −E𝜈 (𝛽) [log 𝜈𝑣 ] − 𝛽𝜓𝑎′ (𝛽) + 𝜓𝑎 (𝛽), we obtain
+𝑑
+𝐻(𝜈 (𝛽) ) = −Cov𝜈 (𝛽) (log 𝜈𝑣 , 𝑝𝑣 ) − 𝛽Var𝜈 (𝛽) (𝑝𝑣 ) ≤ 0.
+𝑑𝛽
+
+(15)
+
+To verify the inequality, let 𝑉, 𝑈 be independent draws from 𝜈 (𝛽) . Then
+1
+E[(log 𝜈𝑉 − log 𝜈𝑈 )(𝑝𝑉 − 𝑝𝑈 )] ≥ 0,
+2
+because log 𝜈𝑣 = log 𝑝𝑣 − log(1 − 𝑝𝑎 ) is increasing in 𝑝𝑣 .
+Cov𝜈 (𝛽) (log 𝜈𝑣 , 𝑝𝑣 ) =
+
+(16)
+
+Similarly, Equation (14) implies
+𝐷KL (𝜈 (𝛽) ‖𝜈) = 𝛽𝜓𝑎′ (𝛽) − 𝜓𝑎 (𝛽),
+
+𝑑
+𝐷KL (𝜈 (𝛽) ‖𝜈) = 𝛽Var𝜈 (𝛽) (𝑝𝑣 ) ≥ 0.
+𝑑𝛽
+
+(17)
+
+The entropy and KL remain unchanged when all alternatives have the same initial probability.
+D.3. Implications for Entropy-Guided Allocation
+We further examine how feedback information varies with entropy under success and failure, providing an
+information-theoretic interpretation of EAPO’s asymmetric credit allocation. Consider a binary decision with
+correct branch 𝐵 ∈ {0, 1} and belief 𝑃𝑝 (𝐵 = 1) = 𝑝 ∈ (0, 1). We assume that the policy samples 𝑎 independently
+of 𝐵, with Pr(𝑎 = 1) = 𝑝, and receives feedback 𝑅 = 1{𝑎 = 𝐵}. We define feedback information as the expected
+posterior correction conditional on the outcome:
+𝐽𝑟 (𝑝) = E[𝐷KL (𝑃𝑝 (𝐵 | 𝑎, 𝑅)‖𝑃𝑝 (𝐵)) | 𝑅 = 𝑟] ,
+
+𝑟 ∈ {0, 1}.
+
+(18)
+
+Proposition 3 (Asymmetric information from success and failure). For the binary decision model, 𝐽1 (𝑝) is strictly
+increasing in the binary entropy 𝐻(𝑝), whereas 𝐽0 (𝑝) is strictly decreasing in 𝐻(𝑝).
+Proof. Let 𝐷 = 𝑝2 + (1 − 𝑝)2 . The pair (𝑎, 𝑅) identifies 𝐵, so the posterior KL is − log 𝑃𝑝 (𝐵). Conditional
+on success, the probabilities of 𝐵 = 1 and 𝐵 = 0 are 𝑝2 /𝐷 and (1 − 𝑝)2 /𝐷, whereas on failure both are
+1/2 because each mismatched pair has probability 𝑝(1 − 𝑝). Substituting into Equation (18) gives 𝐽1 (𝑝) =
+2
+2
+log(1−𝑝)
+− 𝑝 log 𝑝+(1−𝑝)
+and 𝐽0 (𝑝) = − 12 log(𝑝(1 − 𝑝)). By symmetry and continuity, it suffices to consider
+𝐷
+𝑝
+𝑝 > 1/2, where 𝐻 ′ (𝑝) = − log 1−𝑝
+< 0 and
+𝐽1′ (𝑝) = −
+
+2𝑝 − 1 2𝑝(1 − 𝑝)
+𝑝
+−
+log
+< 0,
+2
+𝐷
+𝐷
+1−𝑝
+
+𝐽0′ (𝑝) =
+
+2𝑝 − 1
+> 0.
+2𝑝(1 − 𝑝)
+
+(19)
+
+22
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+Proposition 3 shows that success leads to a larger expected correction of the prior belief at uncertain
+decisions, whereas failure does so at confident decisions. This matches EAPO’s preference for high entropy
+under success and low entropy under failure.
+Uniform allocation gives every decision the same share of credit, while EAPO shifts credit toward decisions
+with greater expected feedback information. For 𝑇 decisions with the same outcome 𝑟, let 𝐽𝑡 = 𝐽𝑟 (𝑝𝑡 ) and let
+𝑞𝑡E denote the fraction of credit assigned to decision 𝑡 by Equation (4). Then
+(︀
+)︀
+Cov𝑢 𝐽𝑡 , 𝑒𝜅𝑠ℎ𝑡
+E𝑞E [𝐽𝑡 ] − E𝑢 [𝐽𝑡 ] =
+≥ 0,
+(20)
+E𝑢 [𝑒𝜅𝑠ℎ𝑡 ]
+where 𝑢𝑡 = 1/𝑇 , 𝑠 = 2𝑟 − 1, and ℎ𝑡 is the normalized entropy from Equation (3). The covariance is nonnegative
+because entropy normalization preserves the ordering and larger credit shares correspond to larger 𝐽𝑡 . Thus,
+in this binary model, the average feedback information weighted by EAPO is larger than the uniform average
+when 𝜅 > 0 and the normalized entropies are nonuniform. Favoring high entropy under both outcomes would
+instead shift credit toward less informative decisions under failure. This supports EAPO’s asymmetric credit
+allocation by showing that it prioritizes more informative decisions under both outcomes, while Section D.2
+supports attenuating penalties at uncertain decisions to preserve alternatives for further exploration.
+
+23
+
+Surprising Success, Repeated Failure: Entropy-Guided Credit Assignment for Exploration in LLM Reasoning
+
+E. Example of Surprising Success, Repeated Failure
+Figure 9 illustrates repeated failure and surprising success in 32 rollouts from the initial Qwen3-4B-Base
+model on a MATH500 problem: all 28 AM–GM rollouts fail, whereas one of four Lagrange-multiplier rollouts
+succeeds. Specifically, the model repeatedly applies AM–GM to 𝑥4 , 4𝑦 2 , and 4𝑧 4 , resulting in the invalid
+substitution 𝑥4 𝑦 2 𝑧 4 = (𝑥𝑦𝑧)4 . Yet a successful alternative remains within AM–GM: splitting 4𝑦 2 into 2𝑦 2 + 2𝑦 2
+allows the same inequality to establish the correct minimum of 16. Meanwhile, the less frequently attempted
+Lagrange-multiplier approach also reaches this minimum, illustrating a successful alternative that remains rare
+under the current policy and should be reinforced to make such success more repeatable.
+
+Problem. Let 𝑥, 𝑦, and 𝑧 be positive real numbers such that 𝑥𝑦𝑧 = 2. Find the minimum value of
+𝑥4 + 4𝑦 2 + 4𝑧 4 .
+Sample 0
+We will apply the AM-GM Inequality to the terms 𝑥4 , 4𝑦 2 , and 4𝑧 4 :
+√︀
+[. . .] 𝑥4 + 4𝑦 2 + 4𝑧 4 ≥ 3 3 16𝑥4 𝑦 2 𝑧 4 ,
+𝑥4 𝑦 2 𝑧 4 = (𝑥𝑦𝑧)4 = 24 = 16.
+√
+√
+√
+4
+2
+4
+[. . .] 𝑥 + 4𝑦 + 4𝑧 = 4 2 + 4 2 + 4 2 = 12 .
+Sample 4
+We start by applying the AM-GM inequality to the terms 𝑥4 , 4𝑦 2 , and 4𝑧 4 :
+√︀
+[. . .] 𝑥4 + 4𝑦 2 + 4𝑧 4 ≥ 3 3 16𝑥4 𝑦 2 𝑧 4 ,
+𝑥4 𝑦 2 𝑧 4 = (𝑥𝑦𝑧)4 = 24 = 16.
+[. . .] However, we need to recheck the equality condition and the value of 𝑘.
+[. . .]
+
+𝑥4 + 4𝑦 2 + 4𝑧 4 = 24 + 4 · 12 + 4 · 14 = 16 + 4 + 4 = 24 .
+
+Sample 10
+To find the minimum value, we need to check if equality can be achieved in the AM-GM inequality. Equality holds
+when all the terms are equal:
+
+[. . .]
+
+𝑥4 = 4𝑦 2 = 4𝑧 4 .
+√
+√
+√
+𝑥4 + 4𝑦 2 + 4𝑧 4 = 3 · 4 2 = 12 2 .
+𝑥4 = 4𝑦 2 = 4𝑧 4 = 4 2,
+
+Sample 5
+We will use the method of Lagrange multipliers to find the minimum value of the function
+𝑓 (𝑥, 𝑦, 𝑧) = 𝑥4 + 4𝑦 2 + 4𝑧 4 subject to the constraint 𝑔(𝑥, 𝑦, 𝑧) = 𝑥𝑦𝑧 − 2 = 0.
+4𝑥3
+8𝑦
+=−
+=⇒ 𝑥4 = 2𝑦 2 ,
+𝑦𝑧
+𝑥𝑧
+√ √
+[. . .] (𝑥, 𝑦, 𝑧) = ( 2, 2, 1),
+−
+
+−
+
+4𝑥3
+16𝑧 3
+=−
+=⇒ 𝑥4 = 4𝑧 4 .
+𝑦𝑧
+𝑥𝑦
+
+𝑥4 + 4𝑦 2 + 4𝑧 4 = 4 + 8 + 4 = 16 .
+
+Figure 9: Qualitative example of surprising success and repeated failure. Among 32 rollouts of this problem, 28 use
+the AM–GM inequality and all fail, while four use Lagrange multipliers and only one succeeds. The model repeatedly
+applies AM–GM and makes the invalid substitution 𝑥4 𝑦 2 𝑧 4 = (𝑥𝑦𝑧)4 , yet splitting 4𝑦 2 into 2𝑦 2 + 2𝑦 2 would enable the
+same approach to reach the correct minimum of 16. The less frequently sampled Lagrange-multiplier approach yields the
+sole observed correct response, motivating reinforcement of this rare success to make it more repeatable.
+
+24
+
+

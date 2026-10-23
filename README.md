@@ -1,6 +1,6 @@
 # LLM Post-Training Paper Digests
 
-A topic-organized synthesis of **99 post-training research papers and technical reports** on LLM post-training — covering data curation, training curriculum, post-training methods (preference optimization, PPO/GRPO/DAPO, process reward models, distillation, self-play, agent RL), and evaluation & metrics — spanning arXiv-ID years **2022 → 2026**.
+A topic-organized synthesis of **148 post-training research papers and technical reports** on LLM post-training — covering data curation, training curriculum, post-training methods (preference optimization, PPO/GRPO/DAPO, process reward models, distillation, self-play, agent RL), and evaluation & metrics — spanning arXiv-ID years **2022 → 2026**.
 
 Each paper is summarized across four lenses and the results are grouped into four topic files, **sorted by the paper's arXiv-ID year (2022→2026)**. A chronological evolution narrative ties the eras together.
 
@@ -8,15 +8,15 @@ Each paper is summarized across four lenses and the results are grouped into fou
 
 ```
 .
-├── pdfs/                 # 99 source PDFs (code_ / data_ / method_ / report_ / rl_ prefixes)
-├── texts/                # 99 extracted full-text files — the source material for the digests
+├── pdfs/                 # 148 source PDFs (code_ / data_ / method_ / report_ / rl_ prefixes)
+├── texts/                # 148 extracted full-text files — the source material for the digests
 ├── summaries/            # the synthesis
 │   ├── 01-data-curation.md
 │   ├── 02-training-curriculum.md
 │   ├── 03-post-training-methods.md
 │   ├── 04-evaluation-metrics.md
 │   └── EVOLUTION_OVERVIEW.md
-├── digests/              # 99 structured per-paper JSON digests (machine-readable supplement)
+├── digests/              # 148 structured per-paper JSON digests (machine-readable supplement)
 └── README.md             # you are here
 ```
 
@@ -24,11 +24,11 @@ Each paper is summarized across four lenses and the results are grouped into fou
 
 | File | Lens | Papers with substantive content |
 |------|------|---------------------------------|
-| [`summaries/01-data-curation.md`](summaries/01-data-curation.md) | **Data curation** — sourcing, generation, filtering, de-dup, quality control, scaling; datasets, sizes, selection criteria | 88 / 99 |
-| [`summaries/02-training-curriculum.md`](summaries/02-training-curriculum.md) | **Training curriculum** — stage ordering (pretrain→SFT→preference→RL→distillation), multi-stage RL, self-play loops, warmup/anneal, cross-stage data mixing | 67 / 99 |
-| [`summaries/03-post-training-methods.md`](summaries/03-post-training-methods.md) | **Post-training methods** — preference optimization, RL algorithms (PPO/GRPO/DAPO/…), process reward models, distillation, self-play, agent loops, infra | 99 / 99 |
-| [`summaries/04-evaluation-metrics.md`](summaries/04-evaluation-metrics.md) | **Evaluation & metrics** — benchmarks and metrics (AIME, MATH, HumanEval, SWE-bench, Arena, win rate, pass@k, avg@k, …) and headline results | 99 / 99 |
-| [`summaries/EVOLUTION_OVERVIEW.md`](summaries/EVOLUTION_OVERVIEW.md) | **Chronological evolution narrative** — older trends, how the field evolved, why newer methods were proposed, and the most-recent (2025–2026) technology shift | all 99 |
+| [`summaries/01-data-curation.md`](summaries/01-data-curation.md) | **Data curation** — sourcing, generation, filtering, de-dup, quality control, scaling; datasets, sizes, selection criteria | 132 / 148 |
+| [`summaries/02-training-curriculum.md`](summaries/02-training-curriculum.md) | **Training curriculum** — stage ordering (pretrain→SFT→preference→RL→distillation), multi-stage RL, self-play loops, warmup/anneal, cross-stage data mixing | 94 / 148 |
+| [`summaries/03-post-training-methods.md`](summaries/03-post-training-methods.md) | **Post-training methods** — preference optimization, RL algorithms (PPO/GRPO/DAPO/…), process reward models, distillation, self-play, agent loops, infra | 148 / 148 |
+| [`summaries/04-evaluation-metrics.md`](summaries/04-evaluation-metrics.md) | **Evaluation & metrics** — benchmarks and metrics (AIME, MATH, HumanEval, SWE-bench, Arena, win rate, pass@k, avg@k, …) and headline results | 148 / 148 |
+| [`summaries/EVOLUTION_OVERVIEW.md`](summaries/EVOLUTION_OVERVIEW.md) | **Chronological evolution narrative** — older trends, how the field evolved, why newer methods were proposed, and the most-recent (2025–2026) technology shift | all 148 |
 
 The [`digests/`](digests/) folder holds the structured per-paper digests (one JSON per paper, with all four lenses, key results, and an evolution note) that back these summaries — kept as a machine-readable supplement.
 
@@ -47,5 +47,6 @@ The [`digests/`](digests/) folder holds the structured per-paper digests (one JS
 
 ## Corpus at a glance
 
-- **99 papers**, years from arXiv IDs: 2022 (3), 2023 (14), 2024 (30), 2025 (31), 2026 (21).
-- Filename prefixes: `code_` (17), `data_` (21), `method_` (22), `report_` (25), `rl_` (14). Each filename embeds the arXiv ID (e.g. `rl_DAPO_2503.14476.txt` → arXiv `2503.14476`, year 2025).
+- **148 papers**, years from arXiv IDs: 2022 (3), 2023 (14), 2024 (30), 2025 (31), 2026 (70).
+- Filename prefixes: `code_` (27), `data_` (23), `method_` (32), `report_` (41), `rl_` (25). Each filename embeds the arXiv ID (e.g. `rl_DAPO_2503.14476.txt` → arXiv `2503.14476`, year 2025).
+- The 2026 cohort includes a focused **Aug–Oct 2026 window of 49 papers** — the recursive-self-improvement wave (NeoHorse-1, Dream-RSI, RRSI, Frontis-MA1, Self-HPO), environment & harness scaling (WorkForge, HarnessScaling, RES, AutoEnvScaling, WEFT), scaled-and-questioned on-policy distillation (OPD-Scaling, OPDVR, DoesOPD-Distill), hardened off-policy/async RL (ProxKL, TIPS, EAPO, TTPO, SPROUT, Arctic-SWE), new anti-gaming benchmarks (SWE-Bench-Pro-V2, SWE-Bench-Pro-Verified), and 16 new frontier technical reports (DeepSeek-V4.1-Flash, Gemma 4, Qwen3.8-Omni, Qwen-CUA, Qwen-UI-Agent, Solar-Open-2, A.X-K2, Apodex-1.1, MiMo-V2.6, Hunyuan-A13B, Muse-Glimmer, MiniMax-M2, Apertus-1.5, Seed2.0, LLM-jp-4, Palmyra-x6) — plus three lineage gap-fillers whose primary arXiv versions date to May–early-July 2026 (Gemma 4, Seed 2.0, MiniMax-M2).

@@ -1,0 +1,3988 @@
+Solar Open 2 Technical Report
+Upstage Solar Team
+Date: Jul 22, 2026
+Website: https://upstage.ai
+
+arXiv:2607.20062v2 [cs.CL] 24 Jul 2026
+
+Abstract
+We present Solar Open 2, a 250B-A15B Mixture-of-Experts language model built for long-horizon
+agentic tasks, scaled up from Solar Open 1 (Solar Open 100B). To hold entire agent trajectories in
+a single context, Solar Open 2 reaches a 1M-token window through a hybrid attention stack that
+interleaves one softmax layer among every three linear-attention layers, using no positional encoding
+and a gated delta rule extended to negative eigenvalues. To train at this scale under a fixed compute
+budget, we make training eﬀicient in two ways: a stronger starting point, and higher-value data. For the
+starting point, we initialize Solar Open 2 from Solar Open 1, transferring the 5.69B-parameter shared
+skeleton that survives the architectural change and learning everything else through full pre-training.
+For the data, we curate for value per token: quality- and rarity-aware data curation and mixtureratio optimization refine a 20T pool into a 10T mixture that, at equal token budget, outperforms the
+Solar Open 1 recipe. To build its agent skills, we train twelve domain specialists across purpose-built
+scenarios, then consolidate them into a single model by Multi-teacher On-Policy Distillation (MOPD).
+Against comparably sized open-weight models on English benchmarks, Solar Open 2 leads on MMLUPro, LiveCodeBench, and the APEX-Agents agentic suite, and stays competitive with the strongest
+(DeepSeek-V4-Flash and MiMo-V2.5) elsewhere. On Korean benchmarks, Solar Open 2 records the
+highest average of any model compared, including fast-tier closed APIs, and on Ko-GDPval, an inhouse Korean oﬀicework-agent benchmark, it is competitive with DeepSeek-V4-Pro (1.6T) at less than
+a sixth of its size.
+
+Figure 1: Benchmark comparison across three capability groups: knowledge and reasoning (top),
+agentic (middle), and Korean (bottom).
+
+1
+
+1
+
+Introduction
+
+Frontier language models have become a matter of national capability. For Korea, this makes a
+sovereign AI a strategic priority: an openly available, nationally grounded frontier model with
+strong native-language ability. The field’s shift toward long-horizon agents that plan and act
+over extended contexts raises this bar further, demanding both stronger reasoning and far longer
+context. Solar Open 1 (102B-A12B) took a first step toward such a model, using a Korean-eﬀicient
+tokenizer to reach strong Korean performance at modest scale (Park et al., 2026). In long-horizon
+agent settings, however, it fell short on two counts: limited long-context capability and thin
+coverage of agent scenarios.
+We present Solar Open 2, a 250B-A15B Mixture-of-Experts model that closes these gaps and
+advances Solar Open 1 along four axes. First, it scales up from 102B to 250B total parameters,
+raising the model’s capacity for knowledge and reasoning. Second, it preserves Korean token
+eﬀiciency, inheriting the Solar Open 1 tokenizer, for which global-model tokenizers spend 1.2–
+1.9× more tokens on the same Korean text. Third, it adopts linear attention within a hybrid
+attention stack (Section 2.2), extending usable context from Solar Open 1’s 128K to 1M tokens.
+Fourth, it trains on purpose-built long-horizon agent scenarios spanning conversational tool use,
+coding, and oﬀicework (Section 4), extending the sovereign model from language to agency. Two
+further contributions keep training at this scale eﬀicient: a selective weight transfer that initializes
+only about 2.3% of Solar Open 2’s parameters from Solar Open 1, the portion that survives the
+architectural change (Section 3.1), and data curation that maximizes value per token over a
+globally deduplicated corpus (Section 3.2).
+The result is a model strong in both languages and in agentic work. On Korean knowledge,
+reasoning, and agent benchmarks, Solar Open 2 records the highest average among comparably
+sized open-weight models and even fast-tier closed APIs. On Ko-GDPval, a Korean oﬀiceworkagent benchmark, it essentially matches DeepSeek-V4-Pro (1.6T) at less than a sixth of its size.
+On English benchmarks, it leads comparably sized open-weight models on MMLU-Pro, LiveCodeBench, and the agentic APEX-Agents suite, and stays competitive with the strongest of
+them, DeepSeek-V4-Flash and MiMo-V2.5, elsewhere (Figure 1; Section 5).
+
+2
+
+Model Architecture
+
+Solar Open 2 is a sparse Mixture-of-Experts (MoE) Transformer with 250B total parameters and
+15B active parameters per token. It keeps the Solar Open 1 backbone unchanged: 48 layers,
+hidden size 4,096, head dimension 128, 64 query and 8 key-value heads, a 196,608-token vocabulary, a single shared expert with no dense layers, and pre-norm residuals. On this backbone it
+introduces three structural changes: a hybrid attention stack that interleaves linear and softmax
+attention, no positional encoding, and an expert pool enlarged from 128 to 320 routed experts.
+The initialization of this architecture is itself a contribution, a selective weight transfer from Solar
+Open 1 described in Section 3.1.
+
+2.1 Solar Open 2 Tokenizer
+Solar Open 2 inherits the Solar Open 1 tokenizer without modification. It is a custom byte-level
+BPE tokenizer with a 196,608-token vocabulary, trained on a corpus that oversamples Korean
+and the target domains, with digit splitting and whitespace preservation for arithmetic and code
+fidelity. An identical vocabulary across the two generations is also a precondition for transferring
+the embedding and output-layer weights (Section 3.1).
+The tokenizer’s strength is most pronounced in Korean, and especially in agent trajectories.
+Measured on the task prompts of Ko-GDPval, an in-house Korean oﬀicework-agent benchmark, it
+reaches 4.41 bytes per token, first among the 12 tokenizers compared (Figure 2). This is roughly
+24% more eﬀicient than the best global model (MiniMax-M3, 3.54) and ahead of the Korean
+2
+
+Figure 2: Tokenizer eﬀiciency in bytes per token (higher is better: fewer tokens for the same text).
+Solar Open 2 inherits the Solar Open 1 tokenizer unchanged. In the Ko-Agent group (Ko-GDPval
+task prompts), it ranks first among the 12 tokenizers compared, about 24% above the best global
+model (MiniMax-M3, 3.54).
+sovereign models A.X-K1 (4.27) and K-EXAONE (4.12). The margin holds on general Korean
+text, where it reaches 5.40 bytes per token against 4.36 for the best global model (Qwen3.5). In
+long-horizon agent scenarios, where the working context accumulates over many turns, expressing
+the same content in fewer tokens translates directly into lower inference cost and a longer effective
+context.
+
+2.2 Solar Open 2 Architecture
+The central objective of the Solar Open 2 architecture is a usable context window beyond 1M
+tokens, served at approximately one quarter of the memory and computation of an all-softmax
+stack. Softmax attention grows its KV cache linearly and its computation quadratically with
+sequence length, becoming a bottleneck precisely in the long-horizon agent scenarios we target.
+We address this bottleneck with a hybrid architecture that combines linear and softmax
+attention, following recent designs such as Kimi Linear (Kimi Team, 2025), Qwen3.5 (Qwen Team,
+2026), and Nemotron 3 (NVIDIA, 2025). Solar Open 2 interleaves one softmax-attention layer
+with three linear-attention layers in every block of four and repeats this pattern twelve times,
+so that 12 of the 48 layers (25%) are softmax and 36 (75%) are linear (Figure 3). Within each
+block the softmax layer comes first (S-L-L-L), unlike the linear-first ordering (L-L-L-S) adopted
+by Kimi Linear and Qwen3.5. It adopts GQA (Ainslie et al., 2023) for the softmax layers and
+KDA (Kimi Delta Attention) (Yang et al., 2025; Kimi Team, 2025) for the linear layers, with three
+extensions: no positional encoding (NoPE), a sigmoid output gate, and negative eigenvalues. The
+linear layers carry the bulk of the sequence modeling: they accumulate context into a fixed-size
+recurrent state, keeping the KV cache constant in sequence length and the computation linear,
+while the softmax layers preserve the exact global recall that pure linear attention lacks.
+No positional encoding (NoPE). In softmax attention, positional encoding injects position
+information into the queries and keys so that attention can depend on relative distance. Explicit
+schemes such as RoPE, however, tie the model to the length distribution seen during training, requiring data that spans the target range and capping generalization beyond the trained
+
+3
+
+Figure 3: Solar Open 2 architecture. The 48-layer stack (left) repeats a four-layer pattern twelve
+times: one softmax-attention layer followed by three linear-attention layers, each paired with an
+MoE block, and no positional encoding anywhere in the model. Insets detail the MoE block
+with 320 routed experts and one shared expert (top), the softmax-attention layer, GQA with
+an elementwise sigmoid output gate (bottom), and the linear-attention layer, KDA with the
+negative-eigenvalue extension β = 2σ(·) ∈ (0, 2) (right). Colors mark the selective weight transfer
+(Section 3.1): blue modules are transferred from Solar Open 1 in full, hatched modules in part,
+and yellow modules are randomly initialized.
+length (Kazemnejad et al., 2023). Solar Open 2 removes positional encoding entirely: the softmax layers learn no explicit position signal, and relative position is instead carried solely by
+the linear-attention layers, which encode token order intrinsically through their sequential state.
+This removes both the RoPE extrapolation limit and the softmax position-learning bottleneck.
+In principle, Solar Open 2 can therefore support an unbounded context length regardless of the
+length distribution of its training data.
+Sigmoid output gate. Following Qiu et al. (2025), we add an elementwise sigmoid gate on the
+output of scaled dot-product attention in the softmax layers. Multiplying each head’s output
+by this query-dependent gate (i) introduces non-linearity into the otherwise low-rank softmaxattention mapping, (ii) makes the output query-dependently sparse, and (iii) suppresses the “attention sink”, the pathological collapse of attention onto a few early tokens. Empirically this
+gating improves training stability (tolerating larger learning rates) and strengthens long-context
+extrapolation (Qiu et al., 2025), both of which directly serve the 1M-token objective.
+Negative eigenvalues. Standard linear-attention cores, including the KDA used in Kimi Linear (allow_neg_eigval=False), restrict the eigenvalues of their state-transition matrix to [0,1],
+so the recurrent state can only decay or persist, never flip sign or actively erase. Such cores
+provably cannot solve state-tracking problems such as parity or modular counting (Grazzi et al.,
+2025), and in practice, information written incorrectly into the fixed-size state persists and compounds along the sequence. Solar Open 2 instead sets allow_neg_eigval=True: widening the
+write strength to β = 2σ(·) ∈ (0, 2) (applied identically to the delta rule’s erase term βkk ⊤ S and
+write term βkv ⊤ ) expands the eigenvalue range to [−1, 1]. Negative eigenvalues let the state flip
+sign and self-correct, restoring the capacity for genuine state tracking (Grazzi et al., 2025). This
+extension matters most in our linear-heavy, NoPE design: with no positional signal in the softmax
+4
+
+Table 1: Architecture specifications of Solar Open 1 (102B) and Solar Open 2 (250B). Solar Open
+2 keeps the Solar Open 1 backbone dimensions while changing the attention stack, positional
+encoding, expert pool, context length, and initialization.
+
+a
+
+Hyperparameter
+
+Solar Open 1 (102B)
+
+Solar Open 2 (250B)
+
+Total Parameters
+Active Parameters / Token
+Context Length
+Vocabulary Size
+
+102B
+12B
+131,072 (128K)
+196,608
+
+250B
+15B
+1,048,576 (1M)
+196,608
+
+Num Layers
+Hidden Size
+Head Dimension
+Attention Heads (Q / KV)
+Attention
+Positional Embedding
+
+48
+4,096
+128
+64 / 8
+Softmax
+RoPE (θ = 106 )
+
+48
+4,096
+128
+64 / 8 a
+Hybrid: [Softmax ×1, Linear ×3] ×12 b
+NoPE
+
+Num Experts (Routed)
+Num Shared Experts
+Experts per Token (Top-k)
+MoE Intermediate Size
+Activation
+
+128
+1
+8
+1,280
+SiLU
+
+320
+1
+8
+1,280
+SiLU
+
+Weight Init
+
+from-scratch
+
+Selective transfer from Solar Open 1 (2.27%) c
+
+KV heads apply only to the softmax layers; the linear layers use 64 heads and keep no KV cache.
+
+b
+
+The softmax layers use GQA with a sigmoid output gate; the linear layers use an extension of KDA (see §2.2).
+5.69B weights (2.3% of Solar Open 2’s 250B; 5.6% of Solar Open 1’s 102B) are initialized from Solar Open 1; the
+rest are random (see §3.1).
+c
+
+Figure 4: Architecture ablation on a 10B-A1B proxy trained from scratch; only the architecture
+differs between the two runs. The hybrid Solar Open 2 stack reaches the MMLU 0.55 level
+with 210B training tokens, where the GQA-only Solar Open 1 stack needs 671B (3.2×), and the
+HellaSwag 0.63 level with 210B versus 377B (1.8×).
+layers, the linear state is the sole carrier of token order and long-range information, integrating
+over horizons of a million tokens. The ability to erase and invert, rather than merely decay, is
+what keeps that single long-lived state from drifting as errors accumulate.
+Table 1 summarizes architecture specifications of how Solar Open 2 differs from Solar Open
+1. Solar Open 2 holds roughly two and a half times the parameters, with a different attention
+stack and more experts, yet the layer count and hidden dimension that form the shared backbone
+are kept identical. This is deliberate that the selective weight transfer reuses Solar Open 1’s
+parameters exactly where the two models coincide (Section 3.1).
+5
+
+We ablated each of these changes on a 10B-A1B proxy before committing to the final design.
+Relative to the all-softmax GQA architecture of Solar Open 1, the largest single gain comes
+from adopting linear attention together with NoPE: reaching a given validation loss consumes
+about 82.6% of the baseline’s tokens. The remaining choices contribute smaller but consistent
+gains: the sigmoid output gate reduces the tokens needed to reach a given loss by roughly 3%,
+the softmax-first ordering by about 1.5%, and negative eigenvalues by about 1%. These loss-level
+margins appear modest, but small differences in loss translate nonlinearly into large differences on
+downstream benchmarks. Comparing the finalized Solar Open 2 architecture against the Solar
+Open 1 architecture at the same proxy scale, reaching the MMLU 0.55 level requires 210B training
+tokens where the baseline needs 671B, and the HellaSwag 0.63 level 210B against 377B (Figure 4).
+The Solar Open 2 architecture is thus eﬀicient on both fronts: attention cost at inference, and
+the training tokens required to reach a given capability.
+
+3
+
+Pre-training
+STAGE 1
+
+STAGE 2
+
+STAGE 3
+
+STAGE 4
+
+Selective
+Weight Transfer
+
+General
+Pre-training
+
+Intensive
+Pre-training
+
+Length
+Expansion
+
+Weight initializa-
+
+(10T tokens)
+
+(1T tokens)
+
+(0.9T tokens)
+extend context
+
+broad-coverage,
+
+revisit the
+
+Open 1 core
+
+high-quality
+
+highest-quality,
+
+to 1M, merge
+
+weights (≈2.3%)
+
+data mixture
+
+important data
+
+checkpoints
+
+tion from Solar
+
+Figure 5: Pre-training procedure of Solar Open 2. Stage 1 initializes the model by selective
+weight transfer from Solar Open 1; Stages 2–4 then train on about 12T tokens in total: General
+Pre-training (10T), Intensive Pre-training (1T), and Length Expansion (0.9T) with checkpoint
+merging.
+Four stages take Solar Open 2 from weight initialization to a 1M-context pre-trained model
+(Figure 5): (1) Selective Weight Transfer, (2) General Pre-training, (3) Intensive Pre-training, and
+(4) Length Expansion. Selective Weight Transfer initializes Solar Open 2 by transplanting the
+compatible core of Solar Open 1’s weights (Section 3.1). General Pre-training is the main stage,
+training on 10T tokens of a broad-coverage, high-quality data mixture (Section 3.2). Intensive
+Pre-training then re-filters the same corpus at a substantially higher quality threshold and trains
+for another 1T tokens on the retained subset. Length Expansion closes pre-training with 0.9T
+tokens of continued training that extend the context window to 1M and inject reasoning and
+agent data. Merging four intermediate checkpoints then produces the final pre-trained model.
+
+3.1 Selective Weight Transfer
+Training a several-hundred-billion-parameter model from scratch is costly, so Solar Open 2 is
+instead initialized from the weights of its previous generation. Solar Open 2 transfers weights
+directly and selectively from Solar Open 1, without distillation, and absorbs the architectural
+transition, including the expansion from 128 to 320 experts, through large-scale full pre-training.
+Prior model-reuse work grows the same architecture to a larger size (Chen et al., 2022; Wang
+et al., 2023; Samragh et al., 2024), upcycles a dense checkpoint into an MoE (Komatsuzaki et al.,
+2023; Nakamura et al., 2025), or converts softmax attention into a linear or recurrent structure
+through distillation or alignment losses with only small-scale uptraining (Wang et al., 2024a; Bick
+et al., 2024; Chattopadhyay et al., 2026; Mercat et al., 2024; Zhang et al., 2024; Lan et al., 2025;
+Pan et al., 2025). To our knowledge, every recent large hybrid model has been pre-trained from
+6
+
+Table 2: Selective weight transfer: per-module weight handling. The two architectures differ
+structurally, but their shared skeleton is kept aligned: within each module, the shape-compatible
+weights are transferred (✓) and only the genuinely new or incompatible parts are randomly initialized (×). Transferred components sum to 5.69B of the 250B total; the randomly initialized
+remainder is almost entirely the routed experts (241.7B).
+Component
+
+Shape relation
+(Solar Open 1 → Solar Open 2)
+
+Params.
+
+Init.
+
+Token embedding / output layer
+Normalization layers
+
+identical
+identical
+
+1.61B
+<0.01B
+
+✓ transfer
+✓ transfer
+
+Softmax attention (12 layers)
+q/k/v/o projections
+sigmoid output gate
+Linear attention (36 layers)
+q/o projections
+k/v proj., decay/write gates, conv
+
+identical
+new
+
+0.91B
+<0.01B
+
+✓ transfer
+× random
+
+new; re-mapped from GQA q/o
+new
+
+2.42B
+≈2.5B
+
+✓ transfer
+× random
+
+MoE FFN (48 layers)
+shared expert
+routed experts (×320) + router
+
+identical
+128 → 320, no 1:1 mapping
+
+0.75B
+≈241.7B
+
+✓ transfer
+× random
+
+Transferred total
+
+5.69B
+
+scratch (Kimi Team, 2025; Qwen Team, 2025; MiniMax, 2025). None of these approaches covers
+that combination. We call it selective weight transfer: in effect, a partial warm start carried
+across an architectural change.
+The selection principle is simple: transfer the weights whose representations are shared between the two models, and randomly initialize everything whose shape or computation changed
+(Figure 3, Table 2). Only the compatible portion is reused: about 2.3% of parameters, or 5.69B.
+The token embedding and output layer transfer because the vocabulary is identical (196,608),
+letting learned token semantics carry over; the normalization layers transfer for training stability;
+and the softmax-attention q/k/v/o projections transfer unchanged because Solar Open 2 keeps
+Solar Open 1’s GQA geometry (64 query and 8 KV heads). In the linear-attention layers, only
+the query and output projections are re-mapped from the GQA q/o weights, whose shapes match
+(64 heads); the key and value projections cannot transfer, since GQA keeps 8 KV heads while the
+linear layers use 64 MHA-style heads, and the decay and write gates and short convolutions have
+no counterpart in Solar Open 1. The sigmoid output gate of the softmax layers is likewise new
+and randomly initialized. Finally, the shared expert transfers: its shape is unchanged, and as an
+always-active general-purpose path it carries over cleanly. The 320 routed experts are instead
+randomly initialized, since expanding from 128 to 320 experts admits no one-to-one mapping, and
+replicating experts to fill the gap risks growing inter-expert similarity at the cost of specialization.
+As Table 2 shows, the transferred 5.69B parameters are exactly the model’s shared computational
+skeleton, and the randomly initialized remainder is almost entirely the routed experts (241.7B of
+244.3B).
+The benefit is clear on a 200B-A15B proxy in which only the initialization differs: one run
+starts from the 5.69B parameters carried over from Solar Open 1, the other from none. Reaching
+a training cross-entropy of 1.8 consumes 12.6B tokens with the transfer against 21.5B without —
+about 1.7× fewer, or 58% of the tokens (Figure 6). The margin widens across the observed band,
+from roughly 1.15× at a loss of 2.6 to 1.7× at 1.8.
+
+3.2
+
+Pre-training Data Curation
+
+For pre-training data, collecting large-scale raw data from diverse sources matters, but so does
+selecting what is meaningful and shaping it into a composition effective for training. Where Solar
+7
+
+Figure 6: Selective weight transfer vs. random initialization on a Solar Open 2 200B-A15B proxy
+(controlled: only the initialization differs; same architecture, data, and optimizer), zoomed to the
+1.6–2.6 loss band. Transferring 5.69B parameters from Solar Open 1 reaches a training crossentropy of 1.8 in 12.6B tokens where random initialization needs 21.5B (∼1.7×). Curves are
+EMA-smoothed (α = 0.06); the raw traces are shown faintly behind them.
+
+Figure 7: Data-recipe ablation on a 10B MoE model: Solar Open 1 vs. Solar Open 2 recipes at
+an equal budget of 300B training tokens. The Solar Open 2 recipe leads on every benchmark
+group; the largest gains are en_code (+0.216), ko_math (+0.204), and en_math (+0.146).
+Open 1 concentrated on the former, gathering data and training on it at scale, Solar Open 2
+inherits the core of Solar Open 1’s weights as its skeleton (Section 3.1) and concentrates on the
+latter: an effective data composition built on top of that skeleton.
+We construct a pipeline that further refines an initially cleaned pool of 20T tokens down to
+10T. Every dataset receives an in-house quality score, while its rarity is tracked by source and
+type. The pipeline removes both exact and semantic duplication (Lee et al., 2022; Abbas et al.,
+2023), and organizes the resulting pool under a classification scheme keyed by domain, language,
+and source.
+The last lever is the mixture ratio, which we optimized through ablation studies. At the top
+level, the resulting recipe sets (1) a real-to-synthetic ratio of 4:6, (2) a domain mix in which math
+and code each occupy at least 15%, and (3) an English share above 80%. Figure 7 compares
+the Solar Open 1 and Solar Open 2 data recipes on a 10B MoE model at equal training budget
+(300B tokens): the Solar Open 2 recipe improves consistently on every benchmark group, with
+the largest gains on math and code. This equal-budget comparison isolates value per token: with
+compute fixed, the gains come entirely from what each token teaches.
+8
+
+3.3
+
+Curriculum Learning
+
+On top of the curated data, pre-training proceeds as a three-stage curriculum spanning Stages 2–
+4 of Figure 5. Stage 2 (General Pre-training) trains on the 10T-token curated dataset. Stage
+3 (Intensive Pre-training) raises the quality threshold and trains again on the best 1T tokens of the Stage-2 data, a design inspired by repeated training on constrained high-quality
+data (Muennighoff et al., 2023) and by end-of-training domain upsampling (Blakeney et al., 2024).
+Stage 4 (Length Expansion) raises the quality threshold further to form its base corpus, augments
+it with long-document data including repo-level code, and extends training to a 1M context
+length.
+During Length Expansion, we observed an overall performance drop, which we attribute to
+the shift in data distribution. To compensate, we selected four intermediate checkpoints and
+merged them, obtaining a pre-trained language model (PLM) stronger than any single checkpoint.
+Figure 8 traces the average of more than 50 PLM evaluation metrics as a function of training
+tokens across the stages: performance improves through Stage 2 but eventually stagnates, rises
+again as Stage 3 begins, and slightly degrades in Stage 4. Stars mark checkpoint merges; the final
+merge achieves the highest score (0.745).
+
+Figure 8: Average performance over 50+ PLM evaluation metrics as a function of cumulative
+training tokens across the curriculum: Stage 2 (General Pre-training, 10T), Stage 3 (Intensive Pretraining, 1T), and Stage 4 (Length Expansion, 865B). Performance rises then stagnates during
+Stage 2, improves again in Stage 3, and slightly degrades during Stage 4. Star marks the final
+checkpoint merge, which yields the highest score (0.745).
+
+4
+
+Post-training
+
+Post-training of Solar Open 2 proceeds in four stages (Figure 9): (1) Supervised Fine-Tuning
+(SFT), (2) Multi-domain RL, (3) Specialist, and (4) Multi-teacher On-policy Distillation (MOPD).
+The SFT stage goes beyond basic chat-template following and targets the full range of reasoning
+and agent tasks Solar Open 2 is built to cover. Multi-domain RL then strengthens core reasoning
+with verifiable rewards over a broad set of STEM-centered tasks. The Specialist stage trains twelve
+domain specialists, such as the coding and oﬀicework agents, through SFT and domain-specific
+RL to serve as teachers. The final stage, MOPD, folds these twelve teachers into a single model.
+The first two stages follow established recipes, and their data compositions are outside the scope
+of this report. The remainder of this section first describes the agent scenarios that supply the
+tasks, environments, and verification signals for these stages (Section 4.1), and then the two pieces
+9
+
+STAGE 1
+
+STAGE 2
+
+Supervised
+Fine-Tuning
+
+Multi-domain
+RL
+
+chat-template
+
+verifiable-
+
+following plus
+
+reward RL on
+
+target reasoning
+
+STEM-centered
+
+and agent tasks
+
+reasoning tasks
+
+STAGE 3
+
+Specialist
+twelve teachers
+trained by SFT
+and domainspecific RL
+
+STAGE 4
+
+Multi-teacher
+On-policy
+Distillation
+consolidate
+twelve teachers
+into one model
+
+Figure 9: Post-training procedure of Solar Open 2. SFT and Multi-domain RL build the generalist base; the Specialist stage then cultivates twelve domain teachers in parallel, and Multi-teacher
+On-policy Distillation (MOPD) consolidates them into the single released model.
+of training infrastructure that execute the stages at 250B scale, fully asynchronous RL and MOPD
+(Section 4.2).
+
+4.1 Agent Scenarios
+The agent capabilities of Solar Open 2 are trained from purpose-built scenarios rather than
+harvested corpora: for each target capability we construct the environment, synthesize tasks
+inside it, roll out trajectories, and admit an instance only when it passes execution- or evidencebased verification. Every pipeline is additionally decontaminated against the benchmarks used
+in Section 5. This section summarizes the three scenario families: general conversational agents,
+coding agents, and oﬀicework agents. For each, we describe which scenarios were prepared and
+how their correctness is guaranteed.
+4.1.1 General Conversational Agent
+We define and develop the general conversational agent along two axes: tool execution over
+stateful Model Context Protocol (MCP) environments, and multi-turn, policy-bound conversation
+grounded in a live transactional domain. For the first axis, two bottlenecks dominate: (i) the
+environment itself, since a general pipeline needs either faithful simulation of stateful tools or the
+infrastructure to call real ones; and (ii) task instructions for state-mutating Create/Update/Delete
+(CUD) operations, for which almost no source material exists. We compose a layered environment
+substrate spanning both faithful simulations of stateful tools and real callable services. The CUD
+gap is resolved by generating the verifier first: the pipeline executes a mutation against the live
+environment, records its expected state effects, and synthesizes a read-back verifier, a sandboxed
+pytest suite over the environment’s read tools, whose success defines the task’s correctness.
+The instruction is then rewritten at a controlled obfuscation level, so the agent must discover
+the solution path from the environment rather than transcribe it. Every task carries a graded
+process rubric and an executable end-state check, enforced through a three-pass self-consistency
+verification: hard trace rules, an LLM coherence judge, and the executable read-back.
+For the second axis, we prepare a live transactional database governed by an explicit domain
+policy and run user–agent simulations over it. Tasks are instantiated from composite scenarios and
+pinned to entities that genuinely exist in the database; a user simulator reveals intent gradually
+across turns, withholding identity fields under failed-verification scenarios (Cho et al., 2026); and
+every tool call executes against the real database. Acceptance combines an LLM rubric judge
+with structural gates that encode the policy semantics a semantic judge tends to miss.
+
+10
+
+4.1.2 Coding Agent
+The coding agent comprises three scenarios: software engineering (SWE) over realistic repository
+environments, terminal for real-world tasks beyond software engineering in live terminals, and
+artifact for front-end generation.
+The SWE scenario demands robustness to heterogeneous agent scaffolds and the ability to
+iteratively edit, execute, and debug code. We build it along three axes. First, we employ diverse
+scaffolds (OpenHands, Claude Code, OpenCode, KiloCode, HermesAgent), since a model trained
+on a single scaffold overfits its tool schemas and interaction protocols. Second, we synthesize
+executable environments at scale. Pull requests mined from repositories across 18 programming
+languages are retained only when a complete task specification can be recovered: problem statement, gold patch, test patch, base commit, and environment requirements. An instance is then
+admitted only if its LLM-synthesized Docker environment is buildable and fail-to-pass, meaning
+the test script fails on the base commit and passes after the gold patch. Finally, the repository’s
+entire Git history is stripped, so the ground-truth fix cannot be recovered from version control.
+Third, trajectories rolled out under the diverse scaffolds in these synthesized environments pass a
+layered filter stack: malformed-tool-call filtering, a five-dimension LLM-judged quality rubric, and
+repository-level decontamination (strictly more conservative than instance-level filtering) against
+SWE-bench Verified, SWE-bench Multilingual, and SWE-bench Pro (Jimenez et al., 2023; Deng
+et al., 2025).
+The terminal scenario covers real-world work across more than ten domains, such as data
+science and scientific computing, executed in live terminal environments under multiple agent
+harnesses. Trajectory synthesis deliberately includes encountering and recovering from runtime
+errors, and places particular weight on self-verification behavior: the agent composes and runs
+code-level self-tests before declaring completion and, on failure, revises its work and re-tests
+until the suite passes. Trajectories are filtered by rewriting or removing hallucinated content,
+by rubrics over task complexity and error patterns (task completion, repeated actions, acting
+without analysis), and by decontamination against Terminal-Bench (Merrill et al., 2026).
+The artifact (front-end generation) scenario starts from category-wise task synthesis over
+six categories: website, game development, 3D design, data visualization, UI components, and
+SVG. A large LLM-generated seed pool is deduplicated and clustered by maximizing the Vendi
+Score (Friedman and Dieng, 2023). Each representative seed is expanded with a tech stack, UI/
+layout, and feature requirements, together with an expected-essential-feature list that is reused
+downstream as a functional rubric. LLM-as-a-judge screening then discards infeasible, stackinconsistent, or under-specified tasks. Trajectories are generated under category-specific guidance
+contexts (best practices, anti-cliché constraints, recommended library usage), which are simplified or removed at training time for context distillation. They then pass a two-stage rejection
+sampling: executability filtering (static lint plus Playwright headless-browser runtime checks), followed by VLM-as-a-judge screening of full-page screenshots for functional completeness against
+the essential-feature rubric and for visual completeness against category-specific checklists.
+4.1.3 Officework Agent
+The oﬀicework agent is built to reliably carry out the tasks knowledge workers face in everyday
+oﬀice environments, which demands an unusually broad combination of capabilities: command of
+the domain knowledge and working conventions of many industries and occupations; the ability
+to interpret heterogeneous reference materials and produce work artifacts in oﬀice-native formats
+(xlsx/docx/pptx/pdf); and the workspace competence to gather the information a task actually
+depends on and keep every produced number consistent with the underlying data. The central
+obstacle to training these capabilities is the acute scarcity of task data: real oﬀice work is proprietary, human demonstrations do not scale across hundreds of occupations, and existing agent
+corpora concentrate on web navigation, search, and software engineering. To close this gap, we
+develop OﬀiceVerse, an in-house pipeline that automatically synthesizes oﬀice tasks grounded
+11
+
+in real public data, together with a grading scheme that scores each task’s success or failure.
+OﬀiceVerse organizes oﬀice work as a matrix of 11 industry domains × 12 task types, where each
+task type pairs a cognitive operation with a primary deliverable format (e.g. analysis→xlsx, presentation→pptx). Each cell holds reusable task specifications declaring the external data sources
+a task consumes, typed schemas for supplementary data, admissible data-sourcing policies, and
+output specifications. The deliverable-format mix is calibrated against sector-level statistics measured from real professional work products. Every task is anchored in real, commercially usable
+public data, which a library of fetchers and converters collects and turns into the oﬀice-native
+reference files a professional would receive alongside an assignment.
+Two complementary generation tracks feed the pipeline. Atomic occupational task synthesis decomposes each occupation’s daily work into single-deliverable assignments and instantiates them
+at effectively unbounded scale through a four-stage process: context generation, supplementarydata generation, prompt generation, and rubric generation. A deterministic validation gate follows every stage, so a task whose premise contradicts its own attachments is discarded at creation
+rather than repaired downstream. The resulting weighted rubrics combine mechanically checkable
+criteria with judge-graded open-ended ones, each cross-validated against ground truth extracted
+from the task’s own materials. World-grounded workspace synthesis instead builds entire working
+environments: professional project trees seeded from real companies in document-intensive verticals, populated with heterogeneous materials, with the evidence deliberately dispersed across
+directories. It then synthesizes tasks whose prompts withhold file paths and other locators and
+whose answers span several files, so workspace retrieval and cross-file synthesis become the supervised skill. An environment-quality audit rejects any instance solvable by shortcut (a single
+obvious file, parametric recall, or degenerate reasoning). On top of both tracks, task demand is
+controlled along two axes: (i) a diﬀiculty level re-derived from the constraints that actually survive into the final prompt; and (ii) an expertise level realized as a curriculum that progressively
+strips scaffolding from over-scaffolded prompts and re-anchors the rubric toward the open expert
+judgment the leaner prompt implicitly demands. Over these synthesized tasks, trajectories are
+rolled out by capable agent models under bounded turn and wall-clock budgets in track-matched
+harnesses: a sandboxed knowledge-worker machine with an oﬀice-document toolchain and a codeexecution tool for atomic tasks, and the generated environment itself as the operating surface
+for workspace tasks. The trajectories are then serialized into a single canonical schema. Postprocessing deliberately separates process quality from outcome quality. Rule-based prefilters and
+an LLM judge gate data fabrication and misuse; deliverables are extracted from their binary
+formats, and each rubric criterion is routed to a rule-based checker or an LLM judge. The same
+outcome record that gates SFT admission is the source from which RL rewards are derived.
+The full pipeline also covers Korean oﬀice work: a Korean occupational taxonomy, grounding
+in Korean public and industry data, enforcement of Korean business-writing conventions (native
+numeric units, standard domain terminology, Korean-style file naming), an English-reasoning/
+Korean-output language protocol with a language-identification filter, and CJK renderingintegrity checks down to detecting missing glyphs from the code that drew a chart. To our
+knowledge, the resulting corpus is the first Korean training set of deliverable-producing oﬀice
+tasks. A Korean oﬀicework task example is given in Section A.2.
+
+4.2
+
+Training
+
+Two pieces of training infrastructure underpin post-training: (i) a fully asynchronous RL system
+(Section 4.2.1), used throughout Multi-domain RL and the domain-specific RL of the Specialist
+stage; and (ii) the multi-teacher on-policy distillation setup (Section 4.2.2), used for the final
+consolidation.
+
+12
+
+4.2.1 Fully Asynchronous Reinforcement Learning
+Agentic RL rollouts exhibit a long-tailed length distribution: a small number of trajectories take
+far longer to complete than the rest. Under a synchronous regime, every optimizer step must wait
+for the slowest rollout in the batch, leaving the majority of devices idle. We therefore adopt a
+fully asynchronous design built on five components: (i) a disaggregated architecture with in-flight
+weight updates, (ii) staleness control via a fresh-token-fraction gateway, (iii) length- and stalenessaware batch sampling, (iv) direct double-sided importance sampling, and (v) environment-failure
+filtering and group-size repair.
+Disaggregated asynchronous architecture. The trainer and the actor (the rollout engine)
+are disaggregated onto separate GPU pools: the actor generates trajectories continuously, and
+whenever the rollout buffer holds enough completed trajectories, a batch is dispatched for a policy
+update. When the trainer publishes new parameters, in-flight generation is briefly suspended, the
+weights are broadcast, and the KV caches of all partially generated trajectories are recomputed
+under the new parameters before generation resumes. A single trajectory may therefore contain
+segments produced by several successive policy versions, a property the components below account
+for explicitly. The actor exchanges data with the trainer directly as token IDs with per-token
+metadata (policy version and rollout-time log-probabilities), eliminating detokenization and retokenization from the loop entirely, along with the silent training-signal corruption their boundary
+mismatches can cause.
+Staleness control via a fresh-token-fraction gateway. Asynchrony introduces off-policy
+drift, but dropping an entire trajectory as soon as any token exceeds a maximum staleness (smax )
+wastes the compute already invested in long rollouts. We instead record, for every token, the
+version of the policy that generated it, and measure the token’s staleness as the gap between
+the policy version currently being trained and that recorded version, i.e., the number of policy
+updates applied since the token was generated. A token is fresh if its staleness is at most smax . A
+trajectory is admitted for training only if its fresh-token ratio reaches a threshold ρ, and within
+admitted trajectories, the stale prefix tokens are masked out of the loss (Figure 10). No over-stale
+token contributes gradient, while long, expensive trajectories are salvaged rather than discarded.
+
+Figure 10: The fresh-token-fraction gateway. Every token records the policy version that generated it, and a token is fresh if its staleness is at most smax . A trajectory whose fresh-token ratio
+reaches the threshold ρ is admitted with its stale prefix masked from the loss (top); one whose
+ratio falls short is dropped entirely (bottom).
+
+Length- and staleness-aware batch sampling. A subtle failure mode of fully asynchronous
+training is length bias at startup: short trajectories finish first, so FIFO sampling would train on
+a length-skewed distribution and risk spurious correlations between response length and reward.
+Before the first optimizer step, we pre-generate N times the training batch size in trajectories,
+so that long rollouts have the wall-clock time to populate the buffer. At each step, the buffered
+trajectories are sorted by length and partitioned into ⌊|buﬀer|/|batch|⌋ bins, and one trajectory is
+
+13
+
+drawn per bin, so every batch spans the full length spectrum. Within each bin, the stalest trajectories are drawn first, so samples closest to eviction are consumed before they expire, maximizing
+data utilization (Figure 11).
+
+Figure 11: Length- and staleness-aware batch sampling. Buffered trajectories are partitioned by
+length into bins 1 through K; each training batch draws one trajectory per bin, spanning the full
+length spectrum, and within each bin the stalest trajectory (blue) is sampled first, ahead of those
+waiting in the buffer (gray).
+
+Direct double-sided importance sampling. The rollout policy may be updated multiple
+times during the generation of a single trajectory, so the drift between rollout and training
+policies can be far larger than in the standard on-policy setting. We adopt the direct doublesided importance sampling of Zeng et al. (2026): the token-level importance ratio is defined
+directly against the rollout policy from the log-probabilities recorded at generation time, and
+tokens whose ratio falls outside a double-sided trust region are excluded from the update entirely
+rather than clipped. Retaining token-level ratios as in GRPO (Shao et al., 2024), rather than
+the sequence-level ratios of GSPO (Zheng et al., 2025), follows from the design itself: different
+tokens within one trajectory may originate from different policy versions, so off-policyness must
+be controlled at the granularity at which it arises. This trust-region mask is applied orthogonally
+to the staleness mask above: a token contributes gradient only if it is both fresh and within the
+trust region.
+Environment-failure filtering and group-size repair. In sandboxed agentic environments, a
+trajectory can receive a poor reward through no fault of the policy (file-system errors, container
+crashes, and other infrastructure failures), and training on such spurious negative rewards injects
+noise into the advantage estimates. We log a failure reason for every unsuccessful trajectory and
+exclude those attributable to environment collapse. Since dropping samples perturbs the GRPO
+group size, groups are repaired: if more than half of a group’s rollouts remain valid, the valid
+samples are duplicated to restore the original group size; otherwise the entire group is discarded.
+4.2.2
+
+Multi-Teacher On-Policy Distillation
+
+Post-training separates capability cultivation from capability integration: the Specialist stage grows
+a pool of domain experts independently, and MOPD folds them into one deployable model by
+letting the student learn from dense, full-vocabulary teacher signal on its own rollouts, all running
+on the fully asynchronous infrastructure of Section 4.2.1.
+From twelve specialists to one model. Each target capability is cultivated independently
+— domain SFT followed by large-scale RL with verifiable rewards — yielding a specialist that
+peaks on its own domain but is neither balanced nor deployable alone. The twelve specialists
+14
+
+fall into three capability families: reasoning (math, STEM, code), agents & tools (coding, general
+tool use, single-workspace, multi-workspace, search), and preference & alignment (instruction
+following, human preference, safety, abstention). Consolidation must merge them without trading
+one domain’s peak for another’s. The naive route — supervised fine-tuning the student on teachergenerated traces — is off-policy: the student receives no supervision on the error-compounded
+states its own sampling drifts into (exposure bias), and a consolidated model asked to operate
+across every domain at once is exactly what exposes this mismatch most. MOPD closes the
+gap in the spirit of interactive imitation learning (Ross et al., 2011): the student generates its
+own trajectories, the routed teacher scores those tokens against its domain distribution, and
+the student is pulled toward the teacher along the states it actually visits — dense, token-level
+supervision on the student’s own distribution, far more sample-eﬀicient than a sparse outcome
+reward.
+The MOPD setting. Each prompt is routed to exactly one of the twelve specialist teachers, and
+the student minimizes the per-position reverse KL to the routed teacher along its own trajectories.
+Every per-position term is computed in closed form over the full vocabulary rather than estimated
+from the sampled token. This distillation KL is the entire training objective, and its mode-seeking
+character concentrates the student on the teacher’s high-confidence continuations — exactly what
+capability transfer wants. The setting departs from prior on-policy-distillation consolidation
+recipes (DeepSeek-AI, 2026; NVIDIA, 2026; Xiaomi LLM-Core Team et al., 2026; Ma et al., 2026)
+in two ways. First, the exact full-vocabulary computation removes the single-draw estimator
+variance and stays well-defined on student-drifted prefixes the teacher rarely visits — precisely
+where consolidation is hardest. Second, no verifiable outcome reward is added on top of the
+KL: the G rollouts per prompt that a group-relative advantage would require disappear, so
+consolidation runs at one rollout per prompt, with no λ to balance and no reward-hacking surface.
+The rollout pump, the throughput bottleneck, shrinks by a factor of G, and at the same generation
+budget every optimizer step spans G times more distinct prompts across all twelve domains. Each
+specialist was itself cultivated with verifiable-reward RL, so its reward is already implicit in its
+distribution and re-adding it is largely redundant. The headroom to surpass the teacher that a
+reward term would buy is deliberately traded away: the goal of consolidation is to match twelve
+already-strong specialists, not to out-train them. In practice, the KL-only objective descends
+stably: entropy contracts without collapsing, and training stays effectively on-policy.
+Scaling full-vocabulary MOPD to 250B. A full-vocabulary, multi-teacher signal is trivial to
+write down and expensive to serve; four systems problems stand between the objective and a run
+at this scale.
+• Teacher placement cost. A colocated placement hot-swaps the CPU-pinned teacher pool
+onto the actor GPUs each step (offload the student, forward the teacher, onload, train),
+so the teacher forward sits serially on the training critical path. We instead give the pool
+dedicated nodes, collapsing the per-step teacher tax toward zero at the price of the extra
+nodes.
+• Dense signal without the [L × V ] blow-up. The exact objective wants the teacher’s distribution over all 196,608 (V ) tokens at every response position (L), on the order of 26 GB per
+microbatch in fp32. The teacher therefore ships only its pre-lm_head hidden states [L × H]
+(H = 4,096; 48× smaller), and the student rebuilds and reduces the logits one 1,024-token
+tile at a time with activation checkpointing, keeping the GPU peak to a single [tile × V ]
+buffer (≈1.1 GB) without ever materializing the full matrix or approximating the objective.
+• Transport cost. Because each sample routes to exactly one teacher, total teacher compute
+is O(batch), independent of the number of teachers. Each teacher caches results keyed by
+global sample index, so the student data-parallel width can grow with no teacher recompute.
+15
+
+Under context parallelism, the teacher’s CP rank r already holds exactly the shard student
+CP rank r needs, so the transport skips the CP all-gather and ships only the matching
+shard.
+• Teacher pool management. Twelve 250B teachers cannot co-reside on the accelerators, so
+the pool keeps one GPU-resident model plus twelve CPU parameter snapshots and swaps
+the routed teacher into the single GPU slot on demand. Micro-batches are packed by routed
+teacher, so consecutive micro-batches usually hit the resident model and the swap cost is
+amortized across the packed run.
+
+5
+
+Evaluation
+
+We evaluate Solar Open 2 in three parts. Section 5.1 describes the benchmark suites and the measurement protocol. Sections 5.2 and 5.3 present the headline comparison: on English benchmarks
+Solar Open 2 is competitive with the strongest open-weight models, and on Korean benchmarks
+it records the highest average among all models compared, including fast-tier closed APIs. Section 5.4 then examines the sovereign target scenario in depth through Ko-GDPval, an agentic
+benchmark for Korean oﬀicework.
+
+5.1 Setup
+English suite. The English benchmarks are organized into the three groups shown in Table 3. Knowledge & reasoning covers MMLU-Pro (Wang et al., 2024b), GPQA-Diamond (Rein
+et al., 2024), HLE without tools (Phan et al., 2025), LiveCodeBench v6 (Jain et al., 2024), ArtifactsBench (Zhang et al., 2025), and the competition-math sets HMMT2602 and AIME2026
+from MathArena (Balunović et al., 2025). Instruction following & long context covers MultiChallenge (Sirdeshmukh et al., 2025), IFBench (Pyatkin et al., 2025), and AA-LCR (Team, 2025).
+Agents covers SWE-Bench Verified (Jimenez et al., 2023), Terminal Bench Hard (Merrill et al.,
+2026), APEX-Agents (Vidgen et al., 2026), MCP-Atlas (Bandi et al., 2026), the τ 3 banking domain of the τ -bench suite (Yao et al., 2024; Barres et al., 2025), and GDPval-AA v2 (Patwardhan
+et al., 2025), reported as an ELO rating measured on 30 June 2026.
+Korean suite. The Korean benchmarks (Table 4) span five groups: general knowledge, measured
+by KMMLU-Pro (Hong et al., 2025); Korean language & culture, by CLIcK (Kim et al., 2024a) and
+HaeRae (Son et al., 2024); mathematical reasoning, by Ko-AIME 2025 and HRM8K (Ko et al.,
+2025); professional domains, by KBank-MMLU (finance), KBL (Kim et al., 2024b) (law), and KorMedMCQA (Kweon et al., 2024) (medicine); and oﬀicework agents, by Ko-GDPval (Section 5.4).
+Ko-AIME, KBank-MMLU, and Ko-GDPval are in-house benchmarks; the rest are public.
+Baselines and protocol. We compare against strong open-weight models under 320B total
+parameters, the scale band Solar Open 2 is designed for: DeepSeek-V4-Flash (284B-A13B),
+MiMo-V2.5 (310B-A15B), Command A+ (218B-A25B), and Mistral Medium 3.5 (128B dense),
+together with the previous generation Solar Open 1 (102B-A12B). On the Korean suite we additionally compare two fast-tier closed APIs: Claude Haiku 4.5 and GPT-5.4 mini. All numbers are
+measured with our internal evaluation harness under identical per-benchmark settings; reasoningeffort settings are noted in the table headers where applicable.
+
+5.2
+
+English Results
+
+Table 3 shows that Solar Open 2 is competitive with the strongest open-weight baselines,
+DeepSeek-V4-Flash and MiMo-V2.5, both larger in total parameters. On knowledge and reasoning it posts the best scores in the comparison on MMLU-Pro (86.2) and LiveCodeBench v6
+
+16
+
+Table 3: English benchmark performance. All numbers are measured with our internal evaluation
+harness. Model sizes are shown as total parameters–activated parameters (A) for MoE models.
+Solar Open 2 Solar Open 1 Command A+ Mistral Medium 3.5 MiMo-V2.5 DeepSeek-V4-Flash
+250B-A15B
+
+102B-A12B
+
+218B-A25B
+
+128B dense, high
+
+310B-A15B
+
+284B-A13B, max
+
+Know. & Reasoning
+
+MMLU-Pro
+GPQA-Diamond
+HLE (w/o tools)
+LiveCodeBench (v6)
+ArtifactsBench
+HMMT2602
+AIME2026
+
+86.2
+86.3
+28.8
+92.4
+55.9
+93.9
+95.7
+
+80.4
+66.2
+11.5
+56.5
+43.4
+68.9
+87.7
+
+79.0
+75.6
+11.4
+86.1
+42.8
+73.5
+96.0
+
+81.2
+77.5
+12.8
+84.9
+49.8
+62.9
+89.0
+
+84.6
+83.0
+24.3
+89.1
+59.3
+61.4
+92.3
+
+85.9
+88.9
+32.3
+92.3
+61.0
+94.7
+97.0
+
+IF / Long
+
+Multi-Challenge
+IFBench
+AA-LCR
+
+61.0
+80.0
+62.3
+
+40.5
+57.7
+36.0
+
+45.8
+73.9
+46.0
+
+49.8
+69.0
+61.0
+
+39.0
+67.1
+62.7
+
+62.0
+80.3
+63.7
+
+Agent
+
+Benchmark
+
+SWE-Bench Verified
+Terminal Bench Hard
+APEX-Agents
+MCP-Atlas
+τ 3 (banking)
+GDPval-AA v2 (ELO)
+
+70.4
+28.3
+16.6
+58.2
+19.6
+1128
+
+15.4
+2.3
+2.4
+34.4
+7.4
+–
+
+14.4
+25.0
+1.6
+27.2
+5.8
+712
+
+69.6
+33.3
+6.1
+30.7
+5.8
+929
+
+73.0
+41.7
+13.4
+63.9
+8.7
+1145
+
+73.8
+34.1
+13.2
+58.2
+22.3
+1187
+
+Table 4: Korean benchmark performance. All numbers are measured with our internal evaluation
+harness; Avg. is the mean over the listed benchmarks.
+Benchmark
+
+Solar Open 2 Solar Open 1 MiMo-V2.5 DeepSeek-V4-Flash Claude Haiku 4.5 GPT-5.4 mini
+250B-A15B
+
+102B-A12B
+
+310B-A15B
+
+284B-A13B, max
+
+closed
+
+closed
+
+KMMLU-Pro
+CLIcK
+HAE-RAE v1.1
+Ko-AIME’25†
+HRM8K
+KBank-MMLU†
+KBL
+KorMedMCQA
+Ko-GDPval†
+
+78.4
+90.7
+73.8
+97.7
+92.2
+80.8
+75.5
+93.0
+86.8
+
+64.0
+78.9
+73.3
+80.0
+87.6
+65.5
+65.5
+84.4
+3.4
+
+69.1
+78.4
+61.7
+88.0
+90.7
+71.0
+69.8
+87.7
+81.0
+
+78.9
+89.2
+73.1
+98.0
+93.4
+79.5
+72.8
+94.1
+85.0
+
+67.9
+53.5
+38.5
+81.7
+90.6
+68.9
+69.9
+87.0
+68.3
+
+78.1
+89.6
+69.4
+90.7
+91.3
+79.0
+75.3
+94.2
+59.4
+
+Avg.
+
+85.4
+
+67.0
+
+77.5
+
+84.9
+
+69.6
+
+80.8
+
+† in-house benchmarks.
+
+(92.4), and on GPQA-Diamond (86.3), HLE (28.8), HMMT2602 (93.9), and Multi-Challenge (61.0)
+it is second only to DeepSeek-V4-Flash while clearly ahead of MiMo-V2.5. Instruction following
+is effectively tied at the top (IFBench 80.0 vs. 80.3; AA-LCR 62.3 vs. 63.7), and ArtifactsBench
+(55.9) is the one knowledge-group benchmark where both frontier baselines stay ahead.
+On the agent group the picture is competitive with a localized gap. Solar Open 2 records the
+best APEX-Agents score in the comparison (16.6), matches DeepSeek-V4-Flash on MCP-Atlas
+(58.2 for both; MiMo-V2.5 leads at 63.9), and is second on the τ 3 banking domain (19.6 vs. 22.3).
+On the GDPval-AA v2 ELO it places third at 1128, behind DeepSeek-V4-Flash (1187) and within
+17 points of MiMo-V2.5 (1145) — a margin that corresponds to a nearly even expected head-toheadd win rate against a model 60B larger in total parameters. The remaining gap concentrates
+in repository- and terminal-level software engineering: SWE-Bench Verified 70.4 versus 73.0–73.8
+for the two frontier baselines, and Terminal Bench Hard 28.3 versus MiMo-V2.5’s 41.7.
+The generational jump is largest exactly where Solar Open 1 fell short (Section 1): agentic
+execution (SWE-Bench Verified 15.4→70.4, MCP-Atlas 34.4→58.2, APEX-Agents 2.4→16.6) and
+frontier-level reasoning (GPQA-Diamond 66.2→86.3, HLE 11.5→28.8, HMMT2602 68.9→93.9).
+
+5.3
+
+Korean Results
+
+On the Korean suite (Table 4), Solar Open 2 records the highest average of all six models compared
+(85.4), ahead of DeepSeek-V4-Flash (84.9) and of both fast-tier closed APIs — GPT-5.4 mini (80.8)
+17
+
+and Claude Haiku 4.5 (69.6). The lead is broad-based across the five groups: it is first on CLIcK
+(90.7) in language & culture, first on two of the three professional domains — KBank-MMLU
+(80.8) and KBL (75.5) — and within a point of the lead on KMMLU-Pro (78.4) and Ko-AIME
+(97.7). Its decisive edge is Ko-GDPval (86.8), the deliverable-producing oﬀicework task, where it
+leads DeepSeek-V4-Flash by 1.8 points and every other model by more than 5.
+The generational gain over Solar Open 1 is +18.4 points on average (67.0 → 85.4) and on the
+agentic axis it is qualitative: the previous generation effectively could not perform deliverableproducing oﬀicework (Ko-GDPval 3.4), whereas Solar Open 2 is the strongest model measured on
+that task. Together with the English results, this delivers the design goal set out in Section 1 — to
+be competitive with the global open frontier in English, and leadership in the sovereign scenario
+of Korean knowledge work — which we attribute to the Korean-eﬀicient tokenizer (Section 2.1),
+the Korean data curation of pre-training, and the oﬀicework agent scenarios of Section 4.1.3. The
+next section examines that scenario in depth.
+
+Figure 12: Blind pairwise qualitative evaluation on Korean conversations (Solar Open 2 vs.
+DeepSeek-V4-Flash). Each bar is that aspect’s outcome distribution in percent, centred on the
+tie segment, with rows ordered by net margin.
+We also ran a blind pairwise qualitative evaluation against DeepSeek-V4-Flash on 835 Korean
+conversation turns. Solar Open 2 is preferred on 44.1% of turns versus 26.6%, and wins decisively
+— the other answer got a fact wrong or came out garbled, which no other strength can make up
+for — on 21.2% versus 8.5% (Figure 12). Alignment, honesty, and safety lead by the widest
+margins because on these axes the correct answer is culturally located — which perspective a
+contested Korean issue deserves, which Korean claim may be asserted rather than hedged, which
+request counts as harmful under Korean norms — and a model can be fluent in Korean while
+still defaulting to a foreign frame on all three. Usability comes out even, and its losses are almost
+entirely quality rather than decisive ones (27% vs. 12%) — a matter of phrasing preference rather
+than of anything a Korean-specialized model encodes differently.
+
+5.4 Korean Officework Agent Performance: Ko-GDPval
+Ko-GDPval is an in-house Korean oﬀicework agentic benchmark that inherits the paradigm of
+GDPval (Patwardhan et al., 2025) — evaluating “economically valuable real-world work” — and
+roots it in Korean industry, law, and business practice. It comprises 170 tasks, all in Korean,
+spanning 11 industry domains in which economically valuable, deliverable-centric knowledge work
+is concentrated. Each task is a workplace scenario from one of 58 occupations — lawyers, CPAs,
+infection-control specialists, project-finance underwriters, and more — with the field’s actual
+statutes, formulas, and procedures reflected in the instruction and in the grading rubric.
+Solar Open 2 stands just behind the strongest model compared, DeepSeek-V4-Pro (86.9) — a
+1.6T-parameter model more than six times its size — and ahead of every other model measured,
+18
+
+Table 5: Ko-GDPval overall results. Score is the overall benchmark score; the remaining columns
+break performance down by grading dimension.
+Model
+
+Size
+
+Score Data Content Structure Quality Value Format Constraint File Format
+
+DeepSeek-V4-Pro
+Solar Open 2
+DeepSeek-V4-Flash
+MiMo-V2.5-Pro
+MiMo-V2.5
+Claude Haiku 4.5
+GPT-5.4 mini
+
+1.6T
+250B
+284B
+1T
+310B
+closed
+closed
+
+86.9
+86.8
+85.0
+84.6
+81.0
+68.3
+59.4
+
+S £T ˆ™ KL¤
+öPÍ ù ¹
+U§
+ƒ, ŸVWŸ BžX ’ ˆ™š€› •O —˜ €¶
+ÐÍ 6¸½.
+
+ô½. ·‰šÈÉ, AML ¡
+, :žƒ ˆ™•Y‘ AML
+
+82.1
+83.5
+81.0
+80.6
+76.2
+60.6
+54.4
+
+œ•žŸ ˆ™ 0 (RWA) Ä€¤ €ö›
+Ó BžX Z[’¯í ¥K\Ÿ
+ë
+
+•. ˆ2 ‘’“ ”• –—˜™ ƒ†
+™ ,¹ ² 2025
+3
+ƒ¨©¥¦ ª« Þ0,
+
+1• Ú ˆ
+AML/FDS Û Ü ¥¦ Ý¿(64Õ)Í ¶ ÈÉ, ¥¦èÆ«å¨©æ+« †‡, " ¶#
+« ¬- ® ¯ —˜¸½. ³ Ö•² «] ^_ ` ¹ …í’ï½.
+
+1. ”• €
+”•ÅÆ
+
+’“ÇÈ
+
+•a‘‰
+
+‹£
+10
+
+7¨©
+
+ÉÊ(Ë)
+
+¶ÉÊ(Ë)
+
+197,600,000
+
+19,760,000
+
+•a‘‰
+
+Ç¨©
+
+3
+
+44,500,000
+
+14,833,333
+
+% ¬-
+
+ƒ¨©
+
+20
+
+12,330,000,000
+
+616,500,000
+
+% ¬-
+
+7¨©
+
+2
+
+375,000,000
+
+187,500,000
+
+% ¬-
+
+Ç¨©
+
+8
+
+1,881,000,000
+
+235,125,000
+
+% …-
+
+7¨©
+
+6
+
+1,433,000,000
+
+238,833,333
+
+% …-
+
+Ç¨©
+
+2
+
+164,000,000
+
+82,000,000
+
+†-Î-
+
+7¨©
+
+2
+
+14,000,000
+
+†-Î-
+
+Ç¨©
+
+5
+
+48,400,000
+
+†- -
+
+7¨©
+
+4
+
+29,400,000
+
+7,350,000
+
+†- -
+
+Ç¨©
+
+2
+
+18,700,000
+
+9,350,000
+
+â 4. ¥¦èÆ«å¨©æ+« ¥¦ •§ (2025
+
+7,000,000
+9,680,000
+
+3 )
+
+‰ 64Õ Ç % ¬-‘ 30Õ(46.9%)ÈÉ , bÈÃ, ƒ¨© æ+ % ¬-‘ 20Õ(31.3%)Í ÷µ’“ % ¬- òc¤ AML
+žŸ
+Ç&² ·Å‘½. †-Î-å - ì• 11Õ(17.2%) Ç 7Õ‘ 900~1,000)¼ ·ÚÈÉ — ¥¦ ¤Û "(R4)¹
+% ¸½.
+
+2. ‘’“”• ›œ
+" ¶# ƒ¨©¥¦ ª« Þ0² ½d0 e½. R1(¨©æ+ ƒ¨©) 20Õ, R2(
+¥¦ 5f¼ g0 % ¬-) 13Õ, R3(FATF
+Å ¡ ‚/Å³ hî ¬-)
+15Õ, R4(†-¥¦ 900~1,000)¼ — ¥¦ ¤Û)
+7Õ‘½. Ç
+iÜ * ª« Õ…²
+55ÕÈÉ,
+ƒè ¥¦ Õ…•½ ½Ç "¹ jž² ¥¦ ½… kÓ’“ ý÷ ¾Ï¤ U§›‘ öá ½.
+Ì
+
+Í‹
+
+R1
+
+¨©æ+ ƒ¨©
+
+R2
+R3
+
+5f¼ g0 % ¬FATF
+
+R4
+
+ÎÏ ‹£
+
+Ð€ ÑÒ
+
+20
+
+% ¬- ÇÛ, l‘m ¯åK > nàå‘oåp >å ž>åMqrå`Br æ
+
+13
+
+Å ¡ ‚/Å³ hî
+
+†- 900~1,000)¼
+
+( )L sátŸVåßŸ•ˆ¼å”›Ô¿ æ #
+
+l‘m ¯åK > nàå‘oåp >å ž>åMqrå`Bråv¸wÊ
+
+7
+
+— ¥¦ ¤Û, †-Î- ÇÛ
+
+â 5. ƒ¨©¥¦ ª« "« §x
+
+3.
+
+œ ÓÉ ÔÕÖ
+‹£
+
+ÉÊ(Ë)
+
+’“ÇÈ
+
+Ç
+
+5
+
+2,000,000,000
+
+3.00
+
+`Br
+
+2
+
+1,730,000,000
+
+3.00
+
+l‘m ¯
+
+2
+
+1,700,000,000
+
+3.00
+
+p >
+
+2
+
+1,500,000,000
+
+3.00
+
+K > nà
+
+2
+
+1,420,000,000
+
+3.00
+
+Mqr
+
+2
+
+1,350,000,000
+
+3.00
+
+ž>
+
+2
+
+1,140,000,000
+
+2
+
+1,002,000,000
+
+‘o
+
+u• ¬-
+
+15
+
+3.00
+3.00
+
+tVy
+
+3
+
+656,000,000
+
+2.00
+
+z Z{
+
+2
+
+598,000,000
+
+2.00
+
+FATF
+
+6
+
+× ¶
+
+90.5
+89.1
+87.6
+87.7
+84.0
+71.3
+54.6
+거래번호
+TXN-20250304-A003
+TXN-20250304-A005
+TXN-20250307-A013
+TXN-20250310-A015
+TXN-20250311-A017
+TXN-20250312-A020
+TXN-20250313-A023
+TXN-20250314-A028
+TXN-20250318-A032
+TXN-20250318-A034
+TXN-20250319-A037
+TXN-20250321-A041
+TXN-20250324-A046
+TXN-20250324-A047
+TXN-20250326-A052
+TXN-20250326-A053
+TXN-20250328-A058
+TXN-20250328-A059
+TXN-20250331-A061
+TXN-20250331-A064
+TXN-20250304-A005
+TXN-20250307-A013
+TXN-20250311-A017
+TXN-20250312-A020
+TXN-20250314-A028
+TXN-20250318-A032
+TXN-20250319-A037
+TXN-20250321-A041
+TXN-20250324-A046
+TXN-20250326-A052
+TXN-20250328-A058
+TXN-20250331-A061
+TXN-20250331-A064
+TXN-20250304-A005
+TXN-20250307-A013
+TXN-20250311-A017
+TXN-20250312-A020
+TXN-20250313-A023
+TXN-20250314-A028
+TXN-20250318-A032
+TXN-20250319-A037
+TXN-20250321-A041
+TXN-20250324-A046
+TXN-20250326-A052
+TXN-20250326-A053
+TXN-20250328-A058
+TXN-20250331-A061
+TXN-20250331-A064
+TXN-20250303-A002
+TXN-20250306-A010
+TXN-20250313-A024
+TXN-20250314-A027
+TXN-20250320-A038
+TXN-20250325-A048
+TXN-20250331-A060
+
+96.6
+96.5
+95.9
+95.2
+93.4
+88.6
+85.7
+거래일시
+2025-03-04
+2025-03-04
+2025-03-07
+2025-03-10
+2025-03-11
+2025-03-12
+2025-03-13
+2025-03-14
+2025-03-18
+2025-03-18
+2025-03-19
+2025-03-21
+2025-03-24
+2025-03-24
+2025-03-26
+2025-03-26
+2025-03-28
+2025-03-28
+2025-03-31
+2025-03-31
+2025-03-04
+2025-03-07
+2025-03-11
+2025-03-12
+2025-03-14
+2025-03-18
+2025-03-19
+2025-03-21
+2025-03-24
+2025-03-26
+2025-03-28
+2025-03-31
+2025-03-31
+2025-03-04
+2025-03-07
+2025-03-11
+2025-03-12
+2025-03-13
+2025-03-14
+2025-03-18
+2025-03-19
+2025-03-21
+2025-03-24
+2025-03-26
+2025-03-26
+2025-03-28
+2025-03-31
+2025-03-31
+2025-03-03
+2025-03-06
+2025-03-13
+2025-03-14
+2025-03-20
+2025-03-25
+2025-03-31
+
+84.2
+79.2
+78.2
+75.8
+72.6
+56.2
+36.8
+계좌번호
+****1109
+****8821
+****8024
+****1472
+****5836
+****8642
+****6298
+****8821
+****9027
+****7290
+****5429
+****8821
+****9384
+****2517
+****5471
+****9806
+****4673
+****7916
+****5384
+****6493
+****8821
+****8024
+****5836
+****8642
+****8821
+****9027
+****5429
+****8821
+****9384
+****5471
+****4673
+****5384
+****6493
+****8821
+****8024
+****5836
+****8642
+****6298
+****8821
+****9027
+****5429
+****8821
+****9384
+****5471
+****9806
+****4673
+****5384
+****6493
+****7782
+****1357
+****1023
+****5142
+****2916
+****7820
+****1052
+
+고객명
+(주)동방물류
+(주)퍼시픽인베스트
+(주)신성무역
+(주)동방물류
+(주)코스모자원
+(주)프라임캐피탈
+(주)신성무역
+(주)퍼시픽인베스트
+(주)코스모자원
+(주)동방물류
+(주)신성무역
+(주)퍼시픽인베스트
+(주)코스모자원
+(주)동방물류
+(주)프라임캐피탈
+(주)신성무역
+(주)퍼시픽인베스트
+(주)동방물류
+(주)코스모자원
+(주)신성무역
+(주)퍼시픽인베스트
+(주)신성무역
+(주)코스모자원
+(주)프라임캐피탈
+(주)퍼시픽인베스트
+(주)코스모자원
+(주)신성무역
+(주)퍼시픽인베스트
+(주)코스모자원
+(주)프라임캐피탈
+(주)퍼시픽인베스트
+(주)코스모자원
+(주)신성무역
+(주)퍼시픽인베스트
+(주)신성무역
+(주)코스모자원
+(주)프라임캐피탈
+(주)신성무역
+(주)퍼시픽인베스트
+(주)코스모자원
+(주)신성무역
+(주)퍼시픽인베스트
+(주)코스모자원
+(주)프라임캐피탈
+(주)신성무역
+(주)퍼시픽인베스트
+(주)코스모자원
+(주)신성무역
+김민서
+최영호
+임채원
+송지호
+황도현
+유나연
+배도윤
+
+81.0
+82.0
+78.3
+78.5
+73.1
+59.7
+43.7
+
+88.2
+86.7
+86.9
+86.4
+84.8
+78.2
+83.1
+
+거래유형
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+해외송금
+현금입금
+현금입금
+현금출금
+현금입금
+현금입금
+현금입금
+현금입금
+
+상대국
+거래금액(원)
+450,000,000 중국
+780,000,000 케이맨제도
+540,000,000 이란
+380,000,000 중국
+920,000,000 러시아
+670,000,000 버진아일랜드
+488,000,000 북한접경
+850,000,000 파나마
+710,000,000 미얀마
+415,000,000 중국
+625,000,000 시리아
+920,000,000 케이맨제도
+580,000,000 러시아
+360,000,000 중국
+750,000,000 버진아일랜드
+462,000,000 이란
+880,000,000 파나마
+395,000,000 중국
+640,000,000 미얀마
+515,000,000 시리아
+780,000,000 케이맨제도
+540,000,000 이란
+920,000,000 러시아
+670,000,000 버진아일랜드
+850,000,000 파나마
+710,000,000 미얀마
+625,000,000 시리아
+920,000,000 케이맨제도
+580,000,000 러시아
+750,000,000 버진아일랜드
+880,000,000 파나마
+640,000,000 미얀마
+515,000,000 시리아
+780,000,000 케이맨제도
+540,000,000 이란
+920,000,000 러시아
+670,000,000 버진아일랜드
+488,000,000 북한접경
+850,000,000 파나마
+710,000,000 미얀마
+625,000,000 시리아
+920,000,000 케이맨제도
+580,000,000 러시아
+750,000,000 버진아일랜드
+462,000,000 이란
+880,000,000 파나마
+640,000,000 미얀마
+515,000,000 시리아
+9,500,000 국내
+9,900,000 국내
+9,800,000 국내
+9,700,000 국내
+9,600,000 국내
+9,400,000 국내
+9,800,000 국내
+
+99.4
+99.8
+100.0
+99.2
+97.9
+99.8
+97.5
+위험등급
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+고위험
+저위험
+중위험
+중위험
+중위험
+중위험
+중위험
+중위험
+
+적용룰
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R1
+R2
+R2
+R2
+R2
+R2
+R2
+R2
+R2
+R2
+R2
+R2
+R2
+R2
+R3
+R3
+R3
+R3
+R3
+R3
+R3
+R3
+R3
+R3
+R3
+R3
+R3
+R3
+R3
+R4
+R4
+R4
+R4
+R4
+R4
+R4
+
+Figure 13: FATF mutual-evaluation pre-response, delivered in two mutually consistent formats.
+Left: the regulator-facing response report (PDF), summarizing transactions by risk grade and
+country exposure. Right: the monitoring workbook (xlsx) listing all 55 rule-flagged (R1–R4)
+transactions.
+including the 1T-parameter MiMo-V2.5-Pro (84.6) and DeepSeek-V4-Flash (85.0; Table 5). A
+more fine-grained analysis by rubric type shows that Solar Open 2’s largest gap relative to
+DeepSeek-V4-Pro lies in Quality dimension (79.2 vs. 84.2), while it leads on Data (83.5 vs. 82.1)
+and Value Format (82.0 vs. 81.0). In the sovereign scenario of Korean oﬀicework, the nativelanguage-specialized 250B model delivers the oﬀicework capability of frontier-scale models at a
+fraction of their size and leads the fast-tier frontier APIs it is built to compete with.
+Quantitative scores alone do not reveal what these tasks demand or what the model actually produces, so we inspected the submitted deliverables directly. Figures 13 and 14 show two
+representative examples, each completed autonomously by Solar Open 2 in the sandbox from
+the reference files alone. The first is a FATF mutual-evaluation pre-response task (compliance
+oﬀicer, finance & insurance), hard for two reasons: dozens of ledger transactions must be screened
+precisely against four AML rules (R1–R4) and aggregated into country-level risk exposure, and
+the result must be delivered twice — as a regulator-facing pdf report and as an xlsx monitoring workbook — with the two kept consistent. Solar Open 2 completes both in one pass, the
+report restating the workbook’s analysis in document form (Figure 13). The second pairs two
+regulatory-document tasks — a medical-device PMS periodic report, and a law firm’s advertising
+self-inspection — whose diﬀiculty is source fidelity and traceable grounds: identifications and
+counts must be transcribed exactly from the references, and every judgment must cite the statute
+and article it rests on. Solar Open 2’s deliverables hold to this standard — verbatim product
+19
+
+[2]
+
+No.
+
+–—¢(–¢)
+£†
+
+2006-11-14
+¤¢
+
+Synthes GmbH.
+
+¤ ¥†
+
+¦§¦
+
+¨ ¨©ª
+
+©…„ý
+
+47
+
+§ ’‰ ®½ … +
+
+48
+
+•:
+
+•‚ “
+Ž•
+
+…
+
+ÎÞ ;™
+
+‚—•
+
+–¼ ¦§¦ Synthes GmbH•
+¿À”•, «®š
+µ
+ž¡.
+
+/×€ •
+
+“”
+
+26
+
+/×€ •
+
+“”
+
+Ø.¾ ¡Æ „Û
+
+Ž•
+
+è ç ²-
+
+P
+
+Ž
+
+294•3
+
+²-
+
+B×’‰ /½§
+
+52
+
+²-
+
+P
+
+Ž
+
+294•3
+
+²-
+
+B×’‰ /½§
+
+3þ
+
+)] Þ…
+
+‡¯,
+
+•
+§•¸
+
+‚••
+‚’•
+
+° ±• ²³. „…
+„
+° µ ¹º »
+
+´,
+
+µ
+
+™.
+
+¶·
+
+Í¼ †
+
+ñ›
+
+’• 2»½ „…
+(
+)¾, 2006 11 14
+‹Œ –—£†›
+‚’•
+° µ ¹º »”¾ ° Á¡.
+¨• ¦§¦ Oberdorf• §³•
+
+“
+
+µ
+
+Í¼
+œ건ñ›
+
+•
+
+1
+
+2024?60701
+
+« ¡
+
+2
+
+2020?45698
+
+3
+
+2019?48684
+
+Ï
+
+ˆ…
+
+2026. 1. 29.
+
+ñ’zš• “
+zšû Ò
+¼
+]NaÁ zš
+
+« ¡
+
+2025. 3. 13.
+
+ñ’¼• ÛšaÁƒ Ó ³ Ûšz• “— H ³Ç •–Ç aÁ•
+üý þ Ö1, aÁ• ±Ð è4, "«Ú œ„ Ç — •• ’Ô Ãû
+Š}1ÿ
+„˜• ØÙ˜•Â šà. Ž¬• ]N~’ “” ’Ôƒ /˜•
+Ôš d9 Ûšz ª›‡ Ðƒ -·šà.
+
+« ¡
+
+2019. 12. 24.
+
+@¡• “€ • Ç Ô• ÀA •Bû » ˜ , “!"ñ“Ç
+@¡ ƒ «š IJ• ù:— Îò… 9„Í Óà. Ž• •
+“€ • (Ž•
+®24¿) D… (ªš
+-E
+Â˜ ,
+ƒ³• “ù !" ñ“Ç Ô• ÀA •B “”ƒ -·šà.
+
+(MDEQ_PRDLST_SN: 144)• 2006
+‹Œ –—£†› ÂÃ ‡Ä, ¥Å «®š µ ÆÇ
+ÈÉ•
+ÊËÌ ‚’Í Î 2»½ „…
+‡¡. Ž –¼ Ï ´ ,
+ÏÐ ,
+‡
+» ¡Ñ
+ÏÒ•
+°¾ Ó‚’•, ®š•
+„ Ô˜Õ ®š „ „ Ö„ • ×
+–‡¡.
+1
+
+1
+
+~ 2024
+
+12
+
+31 )
+
+«®š› ãä”¾ Ø •”¾ å½æ ‚’
+MFDS £†
+
+Ø ¥Å ÙÚ ÛÜ· ÝÞ ß, Ž
+
+ž”•, ç
+
+Æ€ îï• ‘‰ „… Æ Å
+
+è
+
+µ
+
+ª.
+
+–¼ à¥„ á´â¤ µ Ëá´â¤
+
+‚é •à
+
+êëì
+
+‚ ‡ð‡ àñ »œ’Í Æ€’
+
+í‡
+
+ž”•, ÙÚ ãŠ òó
+
+ª •”¾ ÷Š’
+
+„ §ù‡ ú , û¾ ®š „ „
+»• ¥ Á¡.
+ã –
+ü £†
+Á
+ùµ
+
+1
+
+Ž•
+
+®23¿
+
+2
+
+Ž•
+
+®24¿
+
+Ž• •
+
+3
+
+Ž•
+
+®31¿
+
+Ò ®š(
+
+ä9 õ )
+
+Ž•
+
+'• (À Ã õ
+
+•
+î„
+
+4
+
+ž¡.
+
+(€) •
+
+•• PMS ‡
+
+·Ú
+
+Á Øà
+
+¡. È • Ó‚Á ‡ • ¤Å ADR
+„ ‚ ±• ÆÇ „…
+‚š çÆ’Í
+
+› È •¸,
+
+¦ · Ú
+Á ö‡¡.
+
+Á 45é„ ‡
+
+ã
+
+ã
+Á‡
+‡• ª •”¾ ò
+
+é • 45é‡¡. ‡• PMS
+ã‡¡.
+
+·Ú
+
+Æ•
+
+Á òó ‡
+
+‚
+
+Ž•
+
+®34¿
+
+5
+
+Ž•
+
+®26¿
+
+ñ’™Æ
+
+®8¿
+
+7
+
+ñ’™Æ
+
+®9¿
+
+€Ã• ¡Å
+
+®10¿
+
+/ó• ¡Å
+
+ñ’™Æ
+
+Üñ’• ¡Å
+
+ñ’™Æ
+
+®12¿
+®22¿
+
+®ÛaÁ• ™´
+
+‡•, òó
+
+11
+
+ñ’™Æ
+
+®23¿
+
+®ÛaÁ• ®y™Y(5¨)
+
+12
+
+«šŽ¬ Ž•
+
+13
+
+Ž• À
+
+›
+
+••,
+
+14
+
+Ž•
+P
+
+16
+
+‘’
+‘’
+
+¾ÁÂÃÄ‘Å
+Ž
+
+4, 5, 8
+3, 5, 7
+4
+294•3
+
+“ 2º…, /Ž•
+
+/×€ •
+
+ñ’™Æ
+
+15
+
+,Ò °
+
+“€ •
+
+9
+
+ù:‰•• ¡Å
+
+Ú ‡±Ð‡²•ƒ
+Ò ° º…,
+
+£
+
+š ‘’
+º…, ™Ä‰ˆ
+
+¾ÁÂ º… ÃÄ »ô
+è ç ²“‡
+
+B×’‰ /½§
+
+º…
+
+3
+
+17
+
+tçz
+
+35•5
+
+tçÛðz ®š
+
+18
+
+J
+
+751
+
+— ñ“
+
+º…‡
+
+õ
+
+š“ °
+
+‰Š(%)
+
+!
+
+26
+
+57.8%
+
+8-3. Sources
+
+ã»˜
+
+16
+
+35.6%
+
+ã!
+
+3
+
+6.7%
+
+Æ
+• çè … à ¢– ’•‡ ñû ‰¿ F¿˜ßà.
+«šŽ• ¬-, 「Ž•
+‘’」(2024¨ §’Ø) •
+Ú ‡±Ð‡²•
+™´• ™Æ üý
+«šŽ• ¬-, 「Ž• À
+‘’」(2024¨ §’Ø) • Ò ° º…,
+£ º…, ™Ä‰ˆ ™´ i «šŽ• ¬-,
+「Ž•
+¾ÁÂÃÄ‘Å」(2024¨ §’Ø) •
+¾ÁÂ º… ÃÄ »ô k
+®a, 「ñ’™Æ 」(2026.3.19. …ñ) • ®Û
+ª”¡Å( Üñ’‡€Ã‡/ó‡ù:‰•‡®Û™´‡®y™Y) % I ¿’Î, 「ñ’‘®™Æ 」(2026.5.12. …ñ) • ‘® ’£• • ‘®¡Å ⑥
+« ¡ 2019.12.24. 8 2019?48684 • “€ • • Ô• ÀA •B
+⑦ « ¡ 2026.1.29. 8 2024?60701 • zš 5Ç
+ƒ •š aÁ• “ è ⑧ « ¡ 2025.3.13. 8 2020?45698 • Ûšz ª›‡ Ð ØÙ™´ ⑨ ½’ý래“¡-, 「ò^‡‰™ Ãƒ š
+º…‡
+²
+Ú」(2024¨ §’) • ¬¶‡·
+º… ™´ ⑩ § ’‰‰•“¡-, 「§ ’‰ a
+Ú」(2024¨ §’) •
+ÏÐ (•³ a
+™´
+
+!‡ 26é(57.8%)”¾ †² "À”•, ã»˜ 16é(35.6%), ã! 3é(6.7%) #‡“¡. ã!
+• §²Æ
+$,
+$Æ á,
+%(¦&'¦-ü( ! ) „ä)„ 3é”¾, ò* Šš
++†•
+"†,
+-."”¾ È/’Í û„ 0¼
+•Æ1‡ 2°Á¡.
+
+(‹) Œ•Ž •€
+
+”• Ž
+• Ð “ • õ Ú ( “‡
+, “!"
+)
+
+10
+
+‡ˆ
+„…†
+
+–²ñ›
+
+„
+
+‡
+
+‚
+
+(ƒ) „…†
+
+“ò
+
+6
+
+8
+
+†
+
+˜ µ È ›
+•
+
+ç˜¬
+
+“
+ñ›
+
+–¼
+
+[4]
+Ž ²• •
+
+,
+Ð˜Ç d9ƒ š˜• ’
+, ±– “ ƒ — š
+™• •ÿ ñ ˜Ç ñ“Ç “ ˜à. Ž¬•
+“— ˜ 난 d9 zš 5Ç ƒ •š aÁÿ ³ “ ˜à.
+
+Ë·
+
+Ë· ôõ•• ö”¾ ÷Š’“¡.
+
+Ö, Ž –¼
+°¾ à æà • ° ‡ íÍ ‚ ã ï• ø
+„ü•ý¾ ‚ „ û„ þ¼
+à ÿ
+÷Š µ °
+¸
+™ ”¾ Š
+æ
+³
+•
+•ª À”•, –„ Øà æÙ
+¼
+…› Ú
+
+B×’‰ /B×Q &Ò
+
+51
+
+[3]
+
+ž¡. „…
+
+ºö
+
+•:
+
+26
+
+50
+
+8-2.
+
+¬«®š
+
+(2024
+
+“‡
+
+‘’ 4 4•
+
+Ž•
+
+ôj• ½§
+
+Eimattstrasse 3, CH-4436 Oberdorf, Switzerland
+
+«
+
+Ùª•
+
+»
+
+23 1•
+
+Ž•
+
+49
+
+‡ˆ
+
+PMS
+
+(2024)
+
+| v1.2 | 2025.12.28 | 16
+
+2
+
+Figure 14: Source fidelity and cited grounds across two regulatory-document tasks. Left: a
+medical-device PMS periodic report, with product identification and adverse-event severity tallies.
+Right: a law firm’s advertising self-inspection, with its cited-precedent table and statute index.
+identification, severity tallies that sum exactly to the source counts, and precedent tables and
+statute indexes that make each checklist judgment traceable (Figure 14). Additional deliverable
+examples are provided in Section A.2.
+
+6 Conclusion
+We presented Solar Open 2, a 250B-A15B Mixture-of-Experts model built as a Korean sovereign
+AI for long-horizon agents. Three threads run through this report. Architecturally, a hybrid
+attention stack — three linear-attention layers per softmax layer, with NoPE and the negativeeigenvalue extension — extends the context window to 1M tokens at about a quarter of the
+memory and computation of an all-softmax design. In pre-training, a selective weight transfer
+initializes about 2.3% of the model’s parameters from Solar Open 1, the portion that survives the
+architectural change, and a quality- and rarity-aware curation pipeline refines a 20T-token pool
+into the 10T mixture consumed by a staged curriculum with checkpoint merging. In post-training,
+purpose-built agent scenarios spanning conversational tool use, coding, and oﬀicework feed a fully
+asynchronous RL system. Multi-teacher on-policy distillation (MOPD) then folds twelve domain
+specialists into one model. The result is a model competitive with the strongest comparably
+sized open-weight models on English benchmarks and first on average across the Korean suite,
+ahead of even fast-tier closed APIs. On Ko-GDPval — the sovereign target scenario of deliverableproducing Korean oﬀicework — Solar Open 2 essentially matches DeepSeek-V4-Pro (1.6T) at less
+than a sixth of its size, a capability that effectively emerges in this generation, rising from Solar
+Open 1’s 3.4 to 86.8.
+The remaining gaps are localized and point to the next steps: repository- and terminal-level
+software engineering on the English agent suite, and fine-grained numerical precision in oﬀicework
+deliverables. Both call for stronger verification and self-checking behaviors in agent training.
+
+20
+
+Beyond these gaps, we view the Solar Open recipe — tokenizer eﬀiciency, cross-generation selective
+weight transfer, data curation optimizing value per token, and scenario-driven agent post-training
+with specialist consolidation — as a reusable path toward sovereign models for other underserved
+languages.
+
+Acknowledgments
+Special thanks to our colleagues at Upstage — Eunbi Cho, Eunhae Choo, Jisun Kim, Sangwon
+Joo, and Seungwon Cheon — whose tireless support and expertise were instrumental in the
+development and release of Solar Open 2.
+We are deeply grateful to the members of our consortium for their contributions throughout
+the project: Lablup Inc. for building and operating the GPU clusters and large-scale training
+infrastructure, Nota Inc. for model quantization enabling eﬀicient inference and serving, and
+Flitto for constructing large-scale training datasets. We also thank our domain and ecosystem
+partners — Alfred Co., Ltd., Allganize Korea Co., Ltd., Asteromorph Inc., AXZ Corp., Channel
+Corp., clush Inc., Dalpha Inc., DAY 1 COMPANY, Finda, Inc., HyperAccel Co., Ltd., Korea
+Electronics Technology Institute, Korea Financial Telecommunications and Clearings Institute
+(KFTC), Law&Company Co., Ltd., MakinaRocks Co., Ltd., RLWRLD Inc. and VUNO Inc. — for
+contributing domain expertise and evaluation, and for supporting the adoption and dissemination
+of the model across industries. Finally, we thank our academic partners, New York University,
+Stanford University, KAIST and Sogang University for their research collaboration throughout
+the project.
+This research was conducted as part of the Sovereign AI Foundation Model Project (GPU
+Track), organized by the Ministry of Science and ICT (MSIT) and supported by the National IT
+Industry Promotion Agency (NIPA), South Korea (PJT-26-010017). This work was also conducted
+as part of the Sovereign AI Foundation Model Project (Data Track), organized by MSIT and
+supported by the National Information Society Agency (NIA), South Korea (Grant No. 2026AIData-WII03). In addition, this research was supported by the MSIT, South Korea, under
+the Top-Tier AI Global HRD invitation program (RS-2025-25461932) supervised by the IITP
+(Institute for Information & Communications Technology Planning & Evaluation).
+
+References
+Amro Abbas, Kushal Tirumala, Dániel Simig, Surya Ganguli, and Ari S Morcos. SemDeDup: Data-eﬀicient learning at web-scale through semantic deduplication. arXiv preprint
+arXiv:2303.09540, 2023.
+Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebrón, and
+Sumit Sanghai. GQA: Training generalized multi-query transformer models from multi-head
+checkpoints. In Conference on Empirical Methods in Natural Language Processing (EMNLP),
+2023.
+Mislav Balunović, Jasper Dekoninck, Ivo Petrov, Nikola Jovanović, and Martin Vechev. Matharena: Evaluating llms on uncontaminated math competitions, February 2025. URL https:
+//matharena.ai/.
+Chaithanya Bandi, Razvan-Gabriel Dumitru, Ben Hertzberg, Divyansh Agarwal, Geobio Boo,
+Tejas Polakam, Sami Hassaan, Jeff Da, HiJae Kim, Vipul Gupta, Manasi Sharma, Andrew
+Park, Martin Dimakis, Ernesto Gabriel Hernandez Montoya, Dan Rambado, Ivan Salazar,
+Rafael Cruz, MohammadHossein Rezaei, Chetan Rane, Ben Levin, Daniel Yue Zhang, Brad
+Kenstler, and Bing Liu. Mcp-atlas: A large-scale benchmark for tool-use competency with real
+mcp servers, 2026. URL https://arxiv.org/abs/2602.00933.
+21
+
+Victor Barres, Honghua Dong, Soham Ray, Xujie Si, and Karthik Narasimhan. tau2-bench: Evaluating conversational agents in a dual-control environment. arXiv preprint arXiv:2506.07982,
+2025.
+Aviv Bick, Kevin Y. Li, Eric P. Xing, J. Zico Kolter, and Albert Gu. Transformers to SSMs:
+Distilling quadratic knowledge to subquadratic models. In Advances in Neural Information
+Processing Systems (NeurIPS), 2024.
+Cody Blakeney, Mansheej Paul, Brett W. Larsen, Sean Owen, and Jonathan Frankle. Does your
+data spark joy? performance gains from domain upsampling at the end of training. arXiv
+preprint arXiv:2406.03476, 2024.
+Aditya Chattopadhyay, Elvis Nunez, Prannay Kaul, Benjamin Bowman, Evan Becker, Luca Zancato, David Thomas, Wei Xia, and Stefano Soatto. Priming: Hybrid state space models from
+pre-trained transformers. arXiv preprint arXiv:2605.08301, 2026.
+Cheng Chen, Yichun Yin, Lifeng Shang, Xin Jiang, Yujia Yang, Fen Wang, Ping Wang, and Qun
+Liu. bert2BERT: Towards reusable pretrained language models. In Annual Meeting of the
+Association for Computational Linguistics (ACL), 2022.
+Jungho Cho, Minbyul Jeong, and Sungrae Park. User-oriented multi-turn dialogue generation
+with tool use at scale. arXiv preprint arXiv:2601.08225, 2026.
+DeepSeek-AI. Deepseek-v4: Towards highly eﬀicient million-token context intelligence. arXiv
+preprint arXiv:2606.19348, 2026.
+Xiang Deng, Jeff Da, Edwin Pan, Yannis Yiming He, Charles Ide, Kanak Garg, Niklas Lauffer,
+Andrew Park, et al. Swe-bench pro: Can ai agents solve long-horizon software engineering
+tasks? arXiv preprint arXiv:2509.16941, 2025.
+Dan Friedman and Adji Bousso Dieng. The vendi score: A diversity evaluation metric for machine
+learning. Transactions on Machine Learning Research, 2023. arXiv preprint arXiv:2210.02410.
+Riccardo Grazzi, Julien Siems, Arber Zela, Jörg K.H. Franke, Frank Hutter, and Massimiliano
+Pontil. Unlocking state-tracking in linear RNNs through negative eigenvalues. In The Thirteenth International Conference on Learning Representations (ICLR), 2025.
+Seokhee Hong, Sunkyoung Kim, Guijin Son, Soyeon Kim, Yeonjung Hong, and Jinsik Lee. From
+kmmlu-redux to kmmlu-pro: A professional korean benchmark suite for llm evaluation, 2025.
+URL https://arxiv.org/abs/2507.08924.
+Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia Yan, Tianjun Zhang, Sida Wang, Armando
+Solar-Lezama, Koushik Sen, and Ion Stoica. Livecodebench: Holistic and contamination free
+evaluation of large language models for code. arXiv preprint arXiv:2403.07974, 2024.
+Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik
+Narasimhan. Swe-bench: Can language models resolve real-world github issues? arXiv preprint
+arXiv:2310.06770, 2023.
+Amirhossein Kazemnejad, Inkit Padhi, Karthikeyan Natesan Ramamurthy, Payel Das, and Siva
+Reddy. The impact of positional encoding on length generalization in transformers. In Advances
+in Neural Information Processing Systems (NeurIPS), 2023.
+Eunsu Kim, Juyoung Suk, Philhoon Oh, Haneul Yoo, James Thorne, and Alice Oh. Click:
+A benchmark dataset of cultural and linguistic intelligence in korean. arXiv preprint
+arXiv:2403.06412, 2024a.
+
+22
+
+Yeeun Kim, Young Rok Choi, Eunkyung Choi, Jinhwan Choi, Hai Jin Park, and Wonseok Hwang.
+Developing a pragmatic benchmark for assessing Korean legal language understanding in large
+language models. In Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen, editors, Findings
+of the Association for Computational Linguistics: EMNLP 2024, pages 5573–5595, Miami,
+Florida, USA, November 2024b. Association for Computational Linguistics. URL https://
+aclanthology.org/2024.findings-emnlp.319.
+Kimi Team. Kimi linear: An expressive, eﬀicient attention architecture.
+arXiv:2510.26692, 2025.
+
+arXiv preprint
+
+Hyunwoo Ko, Guijin Son, and Dasol Choi. Understand, solve and translate: Bridging the multilingual mathematical reasoning gap. arXiv preprint arXiv:2501.02448, 2025.
+Aran Komatsuzaki, Joan Puigcerver, James Lee-Thorp, Carlos Riquelme Ruiz, Basil Mustafa,
+Joshua Ainslie, Yi Tay, Mostafa Dehghani, and Neil Houlsby. Sparse upcycling: Training
+mixture-of-experts from dense checkpoints. In International Conference on Learning Representations (ICLR), 2023.
+Sunjun Kweon, Byungjin Choi, Gyouk Chu, Junyeong Song, Daeun Hyeon, Sujin Gan, Jueon
+Kim, Minkyu Kim, Rae Woong Park, and Edward Choi. Kormedmcqa: Multi-choice question
+answering benchmark for korean healthcare professional licensing examinations. arXiv preprint
+arXiv:2403.01469, 2024.
+Disen Lan, Weigao Sun, Jiaxi Hu, Jusen Du, and Yu Cheng. Liger: Linearizing large language
+models to gated recurrent structures. In International Conference on Machine Learning (ICML),
+2025.
+Katherine Lee, Daphne Ippolito, Andrew Nystrom, Chiyuan Zhang, Douglas Eck, Chris CallisonBurch, and Nicholas Carlini. Deduplicating training data makes language models better. In
+Annual Meeting of the Association for Computational Linguistics (ACL), 2022.
+Wenhan Ma, Jianyu Wei, Liang Zhao, Hailin Zhang, Bangjun Xiao, Lei Li, Qibin Yang, Bofei Gao,
+et al. Mopd: Multi-teacher on-policy distillation for capability integration in llm post-training.
+arXiv preprint arXiv:2606.30406, 2026.
+Jean Mercat, Igor Vasiljevic, Sedrick Keh, Kushal Arora, Achal Dave, Adrien Gaidon, and Thomas
+Kollar. Linearizing large language models. arXiv preprint arXiv:2405.06640, 2024.
+Mike A. Merrill, Alexander G. Shaw, Nicholas Carlini, Boxuan Li, Harsh Raj, Ivan Bercovich,
+Lin Shi, Jeong Yeon Shin, et al. Terminal-bench: Benchmarking agents on hard, realistic tasks
+in command line interfaces. arXiv preprint arXiv:2601.11868, 2026.
+MiniMax. MiniMax-01: Scaling foundation models with lightning attention. arXiv preprint
+arXiv:2501.08313, 2025.
+Niklas Muennighoff, Alexander M. Rush, Boaz Barak, Teven Le Scao, Aleksandra Piktus, Nouamane Tazi, Sampo Pyysalo, Thomas Wolf, and Colin Raffel. Scaling data-constrained language
+models. In Advances in Neural Information Processing Systems, 2023.
+Taishi Nakamura, Takuya Akiba, Kazuki Fujii, Yusuke Oda, Rio Yokota, and Jun Suzuki. Dropupcycling: Training sparse mixture of experts with partial re-initialization. In International
+Conference on Learning Representations (ICLR), 2025.
+NVIDIA. NVIDIA Nemotron 3: Eﬀicient and open intelligence. Technical report, NVIDIA, 2025.
+NVIDIA. Nemotron 3 ultra: Open, eﬀicient mixture-of-experts hybrid mamba-transformer model
+for agentic reasoning. arXiv preprint arXiv:2606.15007, 2026.
+23
+
+Yuqi Pan, Yongqi An, Zheng Li, Yuhong Chou, Ruijie Zhu, Xiaohui Wang, Mingxuan Wang,
+Jinqiao Wang, and Guoqi Li. Scaling linear attention with sparse state expansion. arXiv
+preprint arXiv:2507.16577, 2025.
+Sungrae Park, Sanghoon Kim, Jungho Cho, Gyoungjin Gim, Dawoon Jung, Mikyoung Cha,
+Eunhae Choo, Taekgyu Hong, Minbyul Jeong, SeHwan Joo, Minsoo Khang, Eunwon Kim,
+Minjeong Kim, Sujeong Kim, Yunsu Kim, Hyeonju Lee, Seunghyun Lee, Sukyung Lee, Siyoung
+Park, Gyungin Shin, Inseo Song, Wonho Song, Seonghoon Yang, Seungyoun Yi, Sanghoon
+Yoon, Jeonghyun Ko, Seyoung Song, Keunwoo Choi, Hwalsuk Lee, Sunghun Kim, Du-Seong
+Chang, Kyunghyun Cho, Junsuk Choe, Hwaran Lee, Jae-Gil Lee, KyungTae Lim, and Alice
+Oh. Solar open technical report, 2026. URL https://arxiv.org/abs/2601.07022.
+Tejal Patwardhan, Rachel Dias, Elizabeth Proehl, Grace Kim, Michele Wang, Olivia Watkins,
+Simón Posada Fishman, Marwan Aljubeh, et al. Gdpval: Evaluating ai model performance on
+real-world economically valuable tasks. arXiv preprint arXiv:2510.04374, 2025.
+Long Phan, Alice Gatti, Ziwen Han, Nathaniel Li, Josephina Hu, Hugh Zhang, Chen Bo Calvin
+Zhang, Mohamed Shaaban, John Ling, Sean Shi, et al. Humanity’s last exam. arXiv preprint
+arXiv:2501.14249, 2025.
+Valentina Pyatkin, Saumya Malik, Victoria Graf, Hamish Ivison, Shengyi Huang, Pradeep Dasigi,
+Nathan Lambert, and Hannaneh Hajishirzi. Generalizing verifiable instruction following, 2025.
+Zihan Qiu et al. Gated attention for large language models: Non-linearity, sparsity, and attentionsink-free. arXiv preprint arXiv:2505.06708, 2025.
+Qwen Team. Qwen3-Next: Towards ultimate training and inference eﬀiciency. Qwen Blog, 2025.
+Qwen Team. Qwen3.5: Towards native multimodal agents. Qwen Blog, 2026.
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien
+Dirani, Julian Michael, and Samuel R Bowman. Gpqa: A graduate-level google-proof q&a
+benchmark. In First Conference on Language Modeling, 2024.
+Stéphane Ross, Geoffrey J. Gordon, and Drew Bagnell. A reduction of imitation learning and
+structured prediction to no-regret online learning. In Proceedings of the 14th International
+Conference on Artificial Intelligence and Statistics (AISTATS), 2011.
+Mohammad Samragh, Iman Mirzadeh, Keivan Alizadeh Vahid, Fartash Faghri, Minsik Cho, Moin
+Nabi, Devang Naik, and Mehrdad Farajtabar. Scaling smart: Accelerating large language model
+pre-training with small model initialization. arXiv preprint arXiv:2409.12903, 2024.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical
+reasoning in open language models. arXiv preprint arXiv:2402.03300, 2024.
+Ved Sirdeshmukh, Kaustubh Deshpande, Johannes Mols, Lifeng Jin, Ed-Yeremai Cardona, Dean
+Lee, Jeremy Kritz, Willow Primack, Summer Yue, and Chen Xing. Multichallenge: A realistic
+multi-turn conversation evaluation benchmark challenging to frontier llms, 2025. URL https:
+//arxiv.org/abs/2501.17399.
+Guijin Son, Hanwool Lee, Suwan Kim, Huiseo Kim, Jae cheol Lee, Je Won Yeom, Jihyu Jung,
+Jung woo Kim, and Songseong Kim. Hae-rae bench: Evaluation of korean knowledge in language models. In Proceedings of the 2024 Joint International Conference on Computational Linguistics, Language Resources and Evaluation (LREC-COLING 2024), pages 7993–8007, 2024.
+Artificial Analysis Team. Artificial analysis long context reasoning benchmark(lcr), 2025.
+24
+
+Bertie Vidgen, Austin Mann, Abby Fennelly, John Wright Stanly, Lucas Rothman, Marco
+Burstein, Julien Benchek, David Ostrofsky, Anirudh Ravichandran, Debnil Sur, Neel Venugopal, Alannah Hsia, Isaac Robinson, Calix Huang, Olivia Varones, Daniyal Khan, Michael
+Haines, Austin Bridges, Jesse Boyle, Koby Twist, Zach Richards, Chirag Mahapatra, Brendan
+Foody, and Osvald Nitski. Apex-agents, 2026. URL https://arxiv.org/abs/2601.14242.
+Junxiong Wang, Daniele Paliotta, Avner May, Alexander M Rush, and Tri Dao. The mamba
+in the llama: Distilling and accelerating hybrid models. In Advances in Neural Information
+Processing Systems (NeurIPS), 2024a.
+Peihao Wang, Rameswar Panda, Lucas Torroba Hennigen, Philip Greengard, Leonid Karlinsky,
+Rogerio Feris, David Daniel Cox, Zhangyang Wang, and Yoon Kim. Learning to grow pretrained models for eﬀicient transformer training. In International Conference on Learning
+Representations (ICLR), 2023.
+Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming
+Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, et al. Mmlu-pro: A more robust and challenging
+multi-task language understanding benchmark. Advances in Neural Information Processing
+Systems, 37:95266–95290, 2024b.
+Xiaomi LLM-Core Team, Bangjun Xiao, Bingquan Xia, Bo Yang, Bofei Gao, Bowen Shen, et al.
+Mimo-v2-flash technical report. arXiv preprint arXiv:2601.02780, 2026.
+Songlin Yang, Jan Kautz, and Ali Hatamizadeh. Gated delta networks: Improving mamba2 with
+delta rule. In International Conference on Learning Representations (ICLR), 2025.
+Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. τ -bench: A benchmark for
+tool-agent-user interaction in real-world domains. arXiv preprint arXiv:2406.12045, 2024.
+Aohan Zeng, Xin Lv, Zhenyu Hou, Zhengxiao Du, Qinkai Zheng, Bin Chen, Da Yin, Chendi
+Ge, Chenghua Huang, Chengxing Xie, et al. Glm-5: From vibe coding to agentic engineering.
+arXiv preprint arXiv:2602.15763, 2026.
+Chenchen Zhang, Yuhang Li, Can Xu, Jiaheng Liu, Ao Liu, Changzhi Zhou, Ken Deng, Dengpeng
+Wu, Guanhua Huang, Kejiao Li, Qi Yi, Ruibin Xiong, Shihui Hu, Yue Zhang, Yuhao Jiang,
+Zenan Xu, Yuanxing Zhang, Wiggin Zhou, Chayse Zhou, and Fengzong Lian. Artifactsbench:
+Bridging the visual-interactive gap in llm code generation evaluation, 2025. URL https://
+arxiv.org/abs/2507.04952.
+Michael Zhang, Simran Arora, Rahul Chalamala, Alan Wu, Benjamin Spector, Aaryan Singhal,
+Krithik Ramesh, and Christopher Ré. LoLCATs: On low-rank linearizing of large language
+models. arXiv preprint arXiv:2410.10254, 2024.
+Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang,
+Yuqiong Liu, Rui Men, An Yang, et al. Group sequence policy optimization. arXiv preprint
+arXiv:2507.18071, 2025.
+
+25
+
+A
+
+Appendix
+
+A.1 Author List
+Every author is aﬀiliated with Upstage, South Korea, unless specified otherwise. Authors in each
+group made equal contributions.
+Core Contributors Sungrae Park, Sanghoon Kim, Gyoungjin Gim, Jungho Cho, Hyunwoong
+Ko, Minbyul Jeong, Minjeong Kim, Keunwoo Choi, Chaehun Shin, Chanwoong Yoon, Dongjun
+Kim, Eunwon Kim, Gyungin Shin, Hyeonju Lee, Hyungkyu Kang, Inseo Song, Jisu Bae, Jiyoon
+Han, Jiyun Lee, Joonkee Kim, Junyeop Lee, Mikyoung Cha, Sangwon Yu, Sehwan Joo, Seokyoon
+Kang, Seonghoon Yang, Seung Shin, Seunghyun Lee, Seungseop Lim, Seungyoun Shin, Sukyung
+Lee, Taegyeong Eo, Taehwan Oh, Taewhoo Lee, Wonho Song, Wonjun Oh, Wonseok Hwang
+(University of Seoul), Yunsu Kim, Yura Shim
+Contributors Hwalsuk Lee, Sunghun Kim, Du-Seong Chang (Department of Artificial Intelligence, Sogang University), Kyunghyun Cho (New York University), Seungju Han (Stanford),
+Yejin Choi (Stanford), Junsuk Choe (Sogang University), Hwaran Lee (Sogang University), Minjeong Ban (KAIST), Hwanjun Song (KAIST), Jae-Gil Lee (KAIST), KyungTae Lim (KAIST),
+Alice Oh (KAIST)
+
+A.2
+
+Korean Officework Agent Task Example
+
+A.2.1 New-drug reimbursement listing application (PDF)
+Task prompt
+당신은 국내 중견 제약사 시장접근(Market Access)팀의 약가·급여 등재 담당 선임연구원입니다. 자체 개발한
+제2형 당뇨병 치료 신약(코드명: KMD-217, 일반명: 가칭 ‘Kameglitin’ )의 식약처 품목허가를 앞두고 건강
+보험심사평가원(HIRA)에 요양급여 등재를 신청해야 하며, 등재 신청 근거 자료를 통합한 제출용 신청서를
+작성하는 것이 이번 업무입니다.
+배경
+• 신약명(가칭): Kameglitin (KMD-217), 제2형 당뇨병 단독요법
+• 활성 대조약제: Sitagliptin 100mg (DPP-4 억제제)
+• 임상 2상 결과 기반
+• 신청 기준일: 2025-12-01 / 제출 마감일: 2026-01-30
+첨부 자료
+1. 사회복지_관련_법령_법령.docx — 환자 접근권 보장 근거 인용용 (특히 사회복지사업법 제5조의2
+등)
+2. 의료기관_진료과목별_전문의.xlsx — 진료과별 전문의 수 (1,300건). 내과(dgsbjtCd=01)·가정의
+학과 중심 분석
+3. 의료기관_의료기관_기본정보_인력.xlsx — 요양기관 기본정보 및 의료인력 (10,000건). 기관 종별
+분포 및 drTotCnt 활용
+4. 임상시험_결과_데이터.csv — KMD-217 임상 2상 결과 (Primary/Secondary endpoint, AE 등)
+산출물
+파일명: KMD217_요양급여_등재신청서.pdf / 8∼12페이지 / 표·차트 포함 가능
+구성 섹션
+1) 신청 개요 (1p)
+신청 의약품 정보, 신청 구분(신약), 기준일. 법적 근거로 국민건강보험법 및 관련 법령 인용, 첨부 법령 문서의
+사회복지사업법 제5조의2(사회복지서비스 제공의 원칙) 및 인권존중 관련 조항을 환자 접근권 보장 근거로
+병기.
+2) 임상적 유용성 평가 (2∼3p)
+
+26
+
+• Primary endpoint: 24주 후 HbA1c 변화량
+• Secondary: HbA1c <7.0% 도달률, 공복혈당 변화, 체중 변화
+• 시험군 vs. Sitagliptin 100mg, 95% CI 및 p-value 포함 표 정리
+• 비열등성 마진 −0.4%(HbA1c 차이) 기준 우월성/비열등성 판정, 충족 항목 플래깅
+• AE 요약
+3) 경제성 평가 — ICER (1∼2p)
+• 시험군의 QALY 개선분 대비 추가 비용으로 ICER 산출 (비용·QALY 가정값은 명시)
+• WTP 임계값: 1QALY당 25,000,000원, 미만 시 ‘비용효과적’ 으로 플래깅
+• 낙관·비관 민감도 시나리오 2개 이상
+4) 처방 환경 및 예상 시장 규모 (2∼3p)
+• 진료과목별 전문의 파일에서 내과(dgsbjtCd=01)·가정의학과 전문의 수를 기관 종별·시도별 집계
+• 기본정보 파일에서 기관 종별 분포 및 drTotCnt 합계 산출
+• 주요 처방 후보 기관 = 기관 종별이 ‘상급종합’ 또는 ‘종합병원’ 이면서 내과 전문의 5인 이상 보유 →
+시도별 표로 제시 및 플래깅
+• 예상 처방 환자 풀 추정
+5) 약가 산정 근거 (1p)
+Sitagliptin 100mg 보험약가 기준 가중평균가 산정 방식 설명(약가 가정값 명시), 임상적 우월성 반영 가산율
+근거.
+6) 결론 및 등재 권고 (0.5∼1p)
+7) 참고문헌 / 출처
+첨부 파일 및 웹 보조 검색 출처 명시.
+작성 지침
+• 한국 보건의료 등재 실무 관행 준수
+• 수치는 한국식 단위(억 원, 만 원) 사용
+
+HbA1c
+변화량(%)
+
+-0.94
+
+-0.62
+
+-0.32
+
+(-0.48, -0.16)
+
+<0.001
+
+우월성
+비열등성 충족
+
+비열등성 판정: 사전에 설정된 비열등성 마진은 HbA1c 차이 -0.4%입니다. 시험약군과 대조약군의 HbA1c 변화량 차이는 -0.32%로,
+비열등성 마진(-0.4%)을 초과하여 충족하였습니다. 나아가 95% 신뢰구간 하한값(-0.48)이 마진(-0.4%)을 초과하여 통계적 우월성도
+함께 입증되었습니다(p<0.001). 따라서 Kameglitin은 비열등성 및 우월성 기준을 모두 충족합니다.
+[플래깅] Primary Endpoint: 비열등성 마진 -0.4% 초과 달성 → 우월성 확보
+
+2.2 Secondary Endpoints
+
+낙관적 시나리오 가정: 약제비 할인(상업적 할인 10% 적용), QALY 개선분 증대(합병증 예방 효과 추가 반영)로 Δ Cost =
+3,200,000원, Δ QALY = 0.30 → ICER = 10,667,000원/QALY.
+비관적 시나리오 가정: 약제비 인상(시장 진입 후 가격 조정 없음), QALY 개선분 축소(합병증 예방 효과 미발생)로 Δ Cost =
+4,500,000원, Δ QALY = 0.15 → ICER = 30,000,000원/QALY. 비관적 시나리오에서는 WTP 임계값을 초과하나, 이는 극단적
+가정하에 도출된 결과로 실제 임상 현장에서는 Kameglitin의 HbA1c 우월성 및 체중 감소 효과가 합병증 예방으로 이어질 가능성이
+높습니다.
+
+평가변수
+
+시험약군
+
+대조약군
+
+차이
+
+95% CI
+
+p-value
+
+판정
+
+HbA1c <7.0% 도달률
+
+52.4%
+
+39.8%
+
++12.6%p
+
+—
+
+0.002
+
+우월성
+
+공복혈당(FPG)
+변화(mg/dL)
+
+-28.6
+
+-18.2
+
+-10.4
+
+(-15.6, -5.2)
+
+<0.001
+
+우월성
+
+체중 변화(kg)
+
+-1.84
+
+-0.21
+
+-1.63
+
+(-2.08, -1.18)
+
+<0.001
+
+우월성
+
+기본 Case 및 낙관적 시나리오에서 ICER가 WTP 임계값을 하회하여, Kameglitin의 요양급여 등재는 건강보험 재정 관점에서
+비용효과적이라고 판단됩니다.
+
+식후 2시간 혈당
+변화(mg/dL)
+
+-52.1
+
+—
+
+—
+
+(-58.7, -45.5)
+
+<0.001
+
+유의성
+
+4. 처방 환경 및 예상 시장 규모
+
+수축기 혈압
+변화(mmHg)
+
+-3.6
+
+—
+
+—
+
+(-5.1, -2.1)
+
+0.014
+
+유의성
+
+12주 HbA1c 변화량(%)
+
+-0.78
+
+—
+
+—
+
+(-0.91, -0.65)
+
+<0.001
+
+조기약효
+
+4.1 진료과목별 전문의 현황
+HIRA 건강보험심사평가원 데이터(데이터셋 15001699, hosp_dtl_dgsbjt)에 따르면, 전국 상급종합병원 47개소의 진료과목별 전문의
+수는 총 12,358명으로 집계되었습니다. 이 중 내과 전문의가 3,575명으로 가장 많아 전체의 28.9%를 차지하였으며, 외과(1,263명,
+10.2%), 영상의학과(1,152명, 9.3%), 소아청소년과(984명, 8.0%), 가정의학과(332명, 2.7%) 순으로 분포하였습니다.
+
+하위군 분석(Subgroup Analysis): 주요 하위군에서 Kameglitin의 효과는 일관되게 관찰되었습니다. 기저 HbA1c ≥8.5% 환자군
+-1.42%(고혈당 환자에서 더 큰 약효), 65세 이상 고령 환자군 -0.88%(고령자에서 일관된 효과), BMI ≥25 환자군 -0.97%(비만 동반
+환자 효과), eGFR 60-89 환자군 -0.91%(경증 신기능저하군 유효성 유지), 이병기간 5년 이상 환자군 -0.86%(장기 당뇨 환자 효과
+일관성 확보) 등 모든 하위군에서 통계적으로 유의한 HbA1c 개선 효과가 확인되었습니다(p<0.001).
+
+2.3 안전성 평가 (Adverse Events)
+
+평가변수
+
+시험약군 (n=250)
+
+대조약군 (n=245)
+
+p-value
+
+전체 이상반응(TEAE)
+
+48.4% (121/250)
+
+46.5% (114/245)
+
+0.612
+
+유사
+
+약물관련
+이상반응(ADR)
+
+18.0% (45/250)
+
+—
+
+0.387
+
+관리가능
+
+순위
+
+진료과목
+
+전문의 수(명)
+
+비율(%)
+
+당뇨 처방 관련성
+
+1
+
+내과
+
+3,575
+
+28.9
+
+주요 처방과
+
+2
+
+외과
+
+1,263
+
+10.2
+
+—
+
+3
+
+영상의학과
+
+1,152
+
+9.3
+
+—
+
+4
+
+소아청소년과
+
+984
+
+8.0
+
+—
+
+5
+
+마취통증의학과
+
+806
+
+6.5
+
+—
+
+—
+
+가정의학과
+
+332
+
+2.7
+
+주요 처방과
+
+판정
+
+Figure 15: Deliverable submitted by Solar Open 2: KMD217_요양급여_등재신청서.pdf.
+
+27
+
+A.2.2 Factory energy-saving annual plan (XLSX)
+Task prompt
+당신은 경상남도 창원 공단에 위치한 중견 자동차 부품 제조사의 생산기술팀 에너지 관리 담당 과장입니다.
+최근 산업용 전기요금 인상과 본사 ESG 목표(2026년 전력원단위 7% 절감)에 따라, 1·2·3공장(사출·도장·
+조립 라인)의 2026년도 라인별 에너지 절감 연간계획을 한 장의 엑셀로 정리해 부문장 보고에 사용하려 합니다.
+분석 과제
+첨부된 4개 파일을 모두 활용해 다음을 수행하세요.
+1. 현황 진단 (에너지사용.csv + 생산실적.csv)
+• 공장별(1공장 INJ-A1/INJ-A2, 2공장 PNT-B1, 3공장 ASM-C1)·시간대별 (경부하/중간부하/최대
+부하) 전력·LNG·스팀 사용량 합계 및 평균 원단위(kWh당) 산출
+• 라인별 전력원단위(kWh/개) 및 가동률(가동시간/(가동시간+정지시간)) 계산
+• 공장별 최대부하 시간대 전력 사용 비중
+2. 외부 단가·시장 참조
+• 계 약 종 별 _ 전 력 사 용 량 _2023_ 경 상 남 도.xlsx 에 서 cntr= ‘산 업 용’ 데 이 터 의 unitCost 를
+powerUsage 가중평균하여 경상남도 산업용 평균 단가 산출, 계약종별_전력사용량_2024_경기
+도.xlsx 의 산업용 평균 단가와 비교
+• SMP_수요예측.xlsx 에서 areaName= ‘육지’ 데이터의 hour별 평균 SMP 곡선을 만들고, 상위 25%
+를 피크, 하위 25%를 경부하로 정의
+3. 2026년 절감 계획
+• 라인별(INJ-A1, INJ-A2, PNT-B1, ASM-C1) 절감목표(%), 핵심 투자항목, 예상 투자비, 연간 절감
+금액, 단순회수기간(투자비÷연간절감액), KPI(전력원단위 kWh/개, 피크부하 비중 %)
+• 전사 합산 절감률 7% 이상 충족
+산출물
+공장에너지절감_2026연간계획.xlsx (총 2시트, 헤더 고정)
+• 시트1 현황진단: 공장·라인·시간대별 사용량/원단위/가동률 + 경상남도·경기도 산업용 단가 비교 +
+육지 SMP 시간대별 평균
+• 시트2 2026절감계획: 라인별 절감목표·투자항목·투자비·연간절감액·회수기간·KPI (상단에 전사
+합산 요약 행)
+• 단순회수기간 3년 이하 셀 녹색, 5년 초과 적색
+• 금액 ₩ 천단위 콤마, 비율 소수 1자리 %
+웹 검색을 사용한 경우 시트 하단 참고 영역에 출처 명시.
+
+28
+
+【A. 공장·라인·시간대별 에너지 사용량 및 원단위】
+공장
+1공장
+1공장
+1공장
+1공장
+1공장
+1공장
+2공장
+2공장
+2공장
+3공장
+3공장
+3공장
+
+라인
+INJ-A1
+INJ-A2
+INJ-A1
+INJ-A2
+INJ-A1
+INJ-A2
+PNT-B1
+PNT-B1
+PNT-B1
+ASM-C1
+ASM-C1
+ASM-C1
+
+시간대
+경부하
+경부하
+중간부하
+중간부하
+최대부하
+최대부하
+경부하
+중간부하
+최대부하
+경부하
+중간부하
+최대부하
+
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+
+전력사용량(kWh)
+297,050
+297,050
+696,700
+696,700
+1,265,300
+1,265,300
+220,200
+511,700
+938,400
+200,400
+457,900
+836,000
+
+102.0
+109.0
+110.4
+111.2
+116.8
+121.6
+129.1
+131.8
+128.7
+125.5
+125.3
+123.1
+
+경부하(하위25%) 야간·새벽 저부하 시간대
+경부하(하위25%) 야간·새벽 저부하 시간대
+중간
+중간
+중간
+중간
+피크(상위25%) 전력사용 집중 시간대
+피크(상위25%) 전력사용 집중 시간대
+피크(상위25%) 전력사용 집중 시간대
+피크(상위25%) 전력사용 집중 시간대
+피크(상위25%) 전력사용 집중 시간대
+피크(상위25%) 전력사용 집중 시간대
+
+【참고】
+• 에너지사용.csv: 자체 계측 데이터 (2025년 9월, 29일)
+
+【공장별 최대부하 시간대 전력 사용 비중】
+공장
+1공장
+2공장
+3공장
+
+최대부하 전력량
+(kWh)
+1,265,300
+938,400
+836,000
+
+• 생산실적.csv: 자체 생산 데이터 (2025년 9월, 11일)
+
+총 전력량(kWh)
+
+최대부하 비중(%)
+
+2,259,050
+1,670,300
+1,494,300
+
+56.0%
+56.2%
+55.9%
+
+• 계약종별_전력사용량_2023_경상남도.xlsx: 한국전력공사 전력빅데이터 (bigdata.kepco.co.kr)
+• 계약종별_전력사용량_2024_경기도.xlsx: 한국전력공사 전력빅데이터 (bigdata.kepco.co.kr)
+• SMP_수요예측.xlsx: 한국전력거래소 EPSIS (data.go.kr B552115 / openapi.kpxx.kr)
+
+【B. 경상남도·경기도 산업용 전기 단가 비교】
+구분
+
+지역
+
+2023년
+2024년
+
+경상남도
+경기도
+단가 차이
+
+산업용 평균 단가
+비고
+(원/kWh)
+160.3
+전력사용량 가중평균
+168.8
+전력사용량 가중평균
++,8.5
+경기도−경상남도
+
+【C. 육지 SMP 시간대별 평균 곡선】
+시간대(시간)
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+평균
+SMP(원/kWh)
+119.5
+109.9
+105.9
+104.7
+106.1
+111.1
+118.6
+119.5
+115.9
+115.5
+113.5
+111.6
+
+SMP 구분
+
+비고
+
+중간
+경부하(하위25%) 야간·새벽 저부하 시간대
+경부하(하위25%) 야간·새벽 저부하 시간대
+경부하(하위25%) 야간·새벽 저부하 시간대
+경부하(하위25%) 야간·새벽 저부하 시간대
+중간
+중간
+중간
+중간
+중간
+중간
+중간
+
+Figure 16: Deliverable submitted by Solar Open 2: 공장에너지절감_2026연간계획.xlsx.
+A.2.3
+
+Citizen briefing on national fiscal trends (DOCX)
+
+Task prompt
+당신은 재정 규모 약 4조 원의 광역지방자치단체 기획조정실 예산담당관실의 재정공시·주민참여예산 담당
+주무관입니다. 매년 11월에 개최되는 ‘주민과 함께하는 재정설명회’ 를 2025년 11월 20일(목)에 앞두고, 일반
+주민·시민단체·지역 언론을 청중으로 하는 브리핑 문서를 준비해야 합니다. 담당 국장은 ‘숫자 위주 결산서’
+가 아닌 ‘이야기가 있는 브리핑 문서’ 를 요구했고, 최근 10년(2015∼2024년) 추이와 구조적 변화를 함께 보여
+달라고 지시했습니다.
+첨부된 세 개의 열린재정 데이터셋(기획재정부 재정정보공개시스템 출처)을 활용해 국가 전체 재정 흐름을
+우리 지자체 재정설명회의 배경 자료로 재구성하십시오.
+첨부 파일
+1. 재정수입구조본예산총수입기준.xlsx — 2015∼2024년 회계연도별 본예산 총수입 구조(기금/예산,
+일반회계/특별회계/기금, 사회보험성기금·국세수입·세외수입·융자금회수·기금기타 등 세목별 금액,
+단위: 조 원)
+2. 재정지출추이총계기준.xlsx — 2015∼2024년 결산 기준 총계 재정지출(일반회계·특별회계·기금
+구분, 단위: 조 원)
+3. 조세부담률및국민부담률추이.xlsx — 2015∼2024년 결산 기준 국세·지방세·사회보장기여금(사회
+보장기여금/공무원연금기여금/군인연금기여금/건강보험재정기여금) 추이 및 국민부담률(%)
+작성할 산출물
+파일명: 국가재정흐름_주민설명_브리핑_2025.docx (한 개 문서, 분량 14∼20쪽)
+문서 구성 요구사항
+다음 6개 장(章)을 모두 포함하되, 각 장에는 평이한 서술 narrative + 표 또는 차트(이미지 또는 워드 표) +
+‘주민 한마디로 정리’ 박스(2∼3문장)를 함께 배치하십시오.
+제1장. 인사말과 브리핑의 목적 (1쪽)
+• 재정설명회의 취지, 본 문서가 다루는 기간(2015∼2024년)과 데이터 출처(열린재정 시스템)를 명시
+제2장. 나라 살림의 ‘수입’ 이야기 (3∼4쪽)
+
+29
+
+• 재정수입구조본예산총수입기준.xlsx 활용
+• 2015년과 2024년의 총수입 규모(조 원)를 비교하고, 10년간 증감액·증감률 산출
+• 회계구분(BDG_FND_DIV_NM: 기금/예산)과 세부구분(ACNT_DIV_NM: 일반회계/기업특별회
+계/기타특별회계/기금)별 비중 변화 표로 정리
+• 세목(SMOK_DIV_NM)별 2024년 기준 상위 5개 항목을 막대그래프로 시각화
+• ‘사회보험성기금’ 의 절대 규모가 10년간 어떻게 변했는지 별도 단락으로 강조
+제3장. 나라 살림의 ‘지출’ 이야기 (3∼4쪽)
+• 재정지출추이총계기준.xlsx 활용
+• 2015∼2024년 일반회계·특별회계·기금 결산지출 추이 선그래프(3개 시리즈)
+• 연도별 총지출 합계 표 + 전년대비 증감률 컬럼
+• 코로나 시기(2020∼2022년) 지출 급증 구간을 narrative로 설명하고, 2023년 일반회계 지출이 전년 대비
+어떻게 변했는지 별도 코멘트(증감액·증감률 명기)
+• 10년간 일반회계 대비 기금 지출 비율이 어떻게 바뀌었는지 분석
+제4장. ‘내가 낸 세금’ 은 어디로 가나 — 부담률 이야기 (3∼4쪽)
+• 조세부담률및국민부담률추이.xlsx 활용
+• 국세·지방세·사회보장기여금의 10년 추이 표 및 누적영역차트
+• 사회보장기여금 내 4개 세부항목(사회보장기여금/공무원연금기여금/군인연금기여금/건강보험재정기여
+금) 중 건강보험재정기여금의 증가 속도를 narrative로 설명
+• 2024년 국민부담률(%) 수치를 인용하고, 이것이 주민 개인 입장에서 어떤 의미인지 평이한 비유(예: ‘소득
+100만 원 중 OO원’ )로 풀어쓰기
+• 2020년부터 데이터에 등장하는 ‘국세’ 항목과 그 이전 시기의 데이터 가용성 차이를 각주로 안내
+제5장. 우리 지자체 재정설명회에 시사하는 점 (2∼3쪽)
+• 위 세 데이터에서 도출한 국가 재정의 3대 구조적 변화(➀ 사회보험성기금 비중 확대, ➁ 기금 지출의 지속적
+증가, ➂ 국민부담률 상승 추세)를 정리
+• 각 변화가 광역지자체(재정규모 약 4조 원) 입장에서 어떤 함의를 갖는지 1∼2문단씩 서술(지방세 의존도,
+사회복지 매칭부담, 국고보조금 의존 등 관점에서)
+• 단, 우리 지자체의 구체 결산 수치는 본 문서에 등장하지 않으며, ‘국가 재정 맥락’ 만 다룬다는 점을 본문에
+명시
+제6장. 부록: 데이터 출처 및 용어 풀이 (1∼2쪽)
+• 사용 데이터셋 3건의 출처(열린재정, 기획재정부 재정정보공개시스템) 표기
+• 일반 주민이 헷갈리기 쉬운 용어 8개 이상을 ‘한 줄 풀이’ 로 정리(예: 일반회계, 특별회계, 기금, 본예산,
+결산, 총계기준, 국민부담률, 조세부담률, 사회보장기여금 등)
+• 웹에서 보조적으로 용어 정의나 통계 관행을 참조한 경우 마지막에 ‘Sources’ 절을 두고 URL과 함께 인용
+수치 검증 원칙
+• 모든 금액 단위는 ‘조 원’ (첨부파일 단위 유지), 비율은 소수점 첫째 자리까지 표기
+• 증감률은 ((당해연도 − 기준연도) / 기준연도) × 100 공식으로 산출하고 소수점 첫째 자리까지
+• 차트는 워드 내장 표 또는 이미지 캡션과 함께 삽입, 각 차트에는 ‘그림 N. 제목 (출처: 파일명)’ 형식의
+캡션 부착
+• 본문 내 인용한 모든 수치는 첨부 파일에서 확인 가능한 값과 일치해야 함
+톤앤매너
+• 회계 비전공 주민 청중을 위해 평이한 구어체와 비유 사용 (단, 결산·예산·기금 등 기본 용어는 정확히)
+• 정치적 평가나 정책 옹호 표현은 배제하고, 사실 중심 서술 유지
+• 각 장 말미의 ‘주민 한마디로 정리’ 박스는 회색 음영 또는 박스 테두리로 구분
+추가 요구사항
+• 모든 차트·표에는 ‘그림 N. 제목 (출처: 파일명)’ 형식의 캡션을 부착하고, 본문에서 그림 번호로 인용할
+것
+• 제2∼5장 말미에 회색 음영 또는 박스 테두리로 구분된 ‘주민 한마디로 정리’ 박스(2∼3문장)를 배치
+• 제6장에 일반 주민용 용어 풀이를 최소 8개 이상 한 줄 정의 형식으로 수록
+• 웹 보조 참조를 사용한 경우에 한해 문서 말미 ‘Sources’ 절에 URL과 접근일자를 함께 명기
+• 산출물 규모 제한: 14쪽 이상 20쪽 이하.
+• 기간 제약: 2015∼2024년 회계연도 10년치 데이터 전체를 반드시 다룰 것.
+• 기간 제약: 2025년 11월 20일(목) 재정설명회 전일까지 제출.
+
+30
+
+• 준수 기준: 열린재정 데이터 표기 관행. 금액 단위는 ‘조 원’ (원 데이터 단위 유지), 비율은 % 단위, 모두
+소수점 첫째 자리까지 표기
+
+제 3 장. 나라 살림의 '지출' 이야기
+1. 10 년간 재정지출 추이
+국가 재정지출은 정부가 국민으로부터 조달한 재원을 어떤 방식으로 사용하는지를 보여줍니다. 결산
+기준 국가 총지출은 2015 년 902.6 조 원에서 2024 년 1,537.9 조 원으로 10 년간 635.3 조 원 증가
+(증감률 70.4%)하였습니다. 이는 같은 기간 총수입 증가율(59.1%)을 크게 상회하는 수치로, 국가
+재정이 '적자' 방향으로 기울어 왔음을 시사합니다. 구체적으로 일반회계 지출은 257.9 조 원에서
+435.4 조 원으로 68.8% 증가했고, 특별회계는 61.5 조 원에서 94.0 조 원으로 52.8%, 기금은
+583.2 조 원에서 1,008.5 조 원으로 72.9% 증가했습니다.
+연도
+
+일반회계(조 원)
+
+특별회계(조 원)
+
+기금(조 원)
+
+총계(조 원)
+
+2015
+
+257.9
+
+61.5
+
+583.2
+
+902.6
+
+전년대비 증감률
+
+2016
+
+274.0
+
+58.2
+
+643.0
+
+975.2
+
+8.0
+
+2017
+
+280.5
+
+62.4
+
+619.3
+
+962.2
+
+-1.3
+
+2018
+
+299.9
+
+64.6
+
+569.9
+
+934.4
+
+2019
+
+330.9
+
+66.4
+
+621.6
+
+1,018.9
+
+9.0
+
+2020
+
+385.2
+
+68.6
+
+788.9
+
+1,242.7
+
+22.0
+
+기금 지출이 일반회계를 크게 상회하는 구조는 앞서 제 2 장에서 확인한 '기금 중심 수입 구조'와 맞물
+
+2021
+
+417.7
+
+79.1
+
+836.4
+
+1,333.2
+
+7.3
+
+려 있습니다. 기금은 특정 목적(사회보장, 주택, 과학기술 등)을 위해 설치되므로, 기금 지출의 증가는
+
+2022
+
+485.0
+
+74.7
+
+829.4
+
+1,389.1
+
+4.2
+
+곧 '제도화된 구조적 지출'이 확대되고 있음을 시사합니다. 이는 경기 변동에 따라 조절이 가능한 일반
+
+2023
+
+405.9
+
+84.5
+
+889.8
+
+1,380.2
+
+-0.6
+
+회계 지출과 달리, 기금 지출은 법적 의무나 제도적 근거에 기반하여 발생하므로 감축이 어렵다는 점에
+
+2024
+
+435.4
+
+94.0
+
+1,008.5
+
+1,537.9
+
+11.4
+
+서 재정 운영의 경직성을 높이는 요인으로 작용합니다.
+
+(%)
+—
+
+-2.9
+
+그림 7. 일반회계·기금 지출 추이 및 기금/일반회계 비율 (출처: 재정지출추이총계기준.xlsx)
+
+그림 5. 연도별 재정지출 결산 추이 및 전년대비 증감률 (출처: 재정지출추이총계기준.xlsx)
+
+연도
+
+일반회계(조 원)
+
+기금(조 원)
+
+기금/일반회계 비율(배)
+
+2015
+
+257.9
+
+583.2
+
+2.26
+
+2016
+
+274.0
+
+643.0
+
+2.35
+
+2017
+
+280.5
+
+619.3
+
+2.21
+
+2018
+
+299.9
+
+569.9
+
+1.90
+
+2019
+
+330.9
+
+621.6
+
+1.88
+
+2020
+
+385.2
+
+788.9
+
+2.05
+
+2021
+
+417.7
+
+836.4
+
+2.00
+
+2022
+
+485.0
+
+829.4
+
+1.71
+
+2023
+
+405.9
+
+889.8
+
+2.19
+
+2024
+
+435.4
+
+1,008.5
+
+2.32
+
+그림 8. 일반회계 대비 기금 지출 비율 추이 (출처: 재정지출추이총계기준.xlsx)
+
+국가 총지출은 10 년간 902.6 조 원에서 1,537.9 조 원으로 70.4% 늘었고, 코로나 시기(2020~2022
+년)에 특히 급증했습니다. 2023 년 일반회계 지출이 전년 대비 16.3% 감소했지만, 기금 지출은 계속 늘
+어 기금/일반회계 비율은 2.32 배까지 확대되었습니다.
+
+Figure 17: Deliverable submitted by Solar Open 2: 국가재정흐름_주민설명_브리핑_2025.docx.
+A.2.4
+
+Municipal budget-committee response deck (PPTX)
+
+Task prompt
+당신은 한솔시 기획예산담당관실의 예산팀 주무관(예산 분석 담당)입니다. 다음 주 개최되는 한솔시의회
+예산결산특별위원회 정례 심사에서, 우리 시의 2024 회계연도 예산 집행 현황을 보고하고 의원 질의에 대비한
+부서 답변 자료를 발표해야 합니다. 예결특위 위원들은 단순 집행률 수치를 넘어 ‘중앙정부 재정 흐름과 연계한
+지방재정 운용의 합리성’ 을 추궁할 것으로 예상되므로, 국가 재정지출·국세수입 추이를 거시 배경으로 활용
+하여 우리 시 사업별 집행 실적과 미집행 사유를 설득력 있게 정리해야 합니다.
+활용 자료
+• budget_line_items.xlsx — 우리 시 2024 회계연도 사업·세목별 예산액·집행액·잔액·집행률 (요약/
+세목 명세 2개 시트)
+• 재정지출추이본예산총지출기준.xlsx — 열린재정 국가 재정지출 추이 (2015∼2024, 일반회계·특별
+회계·기금)
+• 국세수입추이.xlsx — 열린재정 국세수입 추이 (2015∼2024, 세목별)
+• 재정수입구조본예산총수입기준.xlsx — 열린재정 국가 재정수입 구조 (2015∼2024)
+• dept_profile.md — 한솔시 기획예산담당관실 기관 프로필
+산출물
+한솔시_2024회계연도_예결특위_답변자료.pptx — 10∼13장 분량의 발표용 슬라이드. 모든 슬라이드
+에는 의원 질의 대응에 활용할 수 있는 상세 스피커 노트(slide notes)를 포함하십시오.
+필수 구성 (슬라이드 구조)
+1. 표지 — 한솔시 기획예산담당관실, 2024 회계연도 예결특위 답변자료, 발표일자(2025년 6월 17일 기준)
+2. 거시 재정 배경 (1) — 국가 재정지출 추이 (2015∼2024, 일반회계·특별회계·기금 별 추이 그래프). 재정
+지출추이본예산총지출기준.xlsx 기반.
+
+31
+
+3. 거시 재정 배경 (2) — 국세수입 추이 및 주요 세목 비중 변화 (2020∼2024 집중). 국세수입추이.xlsx
+기반. 지방교부세 재원인 내국세 흐름을 강조.
+4. 거시 재정 배경 (3) — 국가 재정수입 구조 변화의 시사점 (사회보험성기금·세외수입·국세수입 추이). 재
+정수입구조본예산총수입기준.xlsx 기반.
+5. 한 솔 시 2024 예 산 총 괄 — 분 야 별 예 산 액·집 행 액·집 행 률 (10 개 분 야 막 대 그 래 프).
+budget_line_items.xlsx 요약 시트 기반. 시 전체 평균 집행률과 함께 표기.
+6. 집행률 우수 분야 / 부진 분야 — 집행률 75% 이상 분야와 65% 미만 분야를 색상 구분(우수: 녹색, 부진:
+적색)하여 비교.
+7. 사회복지비 세부 분석 — SOC-2024-001 산하 세목별 집행 현황. 세목 명세 시트 기반.
+8. 지역경제·일자리 분야 심층 분석 — ECN-2024-001, ECN-2024-002 세목별 부진 사유 분석.
+9. SOC인프라(도로·교통, 상하수도) 미집행 사유 — INF-2024-001, INF-2024-002 분석.
+10. 거시 재정과 지방 집행 연계 진단 — 국세수입 둔화 → 지방교부세 교부 지연 → 시 사업 집행 부진의 연결
+논리를 1장으로 정리.
+11. 향후 집행 계획 및 이월 최소화 대책 — 분야별 4분기 집행 가속화 방안.
+12. 예상 질의응답(Q&A) — 의원 예상 질의 5개와 답변 요지.
+분석 요건
+• 집행률은 집행액 / 예산액으로 계산하되, 원본 시트의 집행률 열과 교차검증하십시오. 소수점 첫째
+자리(%)까지 표시.
+• 분야별 잔액(미집행액)을 억 원 단위로 환산하여 표기 (예: 6,555,000,000원 → 65.55억 원).
+• 거시 재정 추이 그래프는 2015∼2024 전체 10개년을 표시하되, 시사점 도출은 최근 5개년(2020∼2024)에
+집중.
+• 국세수입 분석 시 ‘내국세’ 관련 세목(소득세·법인세·부가가치세 등)을 우선 강조 (지방교부세 재원이기
+때문).
+제약 조건
+• 집행률 70% 미만인 분야는 별도 표시(적색)하고, 미집행 사유를 본문에 1줄 이상 명시할 것.
+• 모든 금액 단위는 슬라이드 본문에서 ‘억 원’ 으로 통일(원 단위 그대로 노출 금지). 단, 부록 표에서는 원
+단위 병기 허용.
+• 슬라이드는 총 10∼13장 범위. 표지·목차 제외하고 본문은 시각 자료(그래프·표)를 최소 6장 이상 포함.
+• 모든 슬라이드에 스피커 노트를 작성하되, 노트에는 의원이 던질 만한 추궁 포인트와 대응 논리를 포함할
+것.
+• 외부 자료(법령·통계 정의 등)를 보조적으로 인용한 경우 마지막 슬라이드에 ‘Sources’ 섹션을 두어 출처를
+기재할 것. 첨부 파일 자체는 별도 출처 표기 불필요.
+발표 대상일은 2025년 6월 17일이며, 회계연도는 2024년 1월 1일 ∼ 2024년 12월 31일 기준입니다.
+추가 요구사항
+• 각 슬라이드에 의원 추궁 포인트와 대응 논리를 담은 스피커 노트 작성
+• 집행률 75% 이상 분야는 녹색, 70% 미만 분야는 적색으로 시각화
+• 슬라이드 본문 금액은 모두 억 원 단위로 표기 (소수점 둘째 자리까지)
+• 산출물 규모 제한: 표지 포함 10∼13장.
+• 사용할 방식: 집행률 교차검증 (집행액/예산액으로 직접 계산한 값과 원본 시트의 집행률 열을 비교하여
+일치 여부 확인).
+• 기간 제약: 한솔시 회계연도 2024년 1월 1일 ∼ 2024년 12월 31일.
+• 기간 제약: 2025년 6월 17일 예결특위 정례 심사.
+• 기간 제약: 거시 재정 추이는 2015∼2024 전체, 시사점은 2020∼2024에 집중.
+• 플래깅 기준: 집행 부진 분야 표시 기준 less_than 집행률 70%인 항목을 표시하십시오.
+• 플래깅 기준: 집행 우수 분야 표시 기준 greater_than_or_equal 집행률 75%인 항목을 표시하십시오.
+• 다음 항목을 포함하십시오: 사회복지비(SOC-2024-001), 보건의료비(SOC-2024-002), 지역경제활성화
+(ECN-2024-001), 일자리창출(ECN-2024-002), 도로및교통(INF-2024-001), 상하수도(INF-2024-002),
+환경보전(ENV-2024-001), 교육지원(EDU-2024-001), 문화체육관광(CUL-2024-001), 일반행정운영
+(GEN-2024-001).
+• 순서 제약: 거시 재정 배경 슬라이드(2∼4장) → 한솔시 예산 분석 슬라이드(5장 이후).
+• 순서 제약: 분야별 집행 현황 진단 → 거시-지방 연계 진단 및 향후 계획.
+• 사회복지비 세부 분석 슬라이드에는 SOC-2024-001 산하 5개 세목을 모두 포함
+
+32
+
+거시 재정 배경 (1) — 국가 재정지출 추이 (2015~2024)
+
+거시 재정 배경 (3) — 국가 재정수입 구조 변화의 시사점
+
+■ 주요 시사점
+
+■ 주요 시사점
+
+▸ 일반회계 : 2015 년 208.7 조→ 2024 년 356.5 조
+
+▸ 사회보험성기금 급증 :
+
+(+70.8%)
+
+- 2015 년 55.4 조→ 2024 년 92.3 조 (+66.7%)
+
+- 2024 년 전년 대비 3.5% 감소 (369.4→356.5 조 )
+
+- 국민연금 · 건강보험 등 노령화 수요
+
+- 확장재정에서 건전재정으로 전환 기조
+
+- 재정 경직성 심화로 재량적 지출 축소
+
+▸ 특별회계 : 2015 년 51.4 조→ 2024 년 81.7 조 (+58.9%)
+
+▸ 세외수입 부진 :
+
+- 2024 년 81.7 조로 전년대비 14.1% 증가
+
+- 2015 년 7.2 조→ 2024 년 7.5 조로 정체
+
+- 지방재정 연계 특별회계 지출 확대
+
+- 지방정부 세외수입 의존도 한계
+
+▸ 기금 : 2015 년 115.3 조→ 2024 년 218.4 조 (+89.4%)
+
+▸ 국세수입 증가세 :
+
+- 사회보험성기금 증가가 주요인
+
+- 2015 년 7.3 조→ 2024 년 11.2 조 (+53.4%)
+
+- 기금 비중 확대로 재정 경직성 심화
+
+- 그러나 2023 년 10.2 조로 일시적 감소
+- 국세수입 변동성→지방교부세 변동성
+▸ 기금기타 급증 :
+- 2015 년 53.3 조→ 2024 년 90.6 조 (+70.0%)
+- 기금 관리의 투명성 · 효율성 제고 필요
+
+▶ 시사점 : 2024 년 일반회계 지출 감소는 중앙정부 재정기조 전환 ( 확장→건전 ) 의 결과로 , 지방교부세 재원 축소로 직결될 가능성
+
+▶ 시사점 : 사회보험성기금 비중 확대로 재정 경직성 심화 , 국세수입 변동성으로 지방교부세 교부액 불안정→지방재정 운용의 예측가능성 저하
+
+집행률 우수 분야 / 부진 분야 비교 분석
+
+거시 재정과 지방 집행 연계 진단 — 국세수입 둔화→지방교부세 교부 지연→시 사업 집행 부진
+■ 분야별 진단
+1 단계 : 국세수입 둔화
+(2020~2024)
+
+▸ 우수 분야 ( 녹색 , ≥75%):
+- 일반행정운영 : 79.0% ( 잔액 18.69 억 )
+→ 인건비 중심 집행으로 양호
+- 사회복지비 : 77.0% ( 잔액 65.55 억 )
+→ 복지급여는 안정적이나 노인일자리
+사업 (64.0%) 이 전체 수치 끌어내림
+- 교육지원 : 77.0% ( 잔액 7.36 억 )
+→ 학교시설 · 방과후학습 안정적 집행
+
+■ 증거 : 국세수입 둔화
+• 내국세 : 2021 년 2.7 조 ( 최저 )→2024 년 3.3
+조
+• 교통 · 에너지 · 환경세 : 2021 년 16.6 조→
+2024 년 11.4 조 (△31.3%)
+• 2024 년 전체 국세수입 전년 대비 정체
+• 지방교부세 재원인 내국세 증가율 둔화
+
+▸ 부진 분야 ( 적색 , <70%):
+- 지역경제활성화 : 62.5% ( 잔액 36.75 억 )
+- 일자리창출 : 64.0% ( 잔액 15.66 억 )
+- 도로및교통 : 64.0% ( 잔액 54.72 억 )
+- 문화체육관광 : 64.0% ( 잔액 14.76 억 )
+- 환경보전 : 65.0% ( 잔액 19.60 억 )
+- 상하수도 : 68.0% ( 잔액 24.96 억 )
+
+→
+
+2 단계 : 지방교부세
+재원 축소
+
+■ 증거 : 지방교부세 축소
+• 지방교부세 = 내국세 총액 ×19.24%
+• 내국세 둔화→지방교부세 자동 축소
+• 2024 년 본예산 기준 특별회계 국세수입
+11.2 조 (2020 년 7.9 조→ 41.8% 증가 )
+• 그러나 증가율 둔화 추세 명확
+• 기금 비중 확대 ( 사회보험성 ) 로
+재량적 이전재원 축소
+
+→
+
+3 단계 : 시 자체재원
+부족 심화
+
+■ 증거 : 시 집행 부진
+• 시 전체 집행률 70.7%( 목표 85%)
+• 10 개 분야 중 6 개 분야 70% 미만
+• 도로및교통 잔액 54.72 억 ( 최대 )
+• 지역경제활성화 잔액 36.75 억
+• 투자사업 ·SOC 분야 집중 부진
+• 민간 참여 · 공사 지연 등 구조적 요인
+
+▸ 공통 특징 : 투자사업 ·SOC 분야 집중 ,
+공사 지연 · 민간 참여 지연 · 수요 미달
+등이 주요 미집행 사유
+
+■ 연계 진단 종합
+국가 재정지출 확대 기조 (2015~2023) 에도 불구하고 , 2024 년 일반회계 지출 감소 (369.4→356.5 조 ) 와 국세수입 증가세 둔화는 중앙정부의 건전재정 전환을 시사함 . 지방교부세는
+내국세 총액에 법정 비율 (19.24%) 로 연동되므로 , 내국세 증가율 둔화는 즉각적인 지방교부세 재원 축소로 귀결됨 . 한솔시의 2024 회계연도 집행 부진 (70.7%) 은 ①지방교부세 재원
+축소→②시 자체재원 부족→③투자사업 ·SOC 분야 집행 지연의 연쇄적 메커니즘으로 설명 가능하며 , 특히 도로및교통 (64.0%), 지역경제활성화 (62.5%), 일자리창출 (64.0%) 등 민간
+참여 · 공사 기간 의존도가 높은 분야에서 부진이 집중되는 점이 이를 뒷받침함 .
+
+▶ 보건의료비 (73.0%) 는 70% 이상이나 75% 미만으로 " 주의 " 수준 관리 필요 — 감염병관리 (70.0%), 정신건강증진 (68.0%) 세목 개선 시급
+
+Figure 18: Deliverable submitted by Solar Open 2: 한솔시_2024회계연도_예결특위_답변자
+료.pptx.
+
+33
+
+

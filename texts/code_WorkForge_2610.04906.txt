@@ -1,0 +1,2797 @@
+arXiv:2610.04906v4 [cs.CL] 21 Oct 2026
+
+S CALING V ERIFIABLE E NVIRONMENTS FOR L ONG HORIZON W ORK AGENTS
+Jiazheng Zhang1,2 ∗ Long Ma2,∗ Yunxian Yang2,∗ Zhiheng Xi2,†
+Zhikai Lei2 Yajie Yang2 Chenyang Liao2 Enyu Zhou2 Yang Nan2 Yuchen Tian1
+Senjie Jin2 Yibo Wang1 Boyang Liu2 Jixuan Huang2 Xin Guo2 Shutong Jiang1
+Zhezheng Hao1 Xinbing Liang1 Zhihao Zhang2 Changzhi Zhou1 Wiggin Zhou1
+Tao Gui2,† Qi Zhang2,† Xuanjing Huang2 Clarenceai1,†
+1
+LLM Department, Tencent 2 Fudan University
+{jzzhang24, zhxi22}@m.fudan.edu.cn {tgui, qz}@fudan.edu.cn
+clarenceai@tencent.com
+
+A BSTRACT
+Work agents operate over digital artifacts to execute professional knowledgeintensive work, requiring training environments that support long-horizon interaction and trustworthy verification. However, hand-crafted environments incur
+prohibitive engineering overhead that prevents environment scaling, whereas synthesis methods sacrifice workspace complexity, realism, or grounded verifiability.
+To bridge this gap, we introduce W ORK F ORGE, a scalable synthesis framework
+for constructing verifiable work-agent environments from real-world resources.
+Starting from expert workflows, W ORK F ORGE first identifies the resources, decisions, and deliverables required by each workflow. It then retrieves relevant
+real-world files and organizes them into a workspace. W ORK F ORGE inspects the
+workspace to extract concrete, checkable facts about its content. These factual
+anchors fix which task types the workspace can support and how their outcomes
+can be verified. Therefore, W ORK F ORGE derives each task’s instructions, solution plan, and complementary programmatic and semantic verifiers directly from
+these factual anchors, keeping verification traceable to observable workspace evidence. Furthermore, we construct 16.7K verifiable environments across 40 professional domains, with workspaces collectively covering 60 file types. Post-training
+Qwen3.5-35B-A3B-Base improves GDPval from 45.5 to 73.6 and APEX Score
+from 5.0 to 21.3, while enabling Qwen3.5-27B to achieve highly competitive performance and outperform strong competitors. Our analyses confirm the efficacy
+of the proposed method and reveal consistent scaling behaviors across both data
+volume and interaction horizons.
+
+1
+
+I NTRODUCTION
+
+Autonomous agents mark a fundamental paradigm shift in large language models, transitioning
+foundation models from passive conversational assistants to active digital workers capable of executing complex, multi-step professional knowledge work (Drouin et al., 2024; Boisvert et al., 2024;
+Huang et al., 2024; Patwardhan et al., 2026; Vidgen et al., 2026). Agent assistants such as Claude
+Code and Codex illustrate this paradigm through iterative exploration, tool orchestration, and execution over digital workspaces (Anthropic, 2025; OpenAI, 2025).
+Unlike conversational or API-calling routines, professional workflows center on concrete deliverables: users specify objectives, and the solution path is embedded within the workspace (Tang et al.,
+2026). Producing these deliverables requires agents to untangle multiple file dependencies and make
+decisions in authentic workspace artifacts (Zhou et al., 2024; Trivedi et al., 2024; Zhang et al., 2026a;
+Xi et al., 2026a). Cultivating agents capable of such long-horizon workflow fundamentally demands
+agent environments that couple authentic operational friction with trustworthy, verifiable supervision
+(Dou et al., 2025; Zhang et al., 2025; Sun et al., 2026; Xi et al., 2026b).
+∗
+
+Equal Contribution
+
+†
+
+Corresponding Author
+
+1
+
+Blueprint
+One
+Blueprint
+A
+
+Software
+Project
+Review
+Instruction :
+Inspect a
+Software
+Project
+Inspect a software project across its code, documentation, tests, configurations, and other project files.
+
+Workflow:
+inspect &
+cross-check
+Resources:
+code,and
+docs,
+configs
+Output:
+report
+findings
+Cross-check
+evidence to
+understand the system,
+identify issues
+risks, and
+produce a review
+report with
+a +
+findings
+register. register
+
+Synthetic Workspace
+
+Small Clean Tree
+Repo/
+Readme.md
+
+Real-World Workspace
+
+B
+
+Md Summary
+
+Real Project Tree
+
+Services: DB, Web, Search
+Method: TF-IDF + Cosine
+Index: Pickled Shards
+
+App.py
+Sample.csv
+
+Index = Similarity()
+
+Quick Start
+
+Tfidf = TdfModel
+
+Services
+
+Artifacts/
+
+Cosine(q, index)
+
+Method
+
+Src/
+
+Tests & CI
+
+Repo/
+vs.
+
+Agent Exploration
+Little research is needed
+Easy
+
+Review Report + Findings Register
+
+ScreenShots/
+
+Report: Service Topology, Method, Risks
+
+DB, Arxiv, Web
+
+Workflow.yml
+
+Index.0
+Index.pkl
+
+Agent Exploration
+hard
+Agent Loop
+Explore Search
+Plan
+Updated Plan
+
+Register: Evidence, Impact
+
+C
+C
+
+Sparse Context
+
+A
+B
+
+Salient Evidence
+
+Real Noise
+
+Many Files
+
+Files Per Workspace
+
+13×
+
+21.5 KB
+
+A
+
+279 KB
+
+A
+
+42.3
+
+B
+
+Focused Agent
+
+A : Synthetic
+
+File Type Coverage
+
+5.4×
+
+7.9
+
+Check
+
+Distributed Evidence
+
+Workspace Complexity Real-World Workspace have Broader Evidence Space for Exploration and Check
+Average Workspace Size
+
+Deploy & index
+
+Test_fetch.py
+
+Docs/
+.github/
+
+Over-Curated
+
+Readme.md
+
+Recommander.py
+
+B
+
+B : Real-World
+
+2.4×
+
+25
+60
+
+Figure 1: Comparison of synthetic and realistic workspaces. Realistic workspaces are substantially more complex: they contain more files, span a broader range of file types, and distribute
+task-relevant evidence throughout the directory hierarchy. In contrast, synthetic workspaces are
+highly curated, with most task-relevant information concentrated in a small set of identifiable files.
+
+While expert-curated environments offer high fidelity, their prohibitive overhead severely impedes
+environment scaling (Zhou et al., 2024; Trivedi et al., 2024).
+Recent work addresses this bottleneck through automated environment synthesis (Song et al., 2026;
+Tu et al., 2026; Cheng et al., 2026; Fan et al., 2026; Zhao et al., 2026; Bai et al., 2026). However,
+these methods rely on synthetic environments or task-specific mock resources (Song et al., 2026;
+Tu et al., 2026; Bai et al., 2026), yielding toy workspaces with limited file diversity and cross-file
+dependencies. This reduces the exploration demands that characterize real professional work in
+Figure 1. Likewise, evaluation criteria not grounded in observable workspace facts risk introducing hallucinated or otherwise unsupported requirements, leading to unreliable judges (Zhang et al.,
+2026b; Shi et al., 2026).
+To address this challenge, we introduce W ORK F ORGE, a scalable framework for constructing complex, verifiable work-agent environments from real-world digital resources. W ORK F ORGE is motivated by a simple premise: professional tasks and their verification are inseparable from the
+workspaces in which they are performed. Workspace determines what an agent can explore, while
+observable workspace facts determine what can be asked and reliably verified. To operationalize this
+premise, W ORK F ORGE formalizes expert workflows as task blueprints, retrieves relevant resources,
+and profiles the resulting workspaces to recover file roles, dependencies, and factual anchors. These
+anchors jointly condition task generation and verifier design, keeping evaluation traceable to the
+workspace: programmatic checks verify deterministic requirements, while semantic rubrics assess
+open-ended deliverables against the same facts. Autonomous solvers then execute these tasks to
+yield long-horizon trajectories for post-training.
+W ORK F ORGE instantiates 16.7K verifiable environments across 40 professional domains, with
+workspaces comprising real artifacts, rich file types and cross-file dependencies. Fine-tuning
+Qwen3.5-35B-A3B-Base (Qwen Team, 2026) on the resulting trajectories improves performance
+across five benchmarks, including gains of 28.1 points on GDPval and 16.3 points on APEX. Controlled studies display significant benefits with increasing volume and trajectory length, and confirm
+the efficacy of the proposed method. Our contributions are as follows:
+2
+
+1 Expert Workflow
+
+3 Task Generation
+
+2 Environment Synthesis
+
+4 Traj. Generation
+
+Expert-curated Scene Blueprint
+Search
+
+Office
+
+Data
+
+Research
+
+Done
+Research
+
+Acquisition agent
+Assign
+
+Scene Blueprint
+Domain
+
+Category
+
+Task intents
+
+Interaction
+
+Workflow
+
+Resources
+
+Preview
+
+Task
+Instruction
+Task
+Design
+
+Summary
+
+Hidden Plan
+
+Facts
+
+Env
+Mapping
+
+Deliverable
+
+Verifier
+Module
+
+Agent
+Exploration
+
+Solver Agent
+
+Rollout
+
+Generation
+Interaction
+
+Workspace
+Tools + Files
+
+Actions + Artifacts
+
+Programmatic
+
+Semantic
+
+Score
+
+Score
+
+Programmatic
+Verifier
+
+Schemas
+
+Download
+
+Independent pools
+
+Decisions
+
+Workspace
+Profile
+
+Semantic
+Judge
+
+Workspace
+
+Repository
+
+Task package
+
+Tools
+Instantiate
+
+Dataset
+
+Files
+
+Web source
+
+Initial State
+
+Visible
+Workspace
++
+Task
+
+Hidden
+Plan
++
+Verifiers
+
+Scored Rollout Record
+Interaction Trajectory & Artifacts
+Outcome Scores & Metadata
+
+Figure 2: Overview of W ORK F ORGE pipeline. Conditioned on professional scene blueprints,
+W ORK F ORGE acquires and instantiates real-world resources into authentic workspaces, derives
+tasks and complementary verifiers, and collects scored trajectories through interaction.
+• We introduce W ORK F ORGE, a scalable framework that constructs verifiable environments from
+real-world resources, grounding task specifications and verification rubrics in audited workspaces.
+• We instantiate 16.7K agentic environments across 40 professional domains, featuring complex
+filesystem and long-horizon solver trajectories.
+• Empirical experiments demonstrate the efficacy of our method. Notably, fine-tuning on W ORK F ORGE data yields substantial gains across five diverse agent benchmarks, improving GDPval by
+28.1 points and APEX by 16.3 points.
+
+2
+
+W ORK F ORGE
+
+To scale agent environments without compromising authenticity or verifiability, we introduce
+W ORK F ORGE, a framework for translating professional workflows into realistic, verifiable agent
+environments. W ORK F ORGE first distills domain expertise into reusable workflow specifications.
+It then instantiates each specification as a workspace populated with realistic artifacts and analyzes
+the resulting workspace evidence to ground both task construction and verification. Agents execute
+these tasks to produce scored trajectories for training. Figure 2 summarizes this four-stage pipeline.
+2.1
+
+W ORKFLOW S PECIFICATION
+
+To generate sophisticated professional tasks, we engage domain experts to distill their workflows
+into reusable Scene Blueprints, as these workflows identify dependencies between initial conditions,
+domain distinctive operations, and final deliverables. We define a collection of M blueprints as
+B = {bj }M
+bj = (Wj , Oj , Rj , Dj ) ,
+(1)
+j=1 ,
+where Wj specifies the workflow and its context; Oj defines the expected deliverable; Rj specifies
+required sources and their dependencies; and Dj records domain specific decisions.
+For instance, a teacher can distill the workflow of testing students on a unit and providing targeted explanations into a scene blueprint. The blueprint specifies how to compare student responses against
+a standard answer and use teaching materials to group errors. It thus serves as a reusable seed for
+constructing workspaces and generating tasks with different assessment and teaching materials.
+Each blueprint serves as a seed that connects expert intent to task generation. Its resource requirements guide source acquisition. Simultaneously, its workflow, decision points, and deliverable guide
+task generation using evidence from the instantiated workspace.
+2.2
+
+E NVIRONMENT S YNTHESIS
+
+Environment synthesis integrates two modules, environment mapping and environment profiling.
+The former one maps each scene blueprint to different resource realizations. Complementing the
+3
+
+mapping process, the latter one represents each environment’s professional context, resource characteristics, and observable facts. For a scene blueprint bj , the stage produces
+K
+
+j
+Env(bj ) = {(Wjk , Pjk )}k=1
+,
+where Kj is the number of retained environments, Wjk is a workspace, and Pjk is its profile.
+
+(2)
+
+Environment Mapping. Environment mapping expresses the one-to-many relationship between
+Kj
+a scene blueprint and its concrete environments. We acquire distinct resource pools {Rjk }k=1
+, each
+containing the files of a repository and defining a resource mapping as
+Wjk = ϕRjk (bj ),
+(3)
+where ϕRjk realizes bj using the selected resource pool. An acquisition agent iteratively searches for
+sources, reads reference pages, downloads resources, and previews their contents to assess relevance
+and associate artifacts with the abstract source requirements Rj . Each workspace uses one nonempty pool and retains its file organization.
+Environment Profiling. Environment profiling defines the description accompanying each environment as an integral part of synthesis. We represent this profile as
+n
+oLjk
+(ℓ)
+Pjk = (Ujk , Fjk , Ajk ) ,
+Fjk = fjk
+,
+(4)
+ℓ=1
+
+where Ujk summarizes the domain, file roles, and potential task directions; Fjk contains workspace
+facts; and Ajk contains each artifact schemas and statistics. In brief, the profile describes what
+makes each environment suitable for particular professional tasks and supplies factual anchors for
+task construction and subsequent solution verification.
+2.3
+
+TASK G ENERATION
+
+Task generation produces executable task packages with aligned task requirements and verification
+criteria. Task Design combines the scene blueprint and environment profile to specify the professional objective, required deliverables, and a hidden solution plan. Verifier Design translates these
+requirements into rubrics and complementary programmatic and semantic verifiers.
+Task Design. Given a scene blueprint bj and the profile Pjk , the task designer jointly generates
+the instruction qjk which agent can view and hidden solution plan hjk :
+(qjk , hjk ) = (ftask (bj , Pjk ), fplan (bj , Pjk )) ,
+(5)
+Together, the instruction and plan form an executable task grounded in the concrete contents of the
+real-world workspace. Outputs with invalid paths or any unsupported components are regenerated.
+Verification Module. We verify key factual claims in hjk against the workspace Wjk and record
+the resulting evidence as Fbjk . Along with the profile facts and task constraints, this evidence defines
+prog
+sem
+an atomic rubric set Vjk = Vjk
+∪ Vjk
+. After execution, programmatic criteria check the final
+artifacts Yjk :
+X
+1
+prog
+Sjk
+= prog
+I[v(Wjk , Yjk ) = 1] .
+(6)
+|Vjk |
+prog
+v∈Vjk
+
+Semantic criteria and the task instruction qjk configure the LLM judge Gsem
+jk , which assesses openended requirements using criterion-specific scoring guides and normalizes each score sv ∈ [0, 10]:
+X sv
+1
+sem
+Sjk
+= sem
+.
+(7)
+|Vjk |
+10
+sem
+v∈Vjk
+
+Both verifiers are applied after execution, and their scores are retained separately. The resulting task
+package separates visible inputs from hidden solution plan and verifiers:
+
+
+
+
+
+bjk , Vjk , Gprog , Gsem
+.
+Tjk = 
+(W
+,
+q
+)
+,
+P
+,
+h
+,
+F
+jk
+jk
+jk
+jk
+jk
+jk
+| {z }
+
+|
+{z
+}
+visible
+
+hidden
+
+4
+
+(8)
+
+insurance
+medical education legalautomotive
+
+mapping
+energy entertainment
+
+Task
+# Task number
+Avg. Rubrics
+
+16,665
+21.9
+
+Workspace
+Avg. Files
+Avg. Size
+# File Types
+
+42.3
+279.0 KB
+60
+
+Trajectory
+Avg. Steps
+Avg. Tool Calls
+Avg. Tokens
+
+2.4
+
+31.8
+33.8
+76,485
+
+database advertise
+work
+language enterprise
+service payment tourism hr
+gaming
+ecommerce
+tool
+transportation
+science architecture
+sale
+design
+supply
+
+Value
+
+office
+diet
+
+equity
+
+environment
+
+manufacturing
+
+customer robot
+
+Audio
+
+Plain Text
+
+quant
+
+health job
+
+Statistic
+
+AI
+
+Estate
+business cybersecurity
+cooking
+engineering
+
+ML
+
+video
+
+news
+
+Table 1: Key statistics of
+W ORK F ORGE from task,
+workspace and trajectory
+three dimensions.
+
+C
+
+od
+
+e
+
+Struct
+ure
+Text d
+
+Im
+
+ag
+
+es
+
+Tabular
+Data
+
+fitness
+
+(a) Domain
+
+(b) File Type
+
+(c) Task Score
+
+(d) Tool Call
+
+Tabular Data
+
+53.31%
+
+Images
+
+18.69%
+
+Structured Text
+
+13.21%
+
+Code
+
+7.27%
+
+Plain Text
+
+5.58%
+
+Audio
+
+1.26%
+
+Other
+
+0.68%
+
+Figure 3: Distributions of W ORK F ORGE. Statistics across (a) Professional domains, (b) File types, (c) Task scores, and (d) Tool calls.
+
+T RAJECTORY G ENERATION
+
+Trajectory generation turns static task package into observed agent behavior. For each Tjk , a solver
+agent πθ receives only the visible pair (Wjk , qjk ) and interacts with the workspace until it submits
+its deliverables or reaches the execution limit. We denote this process as
+(τjk , Yjk ) = Rollout(πθ ; qjk , Wjk ),
+
+(9)
+
+where τjk records the ordered messages and tool interactions, and Yjk denotes the output artifacts.
+After execution, the graders Gprog
+and Gsem
+jk evaluate the final workspace and Yjk , producing the
+jk
+programmatic and semantic scores defined in Eq. 6 and 7. We retain the complete execution as a
+scored trajectory record
+
+
+prog
+sem
+zjk = τjk , Yjk , Sjk
+, Sjk
+, µjk ,
+Drollout = {zjk }j,k ,
+(10)
+where µjk contains the model configuration. Collectively, the four stages transform professional
+workflows encoded in scene blueprints into independently grounded task packages and interaction
+trajectories paired with verifiable execution outcomes. Table 1 reports the corpus-level scalar statistics, while Figure 3 summarizes its domain coverage, file types, task score, and tool call distribution.
+Algorithm 1 in Appendix B summarizes the integral procedures from scene blueprints to trajectories.
+
+3
+
+E XPERIMENTS
+
+3.1
+
+E XPERIMENTAL S ETUP
+
+Baselines. We evaluate models trained on W ORK F ORGE-16K against three groups of baselines.
+Frontier Proprietary Models: Claude Opus 5.0 (Anthropic, 2026), Claude Opus 4.8, GPT-5.6
+Sol (OpenAI, 2026), and Gemini 3.7 Flash (Doshi, 2026). Open-source Models (>100B): Qwen3Coder (Qwen Team, 2025), Qwen3.5-397B-A17B (Qwen Team, 2026), DeepSeek-V3.2, DeepSeekV4-Flash, DeepSeek-V4-Pro (DeepSeek-AI et al., 2026), Kimi-K2.5 (Kimi Team, 2026), GLM5.2 (Z.ai, 2026), MiniMax-M3 (MiniMax, 2026b), and MiniMax-M2.7 (MiniMax, 2026a). Opensource Models (<100B): OpenThinkerAgent-32B (Raoof et al., 2026), ClawGym-30A3 (Bai et al.,
+2026), EnvScaler-Qwen3-8B (Song et al., 2026), Nemotron-Terminal-32B (Pi et al., 2026), and
+Arctic-AWM-14B (Wang et al., 2026a).
+Benchmarks. We evaluate work-agent capability on five popular benchmarks. WildClawBench (Ding et al., 2026) and Claw-Eval (Ye et al., 2026) emphasize long-horizon execution, multifile interaction, and reliable tool use under repeated trials. GDPval (Patwardhan et al., 2026) and
+APEX-Agents (APEX) (Vidgen et al., 2026) focus on professional deliverables and workplace tool
+orchestration, while Agents’ Last Exam (ALE) (Sun et al., 2026) tests extended autonomous problem solving with verifiable outcomes. Additional evaluation details are provided in Appendix C.4.
+5
+
+Table 2: Performance (%) of agent capability on WildClaw, ClawEval, GDPval, APEX, and Agent’s
+Last Exam. The best results are in bold and the second-best results are underlined within each group.
+Additional evaluation details are provided in Appendix C.4.
+Model
+
+WildClaw
+Score
+
+Pass@1
+
+ClawEval
+Score
+
+Passˆ3
+
+GDPval
+Score
+
+APEX
+
+ALE
+
+Score
+
+Pass@1
+
+Score
+
+Pass@1
+
+58.5
+46.2
+51.8
+51.1
+
+42.7
+34.0
+37.5
+36.9
+
+48.3
+46.2
+48.3
+46.9
+
+26.7
+24.8
+26.7
+25.7
+
+11.4
+27.4
+17.6
+46.3
+48.5
+24.1
+45.7
+41.2
+25.3
+
+2.7
+12.9
+6.3
+30.0
+32.1
+11.0
+30.4
+26.0
+11.5
+
+21.1
+31.1
+26.3
+42.3
+45.3
+32.5
+47.9
+34.6
+28.4
+
+5.7
+11.4
+9.5
+22.9
+23.2
+11.4
+24.8
+17.1
+9.5
+
+21.2
+35.0
+15.0
+5.8
+24.5
+
+6.8
+2.5
+4.9
+1.8
+3.6
+
+3.1
+0.4
+0.8
+0.6
+0.8
+
+2.0
+9.1
+0.7
+1.2
+1.1
+
+0.0
+2.9
+0.0
+0.0
+0.8
+
+45.5
+73.6
+79.4
+82.4
+
+5.0
+21.3
+25.7
+29.9
+
+0.6
+9.2
+12.7
+16.3
+
+11.4
+28.7
+32.7
+33.9
+
+3.8
+12.4
+14.3
+17.1
+
+Frontier Proprietary Models
+Claude Opus 5.0
+Claude Opus 4.8
+GPT-5.6 Sol
+Gemini 3.7 Flash
+
+64.5
+64.0
+53.5
+52.6
+
+32.4
+30.5
+29.5
+18.1
+
+Qwen3-Coder
+Qwen3.5-397B-A17B
+DeepSeek-V3.2
+DeepSeek-V4-Flash
+DeepSeek-V4-Pro
+Kimi-K2.5
+GLM-5.2
+MiniMax-M3
+MiniMax-M2.7
+
+32.7
+38.8
+28.2
+59.2
+60.7
+41.1
+58.2
+56.8
+41.2
+
+15.2
+17.1
+15.2
+27.6
+31.4
+14.3
+28.6
+28.6
+16.2
+
+OpenThinker-32B
+ClawGym-30A3
+EnvScaler-8B
+Nemotron-Terminal-32B
+Agent World Model 14B
+
+16.7
+14.9
+13.7
+8.8
+13.1
+
+5.7
+6.7
+3.8
+2.9
+7.6
+
+82.3
+81.5
+77.3
+69.2
+
+74.2
+72.1
+68.9
+60.0
+
+91.0
+89.1
+90.1
+86.1
+
+Open-source Models (>100B)
+37.3
+60.8
+58.3
+74.4
+70.4
+56.7
+73.1
+70.2
+60.8
+
+23.4
+53.0
+49.2
+66.4
+61.6
+44.4
+63.8
+55.6
+48.7
+
+67.7
+79.7
+74.2
+83.6
+88.4
+78.5
+85.2
+86.8
+81.9
+
+Open-source Models (<100B)
+31.2
+35.4
+18.7
+12.9
+26.0
+
+17.2
+19.4
+8.2
+1.8
+16.4
+Ours
+
+Qwen3.5-35B-A3B-Base
++ WorkForge-A3B
+Qwen3.5-27B
++ WorkForge-27B
+
+18.6
+29.9
+30.5
+38.5
+
+7.6
+20.0
+18.1
+23.8
+
+35.4
+53.3
+61.9
+65.4
+
+19.9
+41.8
+52.0
+55.7
+
+Implementation Details. We apply supervised fine-tuning on Qwen3.5-35B-A3B-Base and
+Qwen3.5-27B. Both models are trained for five epochs with a global batch size of 64 and a maximum sequence length of 256K tokens. We adopt a learning rate of 1 × 10−5 with cosine decay and
+5% warmup. More implementation illustrations are in Appendix C.
+3.2
+
+M AIN R ESULTS
+
+Superior performance of W ORK F ORGE over other baselines. Table 2 reports the capacity of
+general agents across state-of-the-art competitors. We make several key observations: (1) W ORK F ORGE delivers consistently competitive results across all benchmarks, establishing strong performance. Notably, W ORK F ORGE-A3B achieves the highest GDPval Score among prior specialized
+sub-100B baselines, i.e., 73.6, surpassing the previous SOTA, Clawgym-30A3, by a substantial margin of 38.6 points. Similar trends are observed on WildClaw, ClawEval, APEX, and ALE.
+(2) Importantly, these leads do not shrink under strict pass rate: W ORK F ORGE-A3B reaches 12.4%
+Pass@1 on ALE, compared with 2.9% of ClawGym-30A3 which rarely complete these challenge tasks. (3) W ORK F ORGE-A3B also delivers a substantial improvement over pretrained model
+Qwen3.5-35B-A3B-Base. These gains reflect W ORK F ORGE’s design principle: solving each task
+requires the agent to explore complex, real-world file structures and integrate evidence across multiple files into its deliverables. This capability generalizes well on challenging benchmarks.
+W ORK F ORGE-27B advances capability toward the frontier. W ORK F ORGE-27B demonstrates
+that the supervision produced by our pipeline complements existing agent post-training, improving
+Qwen3.5-27B across all five benchmarks, with WildClaw, APEX, and GDPval Scores rising by 8.0,
+4.2, and 3.0 points, respectively. Notably, on GDPval, W ORK F ORGE-27B reaches 82.4, surpassing
+Qwen3.5-397B-A17B (79.7) despite nearly 15× fewer total parameters, and narrowing the gap to
+frontier systems such as Claude Opus 4.8 (89.1) and GPT-5.6 Sol (90.1).
+6
+
+ALE
+
+WildClaw
+
+ALE
+
+WildClaw
+
+19
+30
+
+Score (%)
+
+Score (%)
+
+25
+
+25.8
+21.5
+
+20
+
+24.9
+
+25
+
+3.6K
+
+8K
+
+20
+
+16K
+
+Data scale
+
+14.7
+
+15
+
+13.3
+
+21.5
+
+15
+
+28
+
+27.3
+
+27.8
+
+17
+
+27.0
+
+15.7
+1K
+
+17.5
+
+DeepSeek V3.2 28.22
+
+DeepSeek V3.2 26.3
+
+Score (%)
+
+28.7
+
+MiniMax M2.7 28.4
+
+Score (%)
+
+30
+
+29.9
+
+26
+
+24
+
+22.8
+
+13
+22
+
+1K
+
+3.6K
+
+8K
+
+16K
+
+G1
+
+G2
+
+G3
+
+G1
+
+Turn group
+
+Data scale
+
+(a)
+
+G2
+
+G3
+
+Turn group
+
+(b)
+
+Figure 4: Scaling analysis of W ORK F ORGE. Performance on ALE and WildClaw with increasing
+(a) Training data volume and (b) Interaction length.
+
+3.3
+
+A BLATION S TUDIES
+
+Trajectory Harness. We further compare models trained on trajectories generated by two agent
+ 
+ 
+
+
+harnesses, Claude Code (Anthropic, 2025) and
+
+OpenClaw (Steinberger, 2026). In Figure 5, the
+ 
+ 
+ 
+ 
+model trained on Claude Code trajectories achieves
+a higher ALE score when evaluated with Claude
+Code (24.2 vs. 16.1). On WildClaw, this ordering reverses: the model trained on OpenClaw trajectories leads by 6.2 points under the OpenClaw
+evaluation harness. The OpenClaw-trained model
+also performs better on APEX, although its advantage narrows to 2.7 points under the official ReAct
+Figure 5: Effect of trajectory harness. We
+Toolbelt. These results indicate a degree of harnesscompare two training groups, each using
+specific transfer: aligning the training and evalu8k trajectories generated by Claude Code or
+ation harnesses is associated with improved perOpenClaw, respectively.
+formance, potentially because the model acquires
+harness-specific tool-use conventions in addition to task knowledge.
+Verification Mechanism. Recall that W ORK F ORGE evaluates task deliverables with two com- Table 3: Ablation of verification-based trajecponents: programmatic criteria check exact values tory selection. Each variant uses trajectories
+and observable workspace states, and LLM-based selected by the semantic score, the programcriteria assess content quality. To isolate their ef- matic score, or their combination.
+fects on trajectory selection, we construct three 1KALE
+APEX
+trajectory training sets from the same pool of canScore
+Pass@1
+Score
+didate tasks. The programmatic-only and LLMonly variants select trajectories whose correspond- LLM only
+15.62
+4.8 11.18
+ing score is at least 0.7, while the hybrid variant Programmatic
+14.89
+4.8 10.92
+applies the same threshold to the equally weighted
+Hybrid
+22.11
+11.4 15.39
+mean of the two scores. All variants use the same
+training-set size and fine-tuning configuration. As
+shown in Table 3, the hybrid strategy outperforms either variant. This indicates that combining the
+two verification signals yields effective supervision.
+Workspace Authenticity. We instantiate matched workspaces from the same scene blueprints and
+vary only whether their resources are retrieved from the web or synthesized by an LLM. Figure 1
+reveals a sharp structural gap: workspaces built from real-world resources contain 5.4× more files
+and 2.4× more file types, with their average footprint increasing from 21.5 KB to 279 KB. Realworld acquisition therefore enlarges both the scale and heterogeneity of the workspace, providing a
+richer artifact and evidence space for task construction and agent exploration.
+7
+
+(a) Execution behavior on GDPval
+
+(b) Rubric-level Pass Rate on GDPval
+
+(b) Rubric-level Pass Rate on GDPval
+Layout
+Visual
+
+Avg. Number of External Web Domains Visited
+
+WF-27B
+
+Qwen27b WF-A3b Qwen-MoE
+
+Workspace Evidence Retrieval (%)
+
+      
+
+Claims
+Cross-source
+Reasoning
+Numerical Reconciliation Augmentation
+
+Content
+Coverage
+
+30.3
+
+25.5
+
+31.4
+
+53.5
+
+45.6
+
+71.0
+
+59.8
+
+77.5
+
+78.9
+
+72.0
+
+74.1
+
+64.6
+
+86.4
+
+82.0
+
+77.4
+
+95
+85
+75
+65
+55
+45
+
+87.1
+
+72.8
+
+92.2
+
+86.5
+
+83.4
+
+35
+25
+
+Figure 6: Execution behavior and rubric-level performance on GDPval. (a) The x-axis presents
+the mean number of distinct external web domains visited per task; the y-axis presents evidence
+retrieval within the workspace as a percentage of tool calls. Arrows connect each base model to
+its fine-tuned counterpart; color records reasoning length after tool errors. (b) Pass rate across five
+rubric categories. Details about rubric categories are described in Table 11.
+
+3.4
+
+S CALING A NALYSIS
+
+Scaling with Data Volume. To investigate how training data volume affects work-agent performance, we train Qwen3.5-35B-A3B-Base on 1K, 3.6K, 8K, and 16K trajectories under the same
+recipe. As shown in Figure 4 ( a), performance improves monotonically with data volume. The
+model trained on 16K trajectories achieves scores of 28.7 on ALE and 29.9 on WildClaw, outperforming its 1K-trajectory counterpart by 13.0 and 8.4 points, respectively. At this scale, the model
+also surpasses DeepSeek V3.2 (26.3) and MiniMax M2.7 (28.4) on ALE, as well as DeepSeek V3.2
+(28.2) on WildClaw. Increasing data volume exposes the model to a broader range of workspace
+structures, cross-file dependencies, and execution paths. Broader coverage promotes transferable
+capabilities for workspace exploration and deliverable production.
+Scaling with Interaction Horizon. Beyond data volume, we explore how interaction horizon
+shapes agent behavior. We construct three subsets of 1K Claude Code trajectories, grouped by
+trajectory length: 0–20 turns (G1), 21–40 turns (G2), and 41–60 turns (G3). As shown in Figure 4 (b), performance increases with trajectory length on both benchmarks. The model trained on
+G3 achieves scores of 17.5 on ALE and 27.8 on WildClaw, exceeding its G1 counterpart by 4.2
+and 5.0 points, respectively. This improvement is accompanied by more sustained interaction with
+the environment. On WildClaw, the G3-trained model averages 24.0 productive tool calls, compared
+with 11.7 for the G1-trained model, and performs 38.3 distinct actions, compared with 17.0. Table 13
+further shows that the G3-trained model uses a broader range of tool types and invokes workspace
+skills more frequently. These results suggest that longer training trajectories expose the model to
+more complete sequences of dependency tracing, evidence gathering, and deliverable construction,
+thereby promoting the sustained interaction required in complex workspaces.
+3.5
+
+B EHAVIOR A NALYSIS
+
+We analyze the trajectory behavior of W ORK F ORGE-27B. Figure 6 (a) reveals a shift toward exploration behavior: the fine-tuned model visits 6.52 external web domains per task (5.3× the base
+model’s average) and lifts targeted evidence retrieval from 5.9% to 16.2% of tool calls. After a
+failed tool call, reasoning length grows from 144 to 614 characters (over fourfold), reflecting deliberate diagnosis and replanning rather than immediate retries. These shifts carry through to final
+deliverables: Figure 6 (b) shows category-score gains of 4.5–13 points across five GDPval-derived
+categories. Consistent with this shift toward exploration behavior, the largest gains appear in formatting and visual presentation (+13 pp) and numerical and calculation accuracy (+8.2 pp), which
+rely on thorough investigation and careful verification.
+8
+
+4
+
+R ELATED W ORK
+
+Agent Environment Synthesis. Automated environment construction expands the supply of executable settings for agent training. EnvScaler and Agent World Model synthesize tool interfaces
+and stateful backends (Song et al., 2026; Wang et al., 2026a), while Agent-World incorporates realservice metadata and external resources (Dong et al., 2026). Skill and intent-driven pipelines construct tasks and supporting workspaces for terminal and general-assistant workflows (Cheng et al.,
+2026; Bai et al., 2026). NexForge compiles capability requirements into task directives, then retrieves or constructs the resources needed for execution (Zhao et al., 2026). W ORK F ORGE instead
+instantiates and profiles realistic workspaces before specifying concrete tasks. Preserving repository and dataset organization grounds professional tasks in heterogeneous materials, existing file
+relationships, and observable evidence.
+Long-Horizon Agent Data Synthesis. Agentic data synthesis expands multi-step execution
+through tool interactions (Prabhakar et al., 2025; Xu et al., 2025), task composition (Shi et al.,
+2025; Xie et al., 2025), and exploration-based task discovery (Ramrakhya et al., 2025; Chen et al.,
+2026; Wang et al., 2026b). Nemotron-Terminal studies generation, filtering, and long-context
+training (Pi et al., 2026), while OpenThoughts-Agent examines task sources and diversity to train
+OpenThinkerAgent-32B (Raoof et al., 2026). Executable-state alignment (Shi et al., 2026) and
+rubric-based artifact assessment (Starace et al., 2025; Zhuge et al., 2025) connect trajectory quality
+to task outcomes. W ORK F ORGE generates long-horizon supervision through sustained exploration,
+cross-file reasoning, and artifact production in content-rich workspaces. Task requirements and verification criteria share the same workspace evidence, enabling complementary programmatic and
+semantic evaluation to select trajectories for agent post-training.
+
+5
+
+C ONCLUSION , L IMITATIONS AND F UTURE W ORK
+
+Conclusion We introduce W ORK F ORGE, a scalable framework for constructing complex, verifiable work-agent environments from real-world resources. Its core principle is to use observable
+workspace facts as shared anchors for task construction and outcome verification. Starting from
+expert workflows, W ORK F ORGE retrieves and profiles real-world resources, then derives task specifications, solution plans, and complementary programmatic and semantic verifiers from the resulting factual anchors. The pipeline instantiated 16.7K environments across 40 professional domains,
+which improves the capability of Qwen3.5-35B-A3B-Base, including gains of 28.1 points on GDPval and 16.3 points on APEX. Our analysis indicates significant gains with increasing data volume
+and trajectory length, while confirming the efficacy of verification mechanism.
+Limitations and Future Work W ORK F ORGE depends on expert workflows and accessible realistic resources, limiting comparable grounding in proprietary or sensitive domains. Because
+workspace profiles, tasks, and verifiers are constructed automatically, their reliability depends on
+the completeness and accuracy of workspace profiling. Moreover, the current verifiers emphasize
+final deliverables, receive limited expert calibration, and do not directly assess intermediate agent
+behavior. Future work should broaden workflow and resource coverage while developing verification that is aware of processing.
+AI U SE S TATEMENT
+Generative AI tools were used to assist and polish manuscript writing. They were also used within
+W ORK F ORGE to generate synthetic task packages and training trajectories, as detailed in the method
+and experimental sections. The authors review all AI-assisted outputs and take responsibility for the
+final content of this work.
+E THICS S TATEMENT
+This paper introduces a scalable framework for constructing complex, verifiable work-agent environments from real-world digital resources. The methods and findings presented are intended solely
+for research purposes; our study does not pertain to malicious applications, unintended uses, or
+issues related to fairness, privacy, security, crowdsourcing, or human subject research.
+9
+
+R EFERENCES
+Anthropic. Claude 3.7 sonnet and claude code, February 2025.
+anthropic.com/news/claude-3-7-sonnet.
+
+URL https://www.
+
+Anthropic. Introducing Claude Opus 5, July 2026. URL https://www.anthropic.com/
+news/claude-opus-5.
+Fei Bai, Huatong Song, Shuang Sun, Daixuan Cheng, Yike Yang, Chuan Hao, Renyuan Li, Feng
+Chang, Yuan Wei, Ran Tao, Bryan Dai, Jian Yang, Wayne Xin Zhao, and Ji-Rong Wen. ClawGym:
+A scalable framework for building effective claw agents, 2026. URL https://arxiv.org/
+abs/2604.26904.
+Léo Boisvert, Megh Thakkar, Maxime Gasse, Massimo Caccia, Thibault Le Sellier De Chezelles,
+Quentin Cappart, Nicolas Chapados, Alexandre Lacoste, and Alexandre Drouin. WorkArena++:
+Towards compositional planning and reasoning-based common knowledge work tasks. In Advances in Neural Information Processing Systems, volume 37, pp. 5996–6051, 2024. doi:
+10.52202/079017-0195.
+Aili Chen, Chi Zhang, Junteng Liu, Jiangjie Chen, Chengyu Du, Yunji Li, Ming Zhong, Qin Wang,
+Zhengmao Zhu, Jiayuan Song, Ke Ji, Junxian He, Pengyu Zhao, and Yanghua Xiao. DIVE:
+Scaling diversity in agentic task synthesis for generalizable tool use, 2026. URL https://
+arxiv.org/abs/2603.11076.
+Zihao Cheng, Hongru Wang, Zeming Liu, Xinyi Wang, Xiangrong Zhu, Yuhang Guo, Wei Lin,
+Jeff Z. Pan, and Yunhong Wang. Terminal-World: Scaling terminal-agent environments via agent
+skills, 2026. URL https://arxiv.org/abs/2605.20876.
+DeepSeek-AI et al. DeepSeek-V4: Towards highly efficient million-token context intelligence,
+2026. URL https://arxiv.org/abs/2606.19348.
+Shuangrui Ding, Xuanlang Dai, Long Xing, Shengyuan Ding, Ziyu Liu, JingYi Yang, Penghui Yang,
+Zhixiong Zhang, Xilin Wei, Xinyu Fang, Yubo Ma, Haodong Duan, Jing Shao, Jiaqi Wang, Dahua
+Lin, Kai Chen, and Yuhang Zang. WildClawBench: A benchmark for real-world, long-horizon
+agent evaluation, 2026.
+Guanting Dong, Junting Lu, Junjie Huang, Wanjun Zhong, Longxiang Liu, Shijue Huang, Zhenyu
+Li, Yang Zhao, Xiaoshuai Song, Xiaoxi Li, Jiajie Jin, Yutao Zhu, Hanbin Wang, Fangyu Lei,
+Qinyu Luo, Mingyang Chen, Zehui Chen, Jiazhan Feng, Ji-Rong Wen, and Zhicheng Dou. AgentWorld: Scaling real-world environment synthesis for evolving general agent intelligence, 2026.
+URL https://arxiv.org/abs/2604.18292.
+Tulsee Doshi.
+Introducing Gemini 3.7 Flash, August 2026.
+URL https://blog.
+google/innovation-and-ai/models-and-research/gemini-models/
+introducing-gemini-3-7-flash.
+Shihan Dou, Jiazheng Zhang, Jianxiang Zang, Yunbo Tao, Weikang Zhou, Haoxiang Jia, Shichun
+Liu, Yuming Yang, Shenxi Wu, Zhiheng Xi, Muling Wu, Rui Zheng, Changze Lv, Limao Xiong,
+Shaoqing Zhang, Lin Zhang, Wenyu Zhan, Rongxiang Weng, Jingang Wang, Xunliang Cai,
+Yueming Wu, Ming Wen, Yixin Cao, Tao Gui, Xipeng Qiu, Qi Zhang, and Xuanjing Huang.
+Multi-programming language sandbox for llms. In Pushkar Mishra, Smaranda Muresan, and Tao
+Yu (eds.), Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 3: System Demonstrations), ACL 2025, Vienna, Austria, July 27 - August 1, 2025, pp.
+40–50. Association for Computational Linguistics, 2025. doi: 10.18653/V1/2025.ACL-DEMO.5.
+URL https://doi.org/10.18653/v1/2025.acl-demo.5.
+Alexandre Drouin, Maxime Gasse, Massimo Caccia, Issam H. Laradji, Manuel Del Verme, Tom
+Marty, David Vazquez, Nicolas Chapados, and Alexandre Lacoste. WorkArena: How capable
+are web agents at solving common knowledge work tasks? In Proceedings of the 41st International Conference on Machine Learning, volume 235 of Proceedings of Machine Learning
+Research, pp. 11642–11662. PMLR, 2024. URL https://proceedings.mlr.press/
+v235/drouin24a.html.
+10
+
+Zhiyuan Fan, Tinghao Yu, Yuanjun Cai, Jiangtao Guan, Yun Yang, Dingxin Hu, Jiang Zhou, Xing
+Wu, Zhuo Han, Feng Zhang, and Lilin Wang. Toward scalable terminal task synthesis via skill
+graphs, 2026. URL https://arxiv.org/abs/2604.25727.
+Qian Huang, Jian Vora, Percy Liang, and Jure Leskovec. MLAgentBench: Evaluating language
+agents on machine learning experimentation. In Proceedings of the 41st International Conference
+on Machine Learning, volume 235 of Proceedings of Machine Learning Research, pp. 20271–
+20309. PMLR, 2024. URL https://proceedings.mlr.press/v235/huang24y.
+html.
+Kimi Team. Kimi K2.5: Visual agentic intelligence, 2026. URL https://arxiv.org/abs/
+2602.02276.
+MiniMax. MiniMax M2.7: Early echoes of self-evolution, March 2026a. URL https://www.
+minimax.io/news/minimax-m27-en.
+MiniMax. MiniMax M3: Frontier coding, 1M context, native multimodality—all in one model,
+June 2026b. URL https://www.minimax.io/blog/minimax-m3.
+OpenAI.
+Introducing codex, May 2025.
+introducing-codex/.
+
+URL https://openai.com/index/
+
+OpenAI. GPT-5.6: Frontier intelligence that scales with your ambition, July 2026. URL https:
+//openai.com/index/gpt-5-6/.
+Tejal Patwardhan, Rachel Dias, Elizabeth Proehl, Grace Kim, Michele Wang, Olivia Watkins, Simon Fishman, Marwan Aljubeh, Phoebe Thacker, Laurance Fauconnet, Natalie Kim, Samuel
+Miserendino, Gildas Chabot, David Li, Patrick Chao, Michael Sharman, Alexandra Barr,
+Amelia Glaese, and Jerry Tworek. GDPval: Evaluating AI model performance on realworld economically valuable tasks. In International Conference on Learning Representations,
+2026. URL https://proceedings.iclr.cc/paper_files/paper/2026/file/
+290c2430f91912204f30bbcc990fff1d-Paper-Conference.pdf.
+Renjie Pi, Grace Lam, Mohammad Shoeybi, Pooya Jannaty, Bryan Catanzaro, and Wei Ping. On
+data engineering for scaling LLM terminal capabilities, 2026. URL https://arxiv.org/
+abs/2602.21193.
+Akshara Prabhakar, Zuxin Liu, Ming Zhu, Jianguo Zhang, Tulika Manoj Awalgaonkar, Shiyu Wang,
+Zhiwei Liu, Haolin Chen, Thai Hoang, Juan Carlos Niebles, Shelby Heinecke, Weiran Yao, Huan
+Wang, Silvio Savarese, and Caiming Xiong. APIGen-MT: Agentic pipeline for multi-turn data
+generation via simulated agent-human interplay. In Advances in Neural Information Processing
+Systems, volume 38, 2025. URL https://proceedings.neurips.cc/paper_files/
+paper/2025/file/5e3661f7fe4c8ac5652d62eb3d3c96ea-Paper-Datasets_
+and_Benchmarks_Track.pdf.
+Qwen Team. Qwen3-Coder: Agentic coding in the world, July 2025. URL https://qwen.ai/
+blog?id=qwen3-coder.
+Qwen Team. Qwen3.5: Towards native multimodal agents, February 2026. URL https://qwen.
+ai/blog?id=qwen3.5.
+Ram Ramrakhya, Andrew Szot, Omar Attia, Yuhao Yang, Anh Nguyen, Bogdan Mazoure, Zhe
+Gan, Harsh Agrawal, and Alexander Toshev. Scaling synthetic task generation for agents via
+exploration, 2025. URL https://arxiv.org/abs/2509.25047.
+Negin Raoof, Richard Zhuang, Marianna Nezhurina, Etash Guha, Atula Tejaswi, Ryan Marten,
+Charlie F. Ruan, Tyler Griggs, Alexander Glenn Shaw, Hritik Bansal, E. Kelly Buchanan, Artem
+Gazizov, Reinhard Heckel, Chinmay Hegde, Sankalp Jajee, Daanish Khazi, Emmanouil Koukoumidis, Xiangyi Li, Hange Liu, Shlok Natarajan, Harsh Raj, Nicholas Roberts, Ethan Shen,
+Nishad Singhi, Michael Siu, Ashima Suvarna, Hanwen Xing, Patrick Yubeaton, Robert Zhang,
+Leon Liangyu Chen, Xiaokun Chen, Steven Dillmann, Saadia Gabriel, Xunyi Jiang, Anurag
+Kashyap, Boxuan Li, Yein Park, Minh Pham, Sujay Sanghavi, Lin Shi, Ke Sun, Yixin Wang,
+Zhiwei Xu, Erica Zhang, Siyan Zhao, Wanjia Zhao, Jenia Jitsev, Alex Dimakis, Benjamin Feuer,
+11
+
+and Ludwig Schmidt. OpenThoughts-Agent: Data recipes for agentic models, 2026. URL
+https://arxiv.org/abs/2606.24855.
+Dingfeng Shi, Jingyi Cao, Qianben Chen, Weichen Sun, Weizhen Li, Hongxuan Lu, Fangchen Dong,
+Tianrui Qin, King Zhu, Minghao Liu, Jian Yang, Ge Zhang, Jiaheng Liu, Changwang Zhang, Jun
+Wang, Yuchen Eleanor Jiang, and Wangchunshu Zhou. TaskCraft: Automated generation of
+agentic tasks, 2025. URL https://arxiv.org/abs/2506.10055.
+Kou Shi, Zun Wang, Qisheng Su, Shiting Huang, Ziao Zhang, Zhen Fang, Qingnan Ren, Jin Liu,
+Yu Zeng, Yiming Zhao, Lin Chen, Zehui Chen, and Feng Zhao. FACET: Preserving source
+intent and executable state in terminal task synthesis, 2026. URL https://arxiv.org/
+abs/2608.18580.
+Xiaoshuai Song, Haofei Chang, Guanting Dong, Yutao Zhu, Ji-Rong Wen, and Zhicheng Dou. EnvScaler: Scaling tool-interactive environments for LLM agent via programmatic synthesis, 2026.
+URL https://arxiv.org/abs/2601.05808.
+Giulio Starace, Oliver Jaffe, Dane Sherburn, James Aung, Jun Shern Chan, Leon Maksin, Rachel
+Dias, Evan Mays, Benjamin Kinsella, Wyatt Thompson, Johannes Heidecke, Amelia Glaese, and
+Tejal Patwardhan. PaperBench: Evaluating AI’s ability to replicate AI research. arXiv preprint
+arXiv:2504.01848, 2025. doi: 10.48550/arXiv.2504.01848.
+Peter Steinberger. Introducing OpenClaw, January 2026. URL https://openclaw.ai/blog/
+introducing-openclaw.
+Yiyou Sun, Xinyang Han, Weichen Zhang, Yuanbo Pang, Tianyu Wang, Yuhan Cao, Yixiao Huang,
+Chris Duroiu, Haoyun Zhang, Jeffrey Lin, Weishu Zhang, Tyler Zeng, Ying Yan, Bo Liu, Hanson
+Wen, Mingyang Xu, Xiaoyuan Liu, Zimeng Chen, Weiyan Shi, Amanda Dsouza, Vincent Sunn
+Chen, Dawn Song, Patrick Bryant, Carl Boettiger, Yamini Rangan, Bradley Rothenberg, Kyle
+Steinfeld, Arvind Rao, Tapio Schneider, Georgios Yannakakis, Laure Zanna, Kaan Ozbay, Ida
+Sim, Tarek Zohdi, George Em Karniadakis, Jack Gallant, Teresa Head-gordon, et al. Agents’ last
+exam. arXiv preprint arXiv:2606.05405, 2026. doi: 10.48550/arXiv.2606.05405.
+Zirui Tang, Xuanhe Zhou, Yumou Liu, Linchun Li, Yukai Wu, Weizheng Wang, Hongzhang Huang,
+Wei Zhou, Jun Zhou, Jiachen Song, Shaoli Yu, Jinqi Wang, Zihang Zhou, Hongyi Zhou, Yuting
+Lv, Jinyang Li, Jiashuo Liu, Ruoyu Chen, Chunwei Liu, GuoLiang Li, Jihua Kang, and Fan
+Wu. Workspace-Bench 1.0: Benchmarking AI agents on workspace tasks with large-scale file
+dependencies, 2026. URL https://arxiv.org/abs/2605.03596.
+Harsh Trivedi, Tushar Khot, Mareike Hartmann, Ruskin Manku, Vinty Dong, Edward Li, Shashank
+Gupta, Ashish Sabharwal, and Niranjan Balasubramanian. AppWorld: A controllable world of
+apps and people for benchmarking interactive coding agents. In Proceedings of the 62nd Annual
+Meeting of the Association for Computational Linguistics, pp. 16022–16076, 2024. doi: 10.
+18653/v1/2024.acl-long.850.
+Dunwei Tu, Hongyan Hao, Hansi Yang, Yihao Chen, Yi-Kai Zhang, Zhikang Xia, Yu Yang, Yueqing Sun, Xingchen Liu, Furao Shen, Qi Gu, Hui Su, and Xunliang Cai. ScaleEnv: Scaling
+environment synthesis from scratch for generalist interactive tool-use agent training, 2026. URL
+https://arxiv.org/abs/2602.06820.
+Bertie Vidgen, Austin Mann, Abby Fennelly, John Wright Stanly, Lucas Rothman, Marco Burstein,
+Julien Benchek, David Ostrofsky, Anirudh Ravichandran, Debnil Sur, Neel Venugopal, Alannah Hsia, Isaac Robinson, Calix Huang, Olivia Varones, Daniyal Khan, Michael Haines, Austin
+Bridges, Jesse Boyle, Koby Twist, Zach Richards, Chirag Mahapatra, Brendan Foody, and Osvald
+Nitski. APEX-Agents, 2026.
+Zhaoyang Wang, Canwen Xu, Boyi Liu, Yite Wang, Siwei Han, Zhewei Yao, Huaxiu Yao, and Yuxiong He. Agent world model: Infinity synthetic environments for agentic reinforcement learning,
+2026a. URL https://arxiv.org/abs/2602.10090.
+Ziyi Wang, Yuxuan Lu, Yimeng Zhang, Pei Chen, Ziwei Dong, Jing Huang, Jiri Gesi, Xianfeng
+Tang, Chen Luo, Qun Liu, Yisi Sang, Hanqing Lu, Manling Li, Jin Lai, and Dakuo Wang. Trajectory2Task: Training robust tool-calling agents with synthesized yet verifiable data for complex
+12
+
+user intents. In Proceedings of the 64th Annual Meeting of the Association for Computational
+Linguistics, pp. 44021–44044, 2026b. doi: 10.18653/v1/2026.acl-long.2037.
+Zhiheng Xi, Jixuan Huang, Chenyang Liao, Baodai Huang, Jiaqi Liu, Honglin Guo, Yajie Yang,
+Rui Zheng, Junjie Ye, Jiazheng Zhang, Wenxiang Chen, Wei He, Yiwen Ding, Guanyu Li, Zehui
+Chen, Zhengyin Du, Xuesong Yao, Yufei Xu, Jiecao Chen, Tao Gui, Zuxuan Wu, Qi Zhang, Xuanjing Huang, and Yu-Gang Jiang. AgentGym-RL: An open-source framework to train LLM agents
+for long-horizon decision making via multi-turn RL. In International Conference on Learning
+Representations, 2026a. URL https://openreview.net/forum?id=ZgCCDwcGwn.
+Zhiheng Xi, Dingwen Yang, Jiaqi Liu, Jixuan Huang, Honglin Guo, Baodai Huang, Tinggang Chen,
+Qi Zhang, Zhonghang Lu, Chenyu Liu, Jiajun Sun, Jiazheng Zhang, Dingwei Zhu, Xin Guo,
+Junzhe Wang, Zhihao Zhang, Yuming Yang, Junjie Ye, Minghe Gao, Dongrui Liu, Jiaming Ji,
+Guohao Li, Tao Gui, Qi Zhang, and Xuanjing Huang. AgentGym2: Benchmarking large language
+model agents in de-idealized real-world environments. In Proceedings of the 64th Annual Meeting
+of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 44451–44479.
+Association for Computational Linguistics, 2026b. doi: 10.18653/v1/2026.acl-long.2058. URL
+https://aclanthology.org/2026.acl-long.2058/.
+Jingxu Xie, Dylan Xu, Xuandong Zhao, and Dawn Song. AgentSynth: Scalable task generation for
+generalist computer-use agents, 2025. URL https://arxiv.org/abs/2506.14205.
+Zhangchen Xu, Adriana Meza Soria, Shawn Tan, Anurag Roy, Ashish Sunil Agrawal, Radha
+Poovendran, and Rameswar Panda. TOUCAN: Synthesizing 1.5m tool-agentic data from realworld MCP environments, 2025. URL https://arxiv.org/abs/2510.01179.
+Bowen Ye, Rang Li, Qibin Yang, Yuanxin Liu, Linli Yao, Hanglong Lv, Zhihui Xie, Chenxin An,
+Lei Li, Lingpeng Kong, Qi Liu, Zhifang Sui, and Tong Yang. Claw-Eval: Towards trustworthy
+evaluation of autonomous agents, 2026.
+Z.ai. GLM-5.2: Built for long-horizon tasks, June 2026. URL https://z.ai/blog/glm-5.
+2.
+Jiazheng Zhang, Wenqing Jing, Zizhuo Zhang, Zhiheng Xi, Shihan Dou, Rongxiang Weng, Jiahuan
+Li, Jingang Wang, Mingxu Chai, Shibo Hong, Tao Gui, and Qi Zhang. Two minds better than
+one: Collaborative reward modeling for LLM alignment. CoRR, abs/2505.10597, 2025. doi: 10.
+48550/ARXIV.2505.10597. URL https://doi.org/10.48550/arXiv.2505.10597.
+Jiazheng Zhang, Ziche Fu, Junrui Shen, Yunbin Zhao, Yunke Zhang, Zhiheng Xi, Long Ma,
+Chenxin An, Zhihao Zhang, Shichun Liu, Dingwei Zhu, Shihan Dou, Shaofan Liu, Han Li,
+Wiggin Zhou, Aiden Adams, Tao Gui, Fei Huang, Qi Zhang, and Xuanjing Huang. Entropy polarity in reinforcement fine-tuning: Direction, asymmetry, and control, 2026a. URL
+https://arxiv.org/abs/2605.11775.
+Jiazheng Zhang, Ziche Fu, Zhiheng Xi, Wenqing Jing, Mingxu Chai, Wei He, Guoqiang Zhang,
+Chenghao Fan, Chenxin An, Wenxiang Chen, Zhicheng Liu, Haojie Pan, Dingwei Zhu, Tao Gui,
+Qi Zhang, and Xuanjing Huang. AgentV-RL: Scaling reward modeling with agentic verifier. In
+Findings of the Association for Computational Linguistics: ACL 2026, pp. 23078–23100. Association for Computational Linguistics, 2026b. doi: 10.18653/v1/2026.findings-acl.1156. URL
+https://aclanthology.org/2026.findings-acl.1156/.
+Jiarong Zhao, Zhikai Lei, Zhiheng Xi, Rui Zheng, Hang Yan, Jie Zhou, Qin Chen, and Liang He.
+NexForge: Scaling agent capabilities through requirement-driven task synthesis for LLMs, 2026.
+URL https://arxiv.org/abs/2607.14186.
+Shuyan Zhou, Frank F. Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng,
+Tianyue Ou, Yonatan Bisk, Daniel Fried, Uri Alon, and Graham Neubig. WebArena: A realistic
+web environment for building autonomous agents. In International Conference on Learning Representations, 2024. URL https://proceedings.iclr.cc/paper_files/paper/
+2024/file/4410c0711e9154a7a2d26f9b3816d1ef-Paper-Conference.pdf.
+13
+
+Mingchen Zhuge, Changsheng Zhao, Dylan R. Ashley, Wenyi Wang, Dmitrii Khizbullin, Yunyang Xiong, Zechun Liu, Ernie Chang, Raghuraman Krishnamoorthi, Yuandong Tian, Yangyang
+Shi, Vikas Chandra, and Jürgen Schmidhuber. Agent-as-a-judge: Evaluate agents with agents.
+In Proceedings of the 42nd International Conference on Machine Learning, volume 267 of
+Proceedings of Machine Learning Research, pp. 80569–80611. PMLR, 2025. URL https:
+//proceedings.mlr.press/v267/zhuge25a.html.
+
+A PPENDIX
+A
+
+D OMAIN TAXONOMY AND D ISTRIBUTION
+
+A.1
+
+D OMAIN TAXONOMY
+
+WorkForge organizes 16,665 SFT tasks into 40 domains, as shown in Figure 7. The taxonomy spans
+common workplace activities such as office productivity, data management, business operations,
+finance, and communication, while also covering software, scientific, media, healthcare, security,
+and infrastructure-oriented tasks. The included workflows range from document and data processing
+to technical investigation and domain-specific decision making.
+
+Em
+0.74ail
+%
+
+WorkForge
+40 domains
+
+Devi
+ces
+&
+1.63
+% IoT
+Commerce &
+eCommerce
+1.65%
+
+St
+M
+o
+an ra
+F g
+Re 1 ag ile e &
+coV .is27 em
+Pr Imgnitua%l en
+oc ag io
+t
+e
+1.4 ss e n &
+Me 2% ing
+1.4dica
+6% l
+
+16,665 tasks
+
+e
+hing
+ac in
+M rn %
+a 1
+&
+I &e 2
+A L 4. ncerch
+ie ea %
+c
+s
+S e 6
+R 3.8 on &
+ti g
+uca in
+EdLearn4%
+n
+3.8
+icatio
+mun ging
+ComMessa%
+& 3.80
+Movies &
+Video
+3.34%
+Social Media
+2.89%
+
+Ente
+rta
+2.83inment
+%
+To
+Uti ols
+2.6litie&
+8% s
+Jo
+b
+2.6s &
+M
+O o
+6%HR
+bs nit
+e o
+2. rv rin
+46 a b g
+% ilit &
+y
+
+& n
+ch tio l
+ar ma va
+Se r rie %
+o
+6
+t
+f
+In Re 2.4 er
+h
+%
+Ot.38
+2
+g
+min
+Ga 5 %
+2.3
+urity
+rsec
+Cybe & aphy
+togr
+Cryp2.08%
+Media & News
+1.73%
+
+Location &
+Mapping
+0.94%
+&
+Translation
+Language
+0.96%
+&
+Fooding
+Cook %
+0.97
+io
+ud
+&A
+sic 8%
+Mu 0.9
+&
+h s
+alt es
+HeFitn 6%
+.1
+1
+ts
+en7%
+Ev .2
+1
+
+Office
+Productivity
+8.36%
+
+SMS & s
+Notification
+0.34%
+&
+stics n
+Logi ly Chai
+Supp 35%
+0.
+on
+ati
+ort
+nsp 8%
+Tra 0.4
+er
+th
+ea 1% sis
+W 0.5
+ly
+na P
+A NL %
+xt & .54
+Te
+0
+
+T
+Torav
+0. ur el
+60 is &
+%m
+Sp
+or
+0.6
+5%ts
+En
+e
+rg
+0.6
+8%y
+
+Da
+Datata &
+base
+8.21
+%
+B
+Enusine
+te ss
+7.9rprise&
+F
+4%
+Paina
+ymnc
+A
+d 7
+ee
+M ve .42%nts&
+r
+a t
+5. rkeisin
+90 tin g
+% g &
+
+(a) Task domain taxonomy
+
+(b) Top 10 domains by task count
+Office Productivity
+
+1,394 (8.36%)
+
+Data & Database
+
+1,368 (8.21%)
+1,324 (7.94%)
+
+Business & Enterprise
+
+1,237 (7.42%)
+
+Finance & Payments
+
+983 (5.90%)
+
+Advertising & Marketing
+701 (4.21%)
+
+AI & Machine Learning
+
+644 (3.86%)
+
+Science & Research
+Education & Learning
+
+640 (3.84%)
+
+Communication & Messaging
+
+633 (3.80%)
+557 (3.34%)
+
+Movies & Video
+0
+
+200
+
+400
+
+600
+
+800
+
+1000
+
+1200
+
+1400
+
+Number of tasks
+
+Figure 7: Domain taxonomy and task distribution of the WorkForge SFT corpus. The left panel
+shows all 40 domains, and the right panel reports the ten most represented domains.
+A.2
+
+D OMAIN D ISTRIBUTION
+
+Table 4 lists the complete distribution. The four most represented domains account for 31.9% of
+the corpus, and the top ten account for 56.9%. The remaining 30 domains contribute 43.1% of all
+tasks. The distribution combines repeated coverage of broadly applicable workplace domains with
+coverage across specialized applications.
+
+B
+
+P IPELINE P SEUDOCODE AND P ROMPT T EMPLATES
+
+B.1
+
+P IPELINE P SEUDOCODE
+
+Algorithm 1 presents the end-to-end construction procedure and follows the notation introduced in
+Section 2.
+
+14
+
+Table 4: Complete domain distribution. Counts are computed over 16,665 SFT tasks.
+# Domain
+
+Count
+
+%
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+
+1,394
+1,368
+1,324
+1,237
+983
+701
+644
+640
+633
+557
+482
+471
+447
+443
+410
+410
+396
+391
+346
+289
+
+8.36
+8.21
+7.94
+7.42
+5.90
+4.21
+3.86
+3.84
+3.80
+3.34
+2.89
+2.83
+2.68
+2.66
+2.46
+2.46
+2.38
+2.35
+2.08
+1.73
+
+Office Productivity
+Data & Database
+Business & Enterprise
+Finance & Payments
+Advertising & Marketing
+AI & Machine Learning
+Science & Research
+Education & Learning
+Communication & Messaging
+Movies & Video
+Social Media
+Entertainment
+Tools & Utilities
+Jobs & HR
+Monitoring & Observability
+Search & Information Retrieval
+Other
+Gaming
+Cybersecurity & Cryptography
+Media & News
+
+# Domain
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+
+Count
+
+%
+
+275
+271
+243
+237
+212
+211
+194
+163
+162
+160
+156
+123
+113
+108
+100
+90
+85
+80
+59
+57
+
+1.65
+1.63
+1.46
+1.42
+1.27
+1.27
+1.16
+0.98
+0.97
+0.96
+0.94
+0.74
+0.68
+0.65
+0.60
+0.54
+0.51
+0.48
+0.35
+0.34
+
+Commerce & eCommerce
+Devices & IoT
+Medical
+Visual Recognition & Image Processing
+Storage & File Management
+Events
+Health & Fitness
+Music & Audio
+Food & Cooking
+Translation & Language
+Location & Mapping
+Email
+Energy
+Sports
+Travel & Tourism
+Text Analysis & NLP
+Weather
+Transportation
+Logistics & Supply Chain
+SMS & Notifications
+
+Algorithm 1: Authority-Separated Task Construction and Trajectory Generation in
+W ORK F ORGE
+Input: Expert-authored professional workflow specifications; resource-acquisition interface Aground ;
+solver policy πθ
+Output: Grounded task packages T ; scored rollout corpus Drollout
+1 T ← ∅;
+Drollout ← ∅; // Phase 1: Workflow Specification
+M
+2 Obtain expert-authored Scene Blueprints B = {bj }j=1 ;
+3 foreach Scene Blueprint bj ∈ B do
+// Phase 2: Environment Synthesis
+K
+
+j
+{Rjk }k=1
+← GroundResourcePools(bj ; Aground );
+foreach resource pool Rjk do
+Wjk ← Instantiate(Rjk );
+Pjk ← Explore(Wjk ; bj );
+// Phase 3: Task Generation and Verification Design
+Synthesize task instruction qjk and solution plan hjk from bj and Pjk ;
+Fbjk ← VerifyFacts(hjk ; Wjk , Pjk );
+prog
+sem
+(Vjk
+, Vjk
+) ← BuildRubrics(qjk , hjk , Pjk , Fbjk );
+prog
+sem
+Vjk ← Vjk ∪ Vjk
+;
+prog
+prog
+sem
+Construct Gjk from Vjk
+and Gsem
+jk from qjk and Vjk ;
+prog
+sem
+Tjk ← ((Wjk , qjk ), (Pjk , hjk , Fbjk , Vjk , G
+, Gjk ));
+
+4
+5
+6
+7
+
+8
+9
+10
+11
+12
+13
+
+jk
+
+T ← T ∪ {Tjk };
+// Phase 4: Trajectory Generation
+(τjk , Yjk ) ← Rollout(πθ ; qjk , Wjk );
+X
+1
+prog
+Sjk
+= prog
+I[v(Wjk , Yjk ) = 1],
+|Vjk |
+prog
+
+14
+
+15
+16
+
+sem
+Sjk
+=
+
+v∈Vjk
+
+X
+
+jk
+
+prog
+sem
+Drollout ← Drollout ∪ {(τjk , Yjk , Sjk
+, Sjk
+, µjk )};
+
+17
+18
+
+1
+sv
+;
+sem
+|Vjk
+|
+10
+v∈V sem
+
+return T , Drollout ;
+
+C
+
+E XPERIMENTAL , T RAINING , AND E VALUATION D ETAILS
+
+C.1
+
+S UPERVISED F INE -T UNING S ETUP
+
+We perform full-parameter supervised fine-tuning on 16,665 trajectories from W ORK F ORGE-16k.
+The training trajectories are generated by GLM 5.3 with the Claude Code and OpenClaw harnesses.
+15
+
+We train Qwen3.5-35B-A3B-Base and the post-trained Qwen3.5-27B model for five epochs using
+the same optimization recipe. Table 5 reports the training configuration.
+Table 5: Supervised fine-tuning configuration used for the main models and training-data ablations.
+
+C.2
+
+Configuration
+
+Value
+
+Optimizer
+Adam coefficients
+Peak learning rate
+Weight decay
+Gradient clipping
+Learning-rate schedule
+Warmup ratio
+Training epochs
+Global batch size
+Micro-batch size
+Maximum sequence length
+Numerical precision
+Sequence packing
+Dynamic batching
+Gradient checkpointing
+
+AdamW
+β1 = 0.9, β2 = 0.95
+1 × 10−5
+0.1
+1.0
+Cosine decay to 1 × 10−7
+5% of total steps
+5
+64 sequences
+1 sequence per GPU
+262,144 tokens
+BF16 mixed precision
+Enabled
+Enabled
+Enabled
+
+T RAINING I NFRASTRUCTURE AND DATA F ORMATTING
+
+Training uses the verl supervised fine-tuning trainer with Ray 2.46, PyTorch 2.7.1, CUDA 12.8,
+Transformers 5.10.4, and FlashAttention 2.8.1. We use FSDP with Ulysses sequence parallelism of
+size four. The Qwen3.5-35B-A3B-Base runs use 64 NVIDIA H20 96GB GPUs, and the Qwen3.527B runs use 128 GPUs. Optimizer states are offloaded to CPU, while model parameters remain on
+GPU.
+Training examples are rendered incrementally from cumulative conversation prefixes so that the
+reasoning content associated with each assistant turn is preserved. The loss is applied according
+to the per-message assistant loss mask stored with each trajectory. Variable-length examples are
+packed without padding, with sequence boundaries retained through cumulative sequence-length
+indices. Dynamic batching limits each GPU batch by its token count, with a maximum budget of
+262,144 tokens.
+C.3
+
+I NFERENCE C ONFIGURATION
+
+We serve local models with vLLM and use the same decoding configuration for the W ORK F ORGE
+models and the re-evaluated open-source baselines in Table 2. Table 6 lists the shared settings. The
+maximum context length is 262,144 tokens, whereas the 32,768-token limit applies to each generated model response. For models whose native context window is shorter than 262,144 tokens,
+we use YaRN position extrapolation to extend the context window to the shared limit. Specifically, EnvScaler-Qwen3-8B, Arctic-AWM-14B, Nemotron-Terminal-32B, and OpenThinkerAgent32B use the Qwen3 architecture with the YaRN settings in Table 7.
+Table 6: Decoding configuration used for model evaluation.
+Parameter
+
+Value
+
+Temperature
+Top-p
+Top-k
+Maximum generated tokens per response
+Maximum context length
+
+0.7
+0.9
+20
+32,768
+262,144
+
+16
+
+Table 7: Shared YaRN configuration for the Qwen3-based baselines.
+
+C.4
+
+Parameter
+
+Value
+
+Maximum position embeddings
+RoPE base (θ)
+RoPE scaling type
+Scaling factor
+Original maximum position embeddings
+
+262,144
+1,000,000
+YaRN
+6.4
+40,960
+
+B ENCHMARK P ROTOCOLS
+
+All results in Table 2 are obtained through our evaluation runs on WildClawBench, Claw-Eval,
+GDPval, APEX-Agents, and Agents’ Last Exam. Table 8 summarizes their metrics and sampling
+protocols. Pass@1 denotes the fraction of tasks passed in a single rollout under each benchmark’s
+success criterion. Claw-Eval uses three independent rollouts per task and reports Passˆ3, the fraction
+of tasks passed in all three rollouts. Unlike Pass@3, which requires at least one successful rollout,
+Passˆ3 measures consistency across repeated runs. All other benchmarks use one rollout per task.
+WildClawBench and Claw-Eval use OpenClaw; GDPval and ALE use Claude Code; APEX-Agents
+uses its official ReAct Toolbelt agent. Table 9 lists the harnesses, agent-level wall-clock limits, and
+interaction budgets.
+Table 8: Benchmark-specific metrics and sampling protocols.
+Benchmark Evaluation set
+
+Reported metrics
+
+WildClaw
+Claw-Eval
+GDPval
+APEX
+ALE
+
+Score, Pass@1
+Score, Passˆ3
+Rubric score
+Score, Pass@1
+Score, Pass@1
+
+Full set
+Full set
+201 text-only tasks
+Full set
+Full set
+
+Rollouts/task
+1
+3
+1
+1
+1
+
+Table 9: Evaluation harnesses and per-task agent execution budgets.
+Benchmark Harness
+
+Wall-clock limit Interaction limit
+
+WildClaw
+Claw-Eval
+GDPval
+APEX
+ALE
+
+24,000 s
+3,600 s
+14,400 s
+14,400 s
+28,800 s
+
+C.5
+
+OpenClaw
+OpenClaw
+Claude Code
+ReAct Toolbelt
+Claude Code
+
+Not set
+50 turns
+300 turns
+250 steps
+Unlimited
+
+GDP VAL E VALUATION S UBSET
+
+We evaluate all models on the same 201-task subset of GDPval’s official 220-task evaluation set,
+excluding 19 multimodal tasks. Tasks are aligned using the evaluation payload’s case id, which
+corresponds to the official task id. We report the official rubric score rather than the win-or-tie
+rate. Table 10 lists the excluded tasks and their occupations.
+C.6
+
+GDP VAL RUBRIC -L EVEL A NALYSIS
+
+We group GDPval criteria into five deliverable-quality categories and compute the pass rate within
+(m)
+each category. For category c and model m, let Ic denote its criteria and zj
+∈ {0, 1} indicate
+whether criterion j is satisfied. The category pass rate is
+P
+(m)
+j∈Ic zj
+(m)
+Rc =
+.
+(11)
+|Ic |
+17
+
+Table 10: Multimodal tasks excluded from the GDPval evaluation set. Row numbers refer to the
+official 220-task set.
+Row Task ID
+
+Occupation
+
+12 38889c3b-e3d4-49c8-816a-3cc8e5313aba Audio and Video Technicians
+13 ff85ee58-bc9f-4aa2-806d-87edeabb1b81 Audio and Video Technicians
+14 4b894ae3-1f23-4560-b13d-07ed1132074e Audio and Video Technicians
+56 e222075d-5d62-4757-ae3c-e34b0846583b Film and Video Editors
+57 c94452e4-39cd-4846-b73a-ab75933d1ad7 Film and Video Editors
+58 75401f7c-396d-406d-b08e-938874ad1045 Film and Video Editors
+59 a941b6d8-4289-4500-b45a-f8e4fc94a724 Film and Video Editors
+79 4d1a8410-e9c5-4be5-ab43-cc55563c594c First-Line Supervisors of Office & Admin
+Support
+102 b9665ca1-4da4-4ff9-86f2-40b9a8683048 Industrial Engineers
+111 46fc494e-a24f-45ce-b099-851d5c181fd4 Mechanical Engineers
+127 3baa0009-5a60-4ae8-ae99-4955cb328ff3 News Analysts, Reporters, and Journalists
+134 e6429658-4de1-42dd-a9e0-2d2b9b02fb10 Nurse Practitioners
+147 57b2cdf2-ad62-4591-aa91-aad489740320 Private Detectives and Investigators
+149 a46d5cd2-55fe-48fa-a4c6-6aaf6b9991b5 Private Detectives and Investigators
+153 e4f664ea-0e5c-4e4e-a0d3-a87a33da947a Producers and Directors
+171 11593a50-734d-4449-b5b4-f8986a133fd8 Real Estate Sales Agents
+172 94925f49-36bc-42da-b45b-61078d329300 Real Estate Sales Agents
+188 f2986c1f-2bbf-4b83-bc93-624a9d617f45 Pharmacists
+203 fe0d3941-e32c-4bf1-a643-b566d2b4cb3c Sales Representatives, Wholesale &
+Manufacturing
+
+(SFT)
+
+(m)
+
+(Base)
+
+) percentage
+− Rc
+We report 100Rc as a percentage and compute each gain as 100(Rc
+points. Table 11 reports the number and share of criteria assigned to each category together with the
+resulting pass rates.
+Table 11: GDPval rubric pass rates across five deliverable-quality categories.
+Category
+Visual / layout quality
+Numerical claims
+Cross-source reconciliation
+Reasoning / argumentation
+Content coverage
+
+D
+
+Criteria Share
+
+Base
+
+SFT
+
+∆
+
+371 4.2%
+523 5.9%
+103 1.2%
+200 2.2%
+7,718 86.6%
+
+74.1%
+64.6%
+86.4%
+82.0%
+77.4%
+
+87.1%
+72.8%
+92.2%
+86.5%
+83.4%
+
++13 pp
++8.2 pp
++5.8 pp
++4.5 pp
++6.0 pp
+
+A DDITIONAL A BLATION A NALYSES
+
+The training-data ablations use Qwen3.5-35B-A3B-Base with the supervised fine-tuning recipe in
+Table 5.
+D.1
+
+DATA VOLUME S CALING
+
+We train models at four data scales: 1K, 3.6K, 8K, and 16K trajectories. For each target scale, we
+independently sample the requested number of trajectories from the full corpus; subsets at different
+scales are not nested. The 16K setting uses all 16,665 trajectories. Figure 4(a) reports the results on
+ALE and WildClaw.
+D.2
+
+T RAJECTORY-L ENGTH S CALING
+
+We construct the turn-scaling subsets from trajectories generated with the Claude Code harness.
+Trajectories are grouped into three disjoint intervals by their number of turns, and we randomly
+18
+
+sample 1,000 trajectories from each interval (Table 12). Figure 4(b) reports performance on ALE
+and WildClaw, while Table 13 summarizes tool-use behavior on WildClaw.
+Table 12: Training subsets for trajectory-length scaling.
+Group
+
+Turns per trajectory
+
+Trajectories
+
+0–20
+21–40
+41–60
+
+1,000
+1,000
+1,000
+
+G1
+G2
+G3
+
+Table 13: Tool-use behavior under trajectory-length scaling on WildClaw. Longer-turn supervision
+increases exploration intensity, breadth, and productive execution.
+Group
+
+Productive
+calls
+
+Skill
+discovery
+
+Tool
+calls
+
+Distinct
+actions
+
+Tool types
+used
+
+11.7
+23.1
+24.0
+
+21.0%
+21.9%
+33.3%
+
+17.7
+38.3
+42.0
+
+17.0
+33.0
+38.3
+
+3.3
+3.6
+4.0
+
+G1
+G2
+G3
+
+D.3
+
+V ERIFICATION -F ILTER A BLATION
+
+We construct three 1,000-trajectory training sets from the same pool of completed rollouts using the
+filtering rules in Table 14. The LLM-only variant selects trajectories by the semantic score S sem ,
+the programmatic-only variant uses S prog , and the hybrid variant uses their equally weighted mean.
+Each variant applies a threshold of 0.7 to its selection score. The downstream results on ALE and
+APEX are reported in Table 3.
+Table 14: Trajectory selection rules for the verification-filter ablation.
+Variant
+LLM only
+Programmatic only
+Hybrid
+
+Selection rule
+sem
+
+S
+≥ 0.7
+S prog ≥ 0.7
+0.5S sem + 0.5S prog ≥ 0.7
+
+E
+
+DATA E XAMPLES
+
+E.1
+
+C ROSS -R EGION FACTOR -P REMIUM A NALYSIS
+
+Trajectories
+1,000
+1,000
+1,000
+
+This Finance & Payments task asks a quantitative strategist to assess factor premia and prepare
+an investment-committee briefing. WorkForge constructs the workspace from the public Kaggle
+dataset nikitamanaenkov/famafrench-factors-and-portfolios, a local mirror of
+the Kenneth French data library with an August 2025 vintage. The example connects workspace exploration, evidence-grounded verification, cross-region analysis, and the production of three linked
+deliverables.
+E.1.1
+
+TASK I NSTRUCTION
+
+Task Instruction
+You are a quantitative strategist at a multi-asset manager. The investment committee
+is weighing a new factor-tilt allocation and wants evidence on whether the classic
+equity factors still earn premia -- and where (US vs developed vs emerging markets).
+Using the firm’s local mirror of the Kenneth French data library, build the analysis
+and a decision-ready briefing.
+Assess each major factor’s long-run and recent performance, compare premia across
+
+19
+
+regions over a fair common window, and recommend which factors and regions deserve
+capital (and which to avoid). Be explicit about data caveats that affect your
+conclusions.
+Deliver:
+- results/factor_briefing.pptx -- committee briefing with findings and a clear
+recommendation
+- results/factor_analysis.xlsx -- supporting performance tables
+- results/factor_returns_tidy.csv -- the cleaned return series behind your analysis
+Explore the workspace to determine structure, coverage, and pitfalls yourself.
+
+E.1.2
+
+W ORKSPACE AND S OURCE M ATERIALS
+
+The workspace contains 297 CSV files in 16 directories, with a maximum nesting depth of six. It
+includes factor series, sorted portfolios, research breakpoints, and industry returns, organized into
+US, Developed, Emerging, Industry, and Other branches. Momentum data also appear outside the
+US factor directory.
+Workspace Layout
+workspace/
+|-- data/
+|
+|-- US/
+|
+|
+|-- Factors/
+|
+|
+|-- Portfolios/
+|
+|
+|
+|-- Bivariate/
+|
+|
+|
+‘-- Univariate/
+|
+|
+‘-- Research_Breakpoints_Data/
+|
+|-- Developed/
+|
+|
+|-- Factors/
+|
+|
+‘-- Portfolios/
+|
+|-- Emerging/
+|
+|
+|-- Factors/
+|
+|
+‘-- Portfolios/
+|
+|-- Industry/
+|
+‘-- Other/
+‘-- results/
+
+[5 files]
+[49 files]
+[18 files]
+[8 files]
+[36 files]
+[114 files]
+[2 files]
+[7 files]
+[24 files]
+[34 files]
+[initially empty]
+
+Individual files contain descriptive preambles and multiple frequency blocks. For example, the US
+three-factor file stacks monthly observations and annual returns in the same CSV:
+Source Excerpt: F-F Research Data Factors.csv
+This file was created using the 202508 CRSP database.
+The 1-month TBill rate data until 202405 are from Ibbotson Associates.
+Starting from 202406, the 1-month TBill rate is from ICE BofA US 1-Month Treasury Bill
+Index.
+,Mkt-RF,SMB,HML,RF
+192607,
+2.89, -2.55,
+192608,
+2.64, -1.14,
+...
+202508,
+1.85,
+3.87,
+
+-2.39,
+3.81,
+
+0.22
+0.25
+
+4.41,
+
+0.38
+
+Annual Factors: January-December
+1927, 29.47, -2.46, -3.75,
+3.12
+1931, -44.84,
+3.07, -13.69,
+1.07
+1933, 56.49, 44.61, 31.28,
+0.30
+
+Other files declare missing-value sentinels of −99.99 or −999. The US files identify CRSP as their
+source, whereas Developed and Emerging files identify Bloomberg. The solver must separate frequency blocks, handle missing values, reconcile factor names such as Mom and WML, and determine
+overlapping valid observations across regions.
+20
+
+E.1.3
+
+W ORKSPACE E VIDENCE AND V ERIFICATION C RITERIA
+
+Workspace inspection produces 12 usable fact records with computation references. One record corrects the assumption that international series share a July 1990 start: the Developed series begins in
+July 1990, but the Emerging five-factor file begins in July 1989. The final factual criterion references
+this corrected record.
+Selected Workspace Fact Records
+vf01: US three-factor monthly series starts at 192607.
+First row: 192607, 2.89, -2.55, -2.39, 0.22.
+vf03: The US three-factor CSV contains a monthly block followed by an annual block.
+vf07: File headers declare missing values as -99.99 or -999.
+vf09: US files use CRSP; Developed and Emerging files use Bloomberg.
+vf12 (corrected): Developed starts at 199007; Emerging five-factor data start at 198907.
+Computation: inspect the first data rows of the two regional factor files.
+
+The task has 23 criteria: eight programmatic checks and 15 semantic criteria. Programmatic checks
+assess deliverable validity and specific reported facts. Semantic criteria assess analysis, data handling, evidence-to-recommendation consistency, and deliverable quality. Selected criteria are shown
+below.
+Selected Verification Criteria
+DC-2 | Programmatic | file_valid
+The analysis workbook is valid and contains at least one populated sheet.
+FA-4 | Programmatic | value_in_context | fact_ref: vf12
+The Emerging market 5-factor series start (198907) is correctly distinguished from
+the Developed start of 199007.
+Expected value: 198907; context keywords: Emerging, 1989, start.
+AD-2 | Semantic
+Compare regional premia over a common window, rather than each region’s full history.
+HC-1 | Semantic
+Separate monthly and annual blocks so annual returns do not enter monthly statistics.
+HC-2 | Semantic
+Treat -99.99 and -999 as missing values rather than numerical returns.
+HC-3 | Semantic
+Discuss the CRSP/Bloomberg source difference when interpreting regional comparisons.
+DQ-3 | Semantic
+Produce a tidy long-format CSV with date, region, factor, and return fields.
+
+E.1.4
+
+T RAJECTORY E XCERPTS
+
+GLM 5.3 executes the task with OpenClaw in 1,317 seconds, producing 121 messages and 60 tool
+calls. Early exploration checks both ends of the source files and then compares regional schemas,
+provenance, and date coverage.
+Rollout Excerpts: Inspection and Data Handling
+[9] Assistant
+Now let me inspect the actual file formats -- French CSVs are notoriously
+messy (preamble text, multiple stacked tables, annual sections, footers,
+-99.99 missing codes).
+[15] Assistant
+Key pitfalls already visible:
+- US is CRSP (1926+), Developed/Emerging are Bloomberg (1989/1990+)
+- Emerging has ‘-99.99‘ missing RMW/CMA early
+- whitespace-padded values
+- momentum is a separate file (‘Mom‘ for US, ‘WML‘ for intl)
+- stacked monthly+annual tables
+Let me check the toolchain and the Emerging RMW/CMA validity start.
+
+21
+
+The solver checks factor-level availability next. Emerging RMW becomes available in July 1991
+and CMA in July 1992, making July 1992 the binding start for the cross-region five-factor panel.
+Rollout Excerpt: Common-Window Construction
+[32] Assistant
+Clean panel built. The binding constraint for a fair all-factor,
+all-region window is Emerging CMA starting 1992-07, so the common
+window is 1992-07 to 2025-08 (398 months). Now the analytics engine.
+Tool call: write /project/scripts/analytics.py
+Compute factor performance analytics from results/factor_returns_tidy.csv.
+Outputs (results/tables/*.csv) consumed by the xlsx/pptx builders, plus
+results/_headline.json with key numbers for the briefing.
+
+22
+
+

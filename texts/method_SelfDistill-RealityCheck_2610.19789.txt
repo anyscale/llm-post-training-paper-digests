@@ -1,0 +1,5707 @@
+More Methods, Better Agents?
+A Reality Check on Self-Distillation in Agentic
+Reinforcement Learning
+Linhao Zhong1,2,* , Bozhen Fang1,* , Xuehao Wang1 , Duochao Shi1 , Zekai Luo1 , Guangming Yao2 ,
+Yi Yuan2 , Hao Chen1 , Jingdong Chen2 , Chunhua Shen1,2
+1
+
+arXiv:2610.19789v1 [cs.CL] 14 Oct 2026
+
+*
+
+Zhejiang University, State Lab of CAD & CG
+
+Equal contribution.
+
+2
+
+Ant Group
+
+Self-distillation in agentic reinforcement learning has produced a growing number of methods. However,
+existing evaluations often reuse published baseline scores under differing experimental conditions,
+provide few direct comparisons among contemporaneous methods, and give limited attention to
+training stability and computational cost. These limitations obscure the source of reported gains and
+the practical strengths and weaknesses of competing methods. Costly agent training further motivates
+a common basis for comparison. To address these gaps, we compare ten representative methods against
+GRPO on ALFWorld, ScienceWorld, Search-QA, and WebShop across three model sizes. Our study
+comprises 132 training runs totaling 12,124.4 recorded H800 GPU-hours, with repeated evaluations
+over eight rollout seeds for the pretrained backbones and all eleven trained methods. Beyond final
+task performance, we examine training progress, stability, and measured computational cost. Our
+evaluation yields three key findings. First, gains over GRPO remain limited in scope, with no method
+consistently outperforming it across settings. Second, strong final performance can mask unstable
+training. Third, additional training cost does not consistently translate into better performance. We
+establish this benchmark to support fair, comprehensive comparison and guide future research toward
+reliable and cost-effective improvements in agent training.
+Date: October 2026
+Project page: https://aim-uofa.github.io/Self-Distillation-AgentRL
+GitHub repo: https://github.com/aim-uofa/Self-Distillation-AgentRL
+
+1
+
+Introduction
+
+Large language model (LLM) agents interact with environments through sequences of actions and observations (Shridhar et al., 2021; Yao et al., 2022). Reinforcement learning (RL) with sparse outcome rewards
+trains these agents from task-level feedback, but provides limited guidance for individual decisions within a
+trajectory. On-policy self-distillation (OPSD) provides denser supervision for student-generated trajectories
+using a teacher branch conditioned on training-only privileged information (Lu et al., 2026; Wang et al.,
+2026a). Recent work integrates this teacher guidance into RL through auxiliary losses, advantage modulation,
+or reward shaping (Lu et al., 2026; Yang et al., 2026c; Zhang et al., 2026; Wang et al., 2026b), with related
+preprints appearing at an average rate of roughly one every two days.1
+However, current evaluations of self-distillation in agentic reinforcement learning provide an incomplete basis for
+judging progress. Individual gains over established baselines do not establish which contemporaneous methods
+are stronger, yet systematic comparisons among these methods remain scarce. Moreover, most comparisons
+reuse baseline scores from earlier papers rather than reproducing the baselines under a common protocol,
+allowing differences in training and evaluation conditions to be mistaken for methodological progress. Many
+studies also emphasize final scores, leaving training instability and the computational cost of improvement less
+systematically examined. As Figure 1 illustrates, the proliferation of methods has outpaced the comparable
+evidence needed to decide which ones are worth adopting. Closing this gap requires substantial resources:
+reproducing agent training is costly, making a shared, systematic comparison difficult to assemble within
+1 Survey criteria and publication inventory appear in Appendices H.1 and H.2.
+
+1
+
+Limitations of Existing Studies
+
+A Unified Benchmark
+
+Many studies report gains, but few compare methods fairly.
+
+Self-Distillation in Agentic RL
+
+Study A
+
+Study B
+
+Study C
+
+Study D
+
+A > baseline
+
+B > baseline
+
+C > baseline
+
+D > baseline
+
+2B
+
+ALFWorld
+
+Custom train
+
+4B
+
+WebShop
+
+9B
+
+Different tuning
+
+ALFWorld
+
+Larger budget
+
+2B
+
+WebShop
+
+Different eval
+
+11 methods
+…
+Evaluate
+together
+
+Which gains can we rely on?
+
+132
+
+Fair comparisons require costly reproduction.
+
+Reported results
+
+1/10
+
+5/10
+
+Training failure
+analysis
+
+4B
+
+9B
+
+training runs
+
+ALFWorld
+
+ScienceWorld
+
+Search-QA
+
+WebShop
+
+12,124.4
+
+H800 GPU-hours
+
+Key findings
+
+Key evaluation evidence is often missing
+Repeated
+evaluation
+
+3 model scales
+2B
+
+Baseline scores reused across papers
+
+Prior baseline scores
+
+4 benchmarks
+
+GRPO baseline
+10 representative methods
+
+3/10
+
+Gains are
+setting-dependent
+
+Measured
+cost
+
+Final scores
+hide instability
+
+Higher cost,
+not always better
+
+Figure 1 Motivation and overview of our benchmark for self-distillation in agentic reinforcement learning. Differences
+
+in experimental conditions, reused baseline scores, and incomplete evaluation motivate a common comparison of ten
+representative methods against GRPO across four benchmarks and three model sizes. We examine the breadth of
+gains, training stability, and computational cost.
+
+each new method paper. We therefore argue that independent evaluation should take priority over proposing
+another method: the immediate need is to determine what is worth building on.
+To address these limitations, we present an independent benchmark for self-distillation in agentic reinforcement
+learning. We compare ten representative methods against GRPO (Shao et al., 2024) across four benchmarks—
+ALFWorld (Shridhar et al., 2021), ScienceWorld (Wang et al., 2022), Search-QA, and WebShop (Yao et al.,
+2022)—and three scales (2B, 4B, and 9B). This comparison spans 12 model–task settings, 132 training runs,
+2,772 training-time validation sweeps, and 1,152 evaluation sweeps over eight rollout seeds for pretrained
+and trained models. The training runs total 12,124.4 recorded H800 GPU-hours across all four benchmarks.
+Shared environments and evaluation procedures provide a common basis for comparison while retaining
+method-specific training settings informed by the source papers and implementations. We examine not
+only whether gains hold across settings, but also whether they are sustained during training and justify the
+additional computation. Our analysis yields three key observations:
+(i) Gains over GRPO remain limited in scope, with no method consistently outperforming it across settings.
+(ii) Strong final performance does not imply stable training.
+(iii) Additional training cost does not consistently translate into better agent performance.
+
+2
+
+Related Work
+
+Interactive agents and learning signals. Language agents solve tasks through sequential actions and observa-
+
+tions (Shridhar et al., 2021; Yao et al., 2022; Xi et al., 2025). Inference-time methods interleave reasoning and
+action (Yao et al., 2023) or refine decisions and outputs through verbal feedback (Shinn et al., 2023; Madaan
+et al., 2023), without parameter updates. Training methods learn from filtered tool-use annotations (Schick
+et al., 2023) and curated interaction trajectories (Qin et al., 2024; Chen et al., 2023; Zeng et al., 2024).
+Reward-based optimization learns from sampled behavior (Shao et al., 2024), while online curricula support
+continued policy improvement (Qi et al., 2025). Multi-turn RL can nevertheless exhibit unstable updates
+and degenerate behavior, motivating careful reward design and rollout sampling (Wang et al., 2025). Our
+benchmark focuses on capabilities acquired through parameter updates, rather than improvements obtained
+by modifying an agent’s inference procedure.
+Distillation and privileged supervision. Distillation transfers teacher predictions, generated sequences, or policy
+
+behavior to a student (Hinton et al., 2015; Kim and Rush, 2016; Rusu et al., 2016). Training-only privileged
+information (Lopez-Paz et al., 2016) and reasoning rationales (Hsieh et al., 2023) enrich supervision beyond
+target labels. Privileged supervision therefore seeks to improve the student’s policy without requiring access
+to the teacher’s additional information at deployment. Supervising learner-visited states or student-generated
+sequences helps reduce distribution mismatch (Ross et al., 2011; Lin et al., 2020; Agarwal et al., 2024).
+2
+
+Method (source)
+
+Repeated evaluation
+
+Training failure analysis
+
+Measured cost
+
+GRPO+OPSD (Lu et al., 2026)
+SDAR (Lu et al., 2026)
+Skill-SD (Wang et al., 2026a)
+RLSD (Yang et al., 2026a)
+OCSD (Yang et al., 2026c)
+OVCSD (Xia et al., 2026)
+AgentOPSD (Wang et al., 2026b)
+ADRS (Zhang et al., 2026)
+ICSD (Lan et al., 2026)
+PCSD (Lv et al., 2026)
+
+×
+×
+×
+×
+✓
+×
+×
+×
+×
+×
+
+✓
+✓
+✓
+✓
+×
+×
+×
+✓
+×
+×
+
+×
+×
+×
+×
+✓
+✓
+×
+×
+✓
+×
+
+Methods with reported evidence
+
+1 / 10
+
+5 / 10
+
+3 / 10
+
+Table 1 Coverage of key evaluation dimensions in prior work.
+
+MiniLLM and DistiLLM study divergence objectives and sampling strategies (Gu et al., 2024; Ko et al., 2024),
+while iterative self-training learns from selected, self-generated reasoning or interaction traces (Zelikman
+et al., 2022; Aksitov et al., 2023). Supervision content, sampling distribution, and optimization objective offer
+complementary perspectives for comparing distillation-based agent training.
+Self-distillation in agentic reinforcement learning. Agentic self-distillation derives teacher supervision from
+
+privileged context available only during training. The evaluated self-distillation methods use four mechanisms.
+Skill-SD, GRPO+OPSD, SDAR, ICSD, and PCSD add auxiliary objectives (Wang et al., 2026a; Lu et al.,
+2026; Lan et al., 2026; Lv et al., 2026), whereas RLSD, OCSD, and AgentOPSD modulate policy advantages
+through teacher–student comparisons (Yang et al., 2026a,c; Wang et al., 2026b). ADRS shapes rewards and
+advantages (Zhang et al., 2026), while OVCSD adds environment-verified teacher continuations (Xia et al.,
+2026). Recent analyses identify supervision inconsistency and privileged-information bias as potential failure
+modes (Yang et al., 2026b; Harne et al., 2026). Our benchmark compares these mechanisms’ performance,
+training stability, and computational cost under a common evaluation protocol. Appendices D.2, D.3, D.5,
+and D.4 detail the four mechanisms, respectively.
+
+3
+
+The Limits of Published Comparisons
+
+Table 1 summarizes how the source papers of the ten compared methods address repeated evaluation, trainingfailure analysis, and measured computational cost. Gaps in this coverage limit assessments of method reliability
+and practical value beyond reported performance gains.
+Repeated evaluation. Performance differences must be interpreted relative to variation across evaluations. Yet
+
+repeated evaluation is rarely reported in the surveyed sources, making it difficult to distinguish consistent
+improvements from favorable sampling outcomes. Reporting variability alongside mean performance is
+therefore essential to judging the strength of a claimed advantage.
+Training failure analysis. A strong final score does not establish that training is stable. Although some studies
+
+investigate collapse or performance degradation, such analyses are not consistently available across competing
+methods. Examining training trajectories is necessary to reveal regressions and failure risks that final scores
+can conceal.
+
+Measured cost. Reporting computational cost alongside performance is essential for assessing the efficiency
+
+and practical feasibility of competing methods. Measured cost remains sparsely reported, limiting comparisons
+of the resources required to obtain competing methods’ gains. Assessing performance together with training
+cost is necessary to determine whether an improvement offers practical value.
+
+None of the surveyed source papers covers all three dimensions. Our benchmark brings them into a common
+comparison so that method selection rests on the consistency of measured gains, training stability, and
+computational cost rather than a favorable final score alone.
+
+3
+
+4
+
+Benchmark Design
+
+Our benchmark examines the value of self-distillation in multi-turn text-agent training, using outcomebased GRPO as the reference. It combines common model–task settings and evaluation procedures with
+method-specific objectives and hyperparameters informed by the source papers and released implementations.
+Tasks and model backbones. ALFWorld (Shridhar et al., 2021) requires agents to complete household tasks
+
+through textual actions and observations. We evaluate 140 games, reporting overall and task-specific success
+rates. ScienceWorld (Wang et al., 2022) requires agents to conduct experiments and solve scientific tasks in a
+text-based environment. We evaluate 200 tasks across Measure, Test-Cond., Find, Chem-Mix, and Lifespan,
+reporting task score. WebShop (Yao et al., 2022) requires agents to find and select products that satisfy a
+shopping goal. We evaluate a fixed set of 128 goals, reporting task success and a graded score for partial
+goal satisfaction. Search-QA requires retrieval-assisted answers to questions from seven sources. We use a
+fixed, seed-0 subset: 500 questions each from NQ, TriviaQA, PopQA, HotpotQA, 2WikiMultiHopQA, and
+MuSiQue, plus all 125 Bamboogle questions. We report exact-match accuracy after answer normalization;
+Overall gives equal weight to all 3,125 questions rather than to sources or evaluation batches. Combining
+these four benchmarks with Qwen3.5-2B, 4B, and 9B yields twelve model–task settings.
+
+Methods. GRPO (Shao et al., 2024) is the outcome-only reference. GRPO+OPSD and SDAR (Lu et al.,
+2026), together with Skill-SD (Wang et al., 2026a), ICSD (Lan et al., 2026), and PCSD (Lv et al., 2026),
+add auxiliary objectives. RLSD (Yang et al., 2026a), OCSD (Yang et al., 2026c), AgentOPSD (Wang et al.,
+2026b), and ADRS (Zhang et al., 2026) use privileged signals to shape credit or rewards; OVCSD (Xia et al.,
+2026) adds verified teacher continuations. All methods are evaluated without privileged teacher context. For
+Skill-SD and RLSD, we use the skill-bank adaptations; RLSD was originally proposed for verifiable reasoning.
+GRPO+OPSD follows SDAR’s constant-gate implementation, whose auxiliary gradient is independent of
+teacher scores. Appendices B, C.2, and D detail method adaptations, teacher contexts, and algorithms,
+respectively.
+Training and evaluation protocol. We train each method in every model–task setting for 100 global steps,
+
+yielding 132 runs, with validation every five steps and method-specific hyperparameters guided by the source
+papers and released implementations. Using the same fixed task sets as validation, we evaluate all eleven
+trained methods and the pretrained backbones at temperature T = 0.4 over eight rollout seeds, reporting the
+mean and sample standard deviation. Final-performance averages assign equal weight to all twelve settings,
+using each benchmark’s reported metric; computational-cost comparisons cover the same settings. Across
+all four benchmarks, we assess training progress and stability through validation-curve AUC, peak-to-final
+declines, and low-performing outcomes, with equal weight on the twelve settings in aggregate comparisons.
+Appendices C.1, C.3, and D.1 specify hyperparameters, numerical settings, and the shared training procedure.
+Appendices C.4 and C.5 detail the evaluation protocol and experimental records, respectively.
+
+5
+
+Comparative Performance under Common Evaluation
+
+The central question is whether additional training mechanisms deliver gains beyond a few favorable settings.
+We compare each alternative with GRPO across all twelve model–task settings, examining both the frequency
+and magnitude of improvements. Tables 2 and 3 report the results for all methods and their pretrained
+backbones under the common evaluation protocol. Appendix F.2 analyzes the discrepancy between step-100
+validation and repeated final evaluation on Search-QA.
+More methods do not imply broad progress. All ten alternatives improve on GRPO in some settings, but
+
+only a minority retain an advantage in aggregate. Only PCSD (54.26, +4.58 points) and AgentOPSD (51.34,
++1.66 points) exceed GRPO’s twelve-setting mean of 49.68; the other eight alternatives fall below it. Since all
+ten alternatives yield gains somewhere, isolated positive results do little to establish progress beyond a strong
+outcome-only baseline. A broadly applicable training improvement must be assessed across the range of tasks
+and model sizes it is expected to support.
+No method dominates across settings. The leading method depends on both the benchmark and model size.
+ALFWorld has a different leader at each scale—Skill-SD, RLSD, and ICSD at 2B, 4B, and 9B—whereas
+GRPO+OPSD leads WebShop at all three scales. Search-QA is led by ICSD at 2B and 4B and OCSD at
+
+4
+
+Method
+
+Pick
+
+Look
+
+ALFWorld: success rate (%)
+Clean
+Heat
+Cool
+
+Pick2
+
+Overall
+
+Measure
+
+ScienceWorld: task score
+Test-Cond.
+Find
+Chem-Mix
+Lifespan
+
+Overall
+
+Qwen3.5-2B
+
+Pretrained
+16.43±2.53 23.08±5.81 0.93±1.71 1.56±2.89 1.50±2.98 2.60±3.10 7.32±1.19 −10.32±2.82
+GRPO
+36.79±3.22 64.42±7.05 0.00±0.00 13.28±2.21 33.50±5.63 33.85±3.48 28.48±1.23
+0.42±0.00
+0.42±0.00
+GRPO+OPSD 14.64±4.69 31.73±8.66 27.78±4.43 37.50±7.47 33.00±6.68 0.52±1.47 22.23±1.73
+SDAR
+32.86±1.53 15.38±0.00 0.46±1.31 0.00±0.00 17.50±5.63 9.38±4.31 14.46±1.13
+0.42±0.00
+Skill-SD
+69.29±5.01 59.62±3.56 85.65±3.09 93.75±0.00 71.50±4.50 66.67±3.15 74.29±2.44 0.42±0.00
+RLSD
+58.57±3.41 39.42±7.62 59.26±3.96 57.03±5.22 58.00±7.09 0.00±0.00 46.61±1.70
+0.48±0.05
+OCSD
+36.79±3.22 59.62±5.44 49.54±3.93 38.28±2.21 42.50±2.98 35.42±4.45 42.32±2.15 7.08±0.04
+OVCSD
+56.07±5.70 63.46±7.96 73.61±2.37 74.22±5.22 75.00±2.83 5.73±2.16 56.96±1.52
+6.02±0.38
+0.42±0.00
+AgentOPSD
+71.43±3.41 52.88±6.42 1.39±1.92 65.62±3.34 67.50±3.34 28.65±5.65 47.50±1.75
+ADRS
+31.43±3.05 32.69±5.44 0.00±0.00 0.00±0.00 1.50±2.98 10.94±4.42 13.04±1.65
+0.42±0.00
+ICSD
+60.00±3.05 53.85±8.22 62.96±3.96 55.47±6.19 51.50±3.96 41.15±4.13 54.73±2.05
+0.42±0.00
+PCSD
+72.86±2.16 73.08±4.11 89.35±2.37 75.78±2.21 56.00±3.02 66.67±0.00 72.32±0.92
+0.42±0.00
+
+2.94±0.75
+0.60±0.00
+0.60±0.00
+0.60±0.00
+0.60±0.00
+0.74±0.08
+9.47±0.08
+8.52±0.27
+0.60±0.00
+0.60±0.00
+0.60±0.00
+0.60±0.00
+
+−7.26±3.44 1.50±7.07
+0.55±0.00
+4.00±0.00
+0.55±0.00
+4.00±0.00
+0.55±0.00
+4.00±0.00
+0.55±0.00
+4.00±0.00
+4.94±0.26
+4.00±0.00
+24.43±0.00 29.00±0.00
+22.31±0.41 15.15±2.18
+0.55±0.00
+4.00±0.00
+0.55±0.00
+4.00±0.00
+0.55±0.00
+4.00±0.00
+0.55±0.00
+4.00±0.00
+
+3.33±0.00 −2.83±1.31
+3.33±0.00
+0.83±0.00
+3.33±0.00
+0.83±0.00
+3.33±0.00
+0.83±0.00
+3.33±0.00
+0.83±0.00
+3.54±0.59
+1.89±0.07
+25.00±0.00 13.78±0.03
+45.83±3.56 13.85±0.37
+3.33±0.00
+0.83±0.00
+3.33±0.00
+0.83±0.00
+3.33±0.00
+0.83±0.00
+3.33±0.00
+0.83±0.00
+
+Qwen3.5-4B
+
+68.57±3.05 45.19±4.93 20.83±5.92 3.12±3.34 12.00±4.78 36.46±4.31 34.11±1.82 −20.88±10.62 30.44±3.86 −30.62±3.47 −6.35±14.94 15.83±4.45
+1.39±3.20
+86.07±2.38 74.04±3.98 93.98±1.92 79.69±2.89 87.50±1.41 63.02±3.48 82.05±1.50
+6.60±0.33
+54.80±0.71 24.43±0.14 16.57±1.20
+25.00±0.00 32.16±0.30
+GRPO+OPSD 0.00±0.00 13.46±5.44 0.46±1.31 0.00±0.00 1.00±1.85 0.00±0.00 1.52±0.71
+6.91±0.16
+9.33±0.16 24.36±0.09 28.50±1.41
+25.00±0.00 13.65±0.06
+SDAR
+89.64±1.48 47.12±7.62 78.70±7.34 52.34±6.63 74.50±4.24 86.98±4.13 76.16±2.29
+7.09±0.00
+9.64±0.00 24.43±0.00 29.00±0.00 25.00±0.00 13.86±0.00
+Skill-SD
+81.79±4.57 43.27±11.58 56.94±7.12 39.84±5.73 42.00±6.76 45.31±6.84 55.27±2.59 24.38±0.55 56.66±0.46 41.98±0.27 23.35±1.83
+25.00±0.00 41.67±0.17
+RLSD
+94.64±2.38 80.77±4.11 93.52±3.28 77.34±10.53 70.50±4.75 80.21±2.95 84.38±1.29 10.07±0.03
+9.46±0.00 52.82±0.00 17.85±1.04 50.00±0.00 22.41±0.03
+23.33±1.54 41.77±0.34
+OCSD
+75.71±3.05 32.69±7.96 47.22±3.83 47.66±8.80 41.50±6.02 48.96±3.69 52.32±2.47 24.24±0.08 57.24±0.25 43.16±0.94 14.10±0.93
+OVCSD
+87.50±3.39 62.50±8.66 79.63±3.96 69.53±5.22 66.50±5.63 79.17±4.98 76.43±2.19 14.80±2.83 19.54±2.31 7.99±1.41
+10.50±5.63
+11.67±2.52 14.93±1.57
+5.50±3.54
+55.34±0.89 25.51±0.86 25.10±3.30
+28.54±2.59 32.80±0.98
+AgentOPSD
+74.64±4.16 51.92±5.44 87.96±4.31 75.78±7.04 81.00±2.83 66.67±7.04 75.00±2.19
+ADRS
+85.36±5.39 64.42±3.98 67.13±5.02 67.19±7.28 65.50±6.39 64.58±8.03 70.71±3.10
+7.71±0.26
+55.88±0.93 41.38±2.15 23.38±3.01
+24.17±0.89 36.73±0.46
+ICSD
+94.64±3.22 70.19±2.72 90.74±3.43 64.84±5.73 75.50±1.41 81.25±3.86 82.50±1.62
+7.68±0.11
+9.87±0.13 24.91±0.14 28.75±0.71
+48.75±1.73 15.99±0.19
+6.80±0.15
+38.79±0.61 17.14±2.49 17.10±0.93
+23.33±2.82 23.85±0.58
+PCSD
+96.79±1.83 48.08±6.82 77.78±3.43 69.53±7.79 73.50±2.98 88.02±4.13 79.82±1.86
+Pretrained
+GRPO
+
+Qwen3.5-9B
+
+Pretrained
+
+71.07±3.22 41.35±7.05 20.83±7.65 8.59±6.63 4.50±3.96 41.67±5.89 34.55±1.43
+92.50±2.13 76.92±8.22 46.30±5.94 59.38±5.79 18.50±2.98 78.12±5.79 62.68±1.19
+GRPO+OPSD 93.21±3.03 66.35±7.05 83.33±4.85 49.22±8.48 38.50±4.75 80.21±6.20 71.79±2.53
+SDAR
+98.93±1.48 89.42±9.14 69.91±5.02 59.38±8.84 46.00±3.02 82.29±3.69 75.62±2.04
+Skill-SD
+93.93±3.22 67.31±6.82 70.37±4.43 54.69±4.42 61.00±4.66 82.29±4.85 74.55±1.08
+RLSD
+97.14±2.16 85.58±4.93 93.98±2.76 71.88±4.72 87.00±1.85 88.02±2.67 89.20±1.40
+OCSD
+98.21±2.13 76.92±7.12 84.72±3.67 71.09±8.80 83.00±5.13 88.54±6.20 86.16±1.75
+OVCSD
+97.50±2.83 77.88±4.93 76.85±2.62 69.53±5.22 81.50±4.75 84.38±2.95 83.39±1.36
+AgentOPSD
+98.57±1.53 67.31±6.82 64.81±5.94 75.00±7.47 66.50±6.74 82.81±4.13 78.04±3.32
+ADRS
+82.50±2.83 71.15±5.44 91.67±3.28 69.53±4.01 76.00±6.41 72.92±3.86 78.93±1.15
+ICSD
+95.00±2.02 86.54±9.86 98.15±2.80 90.62±7.47 73.50±4.24 90.10±4.42 89.64±2.62
+PCSD
+95.36±4.02 90.38±3.56 82.41±5.14 55.47±7.04 29.50±5.21 76.04±6.20 72.77±1.77
+GRPO
+
+−12.74±2.80
+33.70±0.63
+39.84±0.03
+26.01±3.06
+6.72±0.31
+31.07±0.74
+−10.32±2.11
+−15.07±2.73
+−29.13±2.73
+−45.33±4.90
+−18.86±2.09
+51.54±0.12
+
+29.29±3.01 −25.52±4.79
+60.00±0.00 76.78±0.49
+58.67±0.63 40.34±1.10
+59.99±0.02 81.55±1.16
+40.65±1.33 30.20±1.14
+57.29±0.00 71.01±0.56
+60.00±0.00 63.22±2.53
+59.47±0.02 65.92±0.71
+59.99±0.02 78.83±0.84
+60.00±0.00 65.80±1.00
+28.45±0.31 31.22±0.39
+60.00±0.00 57.73±0.13
+
+13.85±0.71
+30.60±0.00
+28.00±1.85
+30.60±0.00
+28.90±1.73
+30.60±0.00
+29.00±0.00
+30.60±0.00
+18.40±0.57
+30.60±0.00
+27.00±0.00
+28.60±0.00
+
+−22.08±15.29 1.86±1.28
+100.00±0.00 58.99±0.27
+100.00±0.00 51.98±0.38
+100.00±0.00 58.00±0.88
+40.83±2.52 29.08±0.39
+25.00±0.00 50.27±0.27
+100.00±0.00 44.30±0.86
+100.00±0.00 43.45±0.80
+100.00±0.00 42.48±0.78
+100.00±0.00 35.63±1.18
+52.08±1.73 18.26±0.59
+88.33±4.71 58.60±0.38
+
+Table 2 Results for pretrained models and eleven training methods on ALFWorld and ScienceWorld. Entries report
+
+mean±SD over eight rollout seeds at T = 0.4; trained models are evaluated after 100 global steps. ALFWorld reports
+success (%), and ScienceWorld reports task score. Teal bold and underlining mark the highest and second-highest
+means within each model and metric, including ties. Overall columns are shaded.
+
+9B; ScienceWorld’s leaders at 2B, 4B, and 9B are OVCSD, OCSD, and GRPO, respectively. Even PCSD,
+which has the highest twelve-setting mean, leads no individual setting and beats GRPO in only six, trailing
+it in five and tying in one. Selecting the best aggregate performer and choosing a winner for a particular
+setting are therefore different method-selection problems. Neither a collection of first-place results nor the
+highest aggregate score establishes a method as uniformly superior; both must be interpreted alongside its
+performance across the full set of settings.
+Win counts can conceal severe regressions. ICSD outperforms GRPO in seven of twelve settings, yet its
+
+mean of 44.75 remains below GRPO’s 49.68. Its 4B WebShop run ends with 0.00% success, illustrating a
+severe failure that a win count does not distinguish from a small regression. GRPO+OPSD likewise wins six
+settings but averages only 43.05, with 1.52% success on 4B ALFWorld. Counting each loss equally discards
+whether a method narrowly trails the baseline or loses nearly all task-solving ability. Severe failures can
+outweigh gains elsewhere, so assessing progress requires considering the magnitude of losses as well as the
+frequency of improvements. Appendix E reports the twelve-setting summary and examines low-performance
+outcomes across all four benchmarks.
+
+6
+
+Training Progress and Stability
+
+Final performance does not establish whether learning was sustained or earlier gains were retained. Figure 2
+presents all 132 runs across twelve settings, measured every five steps for 2,772 validation sweeps. We
+summarize all four benchmarks using the area under each validation curve, normalized by the training-step
+horizon and averaged equally across the twelve settings. Intermediate declines and peak-to-final gaps reveal
+
+5
+
+Method
+
+NQ
+
+Triv
+
+Search-QA: exact-match accuracy (%)
+Pop
+Hotp
+2Wk
+MuS
+
+Bam
+
+Overall
+
+WebShop
+Score
+Acc. (%)
+
+Qwen3.5-2B
+
+Pretrained
+
+9.53±0.83 24.20±0.95 13.00±0.96 12.78±1.00 23.70±1.46 2.43±0.57 12.30±1.48 14.19±0.43 6.04±1.31 1.86±0.72
+37.93±0.40 56.03±0.36 47.93±0.71 27.10±0.61 23.48±0.43 7.10±0.32 11.40±0.93 32.38±0.28 85.01±1.22 70.80±0.93
+GRPO+OPSD 39.68±0.59 59.03±0.57 48.00±0.72 31.78±0.84 26.23±0.65 6.38±0.52 11.20±0.74 34.22±0.24 86.76±0.75 77.05±0.93
+SDAR
+38.75±0.66 57.18±0.65 48.00±0.39 39.15±1.28 31.23±1.08 16.05±0.81 32.30±2.09 38.15±0.55 80.21±1.11 63.67±1.10
+Skill-SD
+40.65±0.54 58.73±0.61 48.25±0.33 36.93±0.76 35.08±0.83 10.15±0.93 19.80±1.90 37.56±0.26 81.33±0.58 71.19±0.97
+RLSD
+40.03±1.40 60.30±1.12 43.70±1.07 39.93±0.87 30.38±1.35 13.98±0.57 35.00±1.95 37.93±0.13 79.86±1.42 69.73±1.49
+OCSD
+8.45±0.32 20.63±0.89 11.58±0.56 12.63±0.23 24.73±0.37 2.30±0.26 2.90±0.60 12.96±0.15 86.59±1.01 75.59±1.60
+OVCSD
+32.85±0.45 51.68±0.72 40.98±1.25 34.33±1.25 29.68±0.82 11.40±0.89 26.70±1.71 33.21±0.33 3.39±1.09 1.07±0.83
+AgentOPSD
+39.98±0.70 57.18±0.96 48.53±0.50 32.50±1.02 24.70±1.49 7.33±0.71 21.50±2.55 34.49±0.36 81.45±1.61 70.51±1.95
+ADRS
+9.30±0.60 25.18±0.64 12.98±0.48 13.70±0.43 23.85±0.33 1.93±0.28 4.90±0.79 14.10±0.21 74.21±1.37 63.09±1.30
+ICSD
+40.40±0.79 60.55±0.75 48.83±1.22 41.68±0.69 32.78±1.15 15.53±0.76 25.70±1.73 39.39±0.19 81.79±0.32 70.51±1.00
+PCSD
+39.83±0.41 56.25±0.60 49.53±0.28 29.98±0.54 23.30±0.57 6.65±0.33 7.30±1.17 33.18±0.27 84.96±0.84 74.71±0.83
+GRPO
+
+Qwen3.5-4B
+
+Pretrained
+
+18.05±0.82 47.45±1.13 20.50±1.26 21.55±1.02 28.18±1.28 5.50±0.73 32.90±2.88 23.91±0.61 9.19±1.73 5.57±1.35
+41.78±0.73 66.68±0.63 49.43±0.38 47.00±1.12 46.83±1.52 19.35±1.11 44.50±1.86 45.15±0.29 74.21±1.55 66.02±1.56
+GRPO+OPSD 43.48±0.80 65.08±0.55 48.43±0.59 45.78±0.58 40.70±0.60 21.10±0.52 45.80±2.13 44.16±0.21 88.75±1.06 77.15±1.30
+SDAR
+45.38±0.71 65.75±0.78 49.60±0.81 48.83±1.37 41.08±0.95 20.58±1.13 39.10±2.03 44.96±0.37 61.14±1.86 51.17±1.45
+Skill-SD
+44.93±1.04 63.95±0.85 46.78±0.58 44.10±0.94 37.30±1.25 19.43±1.54 44.40±0.96 42.81±0.22 0.00±0.00 0.00±0.00
+RLSD
+45.13±0.78 65.00±0.81 46.95±0.91 45.10±1.05 39.43±1.68 19.98±1.02 43.60±3.05 43.60±0.51 80.27±1.54 68.16±1.60
+OCSD
+44.50±0.68 67.05±0.83 49.63±0.63 45.95±0.81 39.13±1.19 21.58±0.87 47.00±1.26 44.73±0.35 70.32±1.06 64.16±0.77
+OVCSD
+43.45±0.59 64.90±1.02 45.58±0.76 43.78±0.66 41.15±0.87 21.33±0.88 47.10±2.03 43.51±0.36 83.79±1.46 73.73±1.18
+AgentOPSD
+44.95±0.67 64.65±0.82 45.83±1.02 46.10±1.20 41.65±1.33 21.43±0.92 47.90±1.98 44.25±0.53 80.33±1.98 72.07±2.32
+ADRS
+41.75±0.54 60.85±0.46 44.75±0.73 44.78±0.67 39.75±0.81 21.43±1.13 44.50±1.65 42.31±0.33 82.70±1.21 65.72±1.53
+ICSD
+45.98±0.47 68.03±0.95 50.50±0.41 47.65±0.66 43.73±0.97 20.18±1.02 42.60±1.03 45.87±0.36 0.00±0.00 0.00±0.00
+PCSD
+44.23±0.77 65.78±0.98 46.65±1.12 43.88±0.86 40.25±0.81 17.53±0.66 44.60±2.21 43.11±0.35 83.06±1.28 72.17±1.50
+GRPO
+
+Qwen3.5-9B
+
+Pretrained
+
+19.13±0.83 55.30±1.22 23.50±1.22 21.20±0.93 30.08±1.48 6.60±0.60 43.00±1.99 26.65±0.23 9.89±1.01 5.86±1.10
+45.68±0.55 66.73±0.98 48.15±0.52 48.45±1.14 47.53±1.84 21.90±1.11 51.00±1.80 46.59±0.53 83.30±1.16 70.02±1.38
+GRPO+OPSD 46.50±0.88 67.33±0.49 50.68±0.76 47.58±1.08 46.48±1.44 22.55±0.81 52.70±3.04 47.08±0.35 85.31±1.34 74.90±0.77
+SDAR
+42.65±0.41 68.38±0.95 47.00±1.60 48.28±1.22 39.93±0.79 21.40±0.65 48.20±1.75 44.75±0.55 85.19±1.61 74.32±2.19
+Skill-SD
+46.10±0.51 67.53±0.70 48.68±0.80 48.75±0.52 44.35±1.63 21.75±0.83 46.10±1.48 46.19±0.28 0.00±0.00 0.00±0.00
+RLSD
+43.63±0.39 67.20±0.60 47.20±1.46 47.35±0.73 38.15±1.18 21.05±0.42 49.50±2.03 44.31±0.29 0.00±0.00 0.00±0.00
+OCSD
+47.88±0.91 68.53±0.81 52.98±0.79 46.93±0.70 49.43±1.28 23.80±0.62 45.80±2.13 48.16±0.44 77.03±2.08 67.77±2.20
+OVCSD
+44.40±0.57 67.30±0.99 47.00±1.17 47.55±0.82 43.55±1.35 21.28±0.85 51.40±2.45 45.43±0.47 80.36±1.83 68.07±1.28
+AgentOPSD
+46.15±0.75 67.30±1.12 47.33±0.63 49.05±0.52 43.68±1.17 20.50±0.93 49.20±1.91 45.81±0.50 83.72±1.80 72.27±2.09
+ADRS
+40.58±0.58 66.38±0.46 43.48±0.79 45.93±0.84 43.08±1.01 22.55±0.48 50.30±0.79 43.93±0.37 81.20±1.62 70.31±1.10
+ICSD
+46.55±0.98 66.88±0.60 50.00±0.59 48.40±0.66 45.08±1.23 23.55±0.87 49.30±1.65 46.84±0.41 81.89±2.44 72.46±1.37
+PCSD
+44.68±1.00 67.68±0.79 47.50±0.80 47.03±0.60 42.18±1.57 21.95±0.67 51.50±1.13 45.42±0.55 83.67±0.52 74.32±0.65
+GRPO
+
+Table 3 Results on Search-QA and WebShop: mean±SD over eight rollout seeds at T = 0.4, after 100 steps for trained
+
+models. We report exact-match accuracy (%) for Search-QA and task score (Score) and success rate (%, Acc.) for
+WebShop. Highlighting follows Table 2.
+
+aspects of stability that this aggregate measure and the final score can each miss. Appendix F.3 examines early
+stagnation on 2B ScienceWorld, where most methods share a low-score plateau with overlapping validation
+curves and little further improvement.
+Final rankings do not capture sustained performance. Across all twelve settings, PCSD has the highest mean
+
+final performance (54.26), but its validation AUC of 38.45 is lower than OCSD’s 39.88. OCSD instead ranks
+first by AUC and fourth by final performance (49.50). AgentOPSD shows a larger discrepancy: it ranks
+second in final performance (51.34) but ninth by AUC (34.41), below GRPO’s 36.89. A strong final model
+can therefore emerge from a substantially weaker training trajectory; final rankings alone do not characterize
+performance throughout optimization. Appendix F.1 compares aggregate trajectories, rankings, and stage-wise
+performance.
+
+Recovery can conceal severe intermediate collapse. On 4B ALFWorld, AgentOPSD reaches 60.0% validation
+
+success at step 35, then scores no more than 4.3% at each of the six evaluations from steps 45 to 70, before
+recovering to 79.3% at step 100. In the same setting, GRPO+OPSD reaches 39.3% at step 20 but falls to
+zero at steps 25–40 and ends at 2.1%. Both methods undergo severe degradation, but only one ends with low
+6
+
+Success (%)
+
+100
+
+(a) 2B / ALFWorld
+
+(b) 4B / ALFWorld
+
+(c) 9B / ALFWorld
+
+(d) 2B / ScienceWorld
+
+(e) 4B / ScienceWorld
+
+(f) 9B / ScienceWorld
+
+(g) 2B / Search-QA
+
+(h) 4B / Search-QA
+
+(i) 9B / Search-QA
+
+(j) 2B / WebShop
+
+(k) 4B / WebShop
+
+(l) 9B / WebShop
+
+50
+
+Exact-match
+accuracy (%)
+
+Task score
+
+0
+
+60
+8 methods overlap
+
+30
+0
+
+50
+25
+0
+
+Success (%)
+
+100
+
+50
+
+0
+
+0
+
+25
+
+50
+
+75
+
+100
+
+0
+
+25
+
+50
+
+75
+
+100
+
+0
+
+25
+
+50
+
+75
+
+100
+
+Training step
+GRPO
+OVCSD
+
+GRPO+OPSD
+AgentOPSD
+
+SDAR
+ADRS
+
+Skill-SD
+ICSD
+
+RLSD
+PCSD
+
+OCSD
+
+Figure 2 Validation trajectories of eleven methods across four benchmarks and three model sizes, covering 132 training
+
+runs and 2,772 validation sweeps. Curves show validation scores recorded throughout training. Colored markers
+distinguish overlapping curves on 2B ScienceWorld.
+
+performance. An endpoint-only assessment would miss AgentOPSD’s prolonged near-zero phase. A strong
+final result therefore does not establish a stable training process. Appendices F.2 and F.5 provide trajectory
+comparisons and failure diagnostics, including decoding-specific failures.
+Late regression matters even without complete failure. Across the twelve settings, 9 runs finish at least 20
+
+points below their observed validation peak. OCSD on 4B ALFWorld reaches 85.0% at step 60 but ends at
+51.4%; its final three validations average 50.5%. On 9B ScienceWorld, ICSD falls from a peak task score
+of 55.23 to 18.77, with its final three validations averaging 26.99. In both cases, performance remains well
+below the peak over the final three validations, indicating sustained late regression rather than an isolated
+unfavorable final measurement. Stable training therefore requires retaining acquired performance as well as
+avoiding collapse; a nonzero endpoint is insufficient when substantial gains have been lost. Appendix F.4
+provides per-run summaries.
+
+7
+
+The Cost of Performance Gains
+
+The practical value of a performance gain depends on the resources required to obtain it. Equal training-step
+counts do not imply equal costs, since rollout lengths and teacher computation vary across methods. For
+all eleven methods across the twelve model–task settings, Figure 3 pairs mean final performance over eight
+rollout seeds with measured training time. All runs use eight GPUs, allowing us to examine both the cost of
+
+7
+
+GRPO+OPSD
+
+SDAR
+
+Skill-SD
+
+RLSD
+
+OCSD
+
+OVCSD
+
+AgentOPSD
+
+ADRS
+
+ICSD
+
+PCSD
+
+Pretrained
+
+Qwen3.5-2B / ALFWorld
+
+Qwen3.5-4B / ALFWorld
+
+0
+
+6
+
+12
+18
+24
+Training time (h)
+
+0
+
+Exact-match
+accuracy (%)
+
+6
+
+12
+18
+24
+Training time (h)
+
+0
+
+6
+
+12
+18
+24
+Training time (h)
+
+Qwen3.5-2B / ScienceWorld
+
+Qwen3.5-4B / ScienceWorld
+
+Qwen3.5-9B / ScienceWorld
+
+0
+
+0
+
+0
+
+60
+40
+20
+0
+4
+
+8
+12
+16
+Training time (h)
+
+20
+
+4
+6
+8
+Training time (h)
+
+10
+
+Qwen3.5-2B / Search-QA
+
+4
+
+8
+12
+16
+Training time (h)
+
+20
+
+4
+6
+8
+Training time (h)
+
+10
+
+Qwen3.5-4B / Search-QA
+
+4
+
+8
+12
+16
+Training time (h)
+
+20
+
+4
+6
+8
+Training time (h)
+
+10
+
+Qwen3.5-9B / Search-QA
+
+50
+25
+0
+0
+
+Final success (%)
+
+Qwen3.5-9B / ALFWorld
+
+100
+75
+50
+25
+0
+
+Task score
+
+Final success (%)
+
+GRPO
+
+2
+
+0
+
+Qwen3.5-2B / WebShop
+100
+75
+50
+25
+0
+0.0
+
+2.5
+5.0
+7.5 10.0
+Training time (h)
+
+2
+
+0
+
+Qwen3.5-4B / WebShop
+
+0.0
+
+2.5
+5.0
+7.5 10.0
+Training time (h)
+
+2
+
+Qwen3.5-9B / WebShop
+
+0.0
+
+2.5
+5.0
+7.5 10.0
+Training time (h)
+
+Figure 3 Final performance versus training time across twelve model–task settings. Points show mean performance over
+
+eight rollout seeds; dashed lines mark pretrained means. Values for all points are listed in Table S13 in Appendix G.1.
+
+the final result and the performance attainable within GRPO’s training-time budget. Appendix G.2 details
+the timing components, GPU-hour totals, and stage-level costs.
+Additional computation does not guarantee better performance. Of the 120 comparisons with GRPO across
+
+methods and settings, 112 require more net training time; 58 of these also achieve lower eight-seed mean
+performance, and seven tie GRPO. Even PCSD and AgentOPSD, the only alternatives that improve mean
+final performance, require mean paired training-time ratios of 1.17 and 1.19 relative to GRPO. Additional
+training effort is therefore not consistently rewarded by higher performance, and the methods that do improve
+must be assessed together with their overhead. Measured cost is essential to determining whether a reported
+gain represents a practically useful improvement.
+Fixed-step advantages may disappear under a time budget. Using each GRPO run’s net training time as the
+
+budget, we select the latest validation result reached by each method within that budget and compare it with
+its step-100 score. Scores are averaged over the three model sizes within each benchmark. On ALFWorld,
+AgentOPSD’s mean success falls from 68.10% at step 100 to 37.63% within budget, reversing its advantage
+over GRPO’s 58.10%. PCSD shows the same reversal on WebShop: 73.17% at step 100 becomes 63.83%
+within budget, below GRPO’s 68.20%. These reversals show that an advantage at a fixed step count need
+not be available at a comparable computational cost. Method comparisons should therefore assess not only
+the final gains, but also whether those gains can be achieved within the resources available to the baseline.
+8
+
+Appendix G.1 gives the time-budget rule and complete results.
+
+8
+
+Discussion
+
+The faster a field produces new methods, the more it needs a shared basis for judging progress. The
+publication pace documented in our survey makes this need particularly pressing for agentic self-distillation.
+Without direct, comprehensive comparisons, a growing collection of reported gains need not yield a clearer
+understanding of which ideas are worth building on.
+This is why we chose to invest in independent evaluation rather than propose another training method. We
+aim to clarify where methods improve on strong baselines, where gains break down, and what risks and costs
+they entail. A method need not win every setting to be useful, but its value can only be understood when
+both its strengths and its limitations are visible.
+We hope this benchmark helps researchers choose baselines, investigate unresolved failures, and pursue reliable,
+cost-effective improvements. We therefore call for the community to value systematic evaluation alongside
+algorithmic innovation. As the literature expands, the community’s capacity for comparison and analysis
+must grow with it, so that new methods contribute to cumulative understanding and sustained progress.
+
+9
+
+Conclusion
+
+We benchmark ten representative self-distillation methods against GRPO across four agent benchmarks
+and three model sizes. Gains over GRPO remain setting-dependent, with no method uniformly superior;
+strong final results can conceal unstable training, and additional computation does not consistently improve
+performance. These findings show that progress must be assessed through the breadth of gains, the stability
+of learning, and the cost of improvement. By documenting both gains and failures under a common protocol,
+our study helps researchers select strong baselines, identify unresolved training challenges, and pursue more
+reliable, cost-effective agent training.
+
+Limitations
+Limited computational resources and researcher time prevent an exhaustive evaluation of the rapidly growing
+literature on agentic self-distillation. We therefore compare ten representative methods with GRPO, covering
+different approaches to incorporating teacher guidance. Although this selection does not encompass every
+relevant method, the observed setting-dependent gains, training instability, and performance–cost trade-offs
+substantiate the need for the comprehensive evaluation advocated in this work. Extending the benchmark to
+additional methods would help establish how broadly these patterns hold.
+
+Ethical Considerations
+This study compares existing agent-training methods using publicly available models and benchmark datasets.
+Experiments are confined to simulated environments and retrieval-based question answering, without humanparticipant studies or deployment on behalf of real users. We identify no significant ethical concerns specific
+to this study.
+
+References
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier
+Bachem. 2024. On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes. In International
+Conference on Learning Representations, volume 2024, pages 21246–21263.
+Renat Aksitov, Sobhan Miryoosefi, Zonglin Li, Daliang Li, Sheila Babayan, Kavya Kopparapu, Zachary Fisher, Ruiqi
+Guo, Sushant Prakash, Pranesh Srinivasan, Manzil Zaheer, Felix Yu, and Sanjiv Kumar. 2023. ReST meets ReAct:
+Self-Improvement for Multi-Step Reasoning LLM Agent. Preprint, arXiv:2312.10003.
+
+9
+
+Baian Chen, Chang Shu, Ehsan Shareghi, Nigel Collier, Karthik Narasimhan, and Shunyu Yao. 2023. FireAct: Toward
+Language Agent Fine-tuning. Preprint, arXiv:2310.05915.
+Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. 2024. MiniLLM: Knowledge Distillation of Large Language Models.
+In International Conference on Learning Representations, volume 2024, pages 32694–32717.
+Sarthak Harne, Chinmay Karkar, Yash Pandya, Ahmed Awadallah, and Akshay Nambi. 2026. Privileged, but Biased:
+How PI-Conditioned Teachers Break Self-Distillation. Preprint, arXiv:2608.04794.
+Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. 2015. Distilling the Knowledge in a Neural Network. Preprint,
+arXiv:1503.02531.
+Cheng-Yu Hsieh, Chun-Liang Li, Chih-Kuan Yeh, Hootan Nakhost, Yasuhisa Fujii, Alex Ratner, Ranjay Krishna,
+Chen-Yu Lee, and Tomas Pfister. 2023. Distilling Step-by-Step! Outperforming Larger Language Models with Less
+Training Data and Smaller Model Sizes. In Findings of the Association for Computational Linguistics: ACL 2023,
+pages 8003–8017, Toronto, Canada. Association for Computational Linguistics.
+Yoon Kim and Alexander M. Rush. 2016. Sequence-Level Knowledge Distillation. In Proceedings of the 2016
+Conference on Empirical Methods in Natural Language Processing, pages 1317–1327, Austin, Texas. Association for
+Computational Linguistics.
+Jongwoo Ko, Sungnyun Kim, Tianyi Chen, and Se-Young Yun. 2024. DistiLLM: Towards Streamlined Distillation for
+Large Language Models. In Proceedings of the 41st International Conference on Machine Learning, volume 235 of
+Proceedings of Machine Learning Research, pages 24872–24895. PMLR.
+Qizhen Lan, Xi Xiao, Xiangchen Guan, Mengchen Fan, Moule Lin, Jung Im Choi, and Lijing Zhu. 2026. Trust Is Not
+Enough: Influence Calibration for On-Policy Self-Distillation in Agentic RL. Preprint, arXiv:2608.14945.
+Alexander Lin, Jeremy Wohlwend, Howard Chen, and Tao Lei. 2020. Autoregressive Knowledge Distillation through
+Imitation Learning. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing
+(EMNLP), pages 6121–6133, Online. Association for Computational Linguistics.
+David Lopez-Paz, Léon Bottou, Bernhard Schölkopf, and Vladimir Vapnik. 2016. Unifying distillation and privileged
+information. Preprint, arXiv:1511.03643.
+Zhengxi Lu, Zhiyuan Yao, Zhuowen Han, Zi-Han Wang, Jinyang Wu, Qi Gu, Xunliang Cai, Weiming Lu, Jun
+Xiao, Yueting Zhuang, and Yongliang Shen. 2026. Self-Distilled Agentic Reinforcement Learning. Preprint,
+arXiv:2605.15155.
+Chunji Lv, Yangguang Wei, Junlin Liu, Yang Gao, Ming Liu, Xinming Wang, Jinyang Wu, Guoren Wang, and
+Changsheng Li. 2026. PCSD: Persistent Consistency for Self-Distillation in Agentic Reinforcement Learning.
+Preprint, arXiv:2608.01837.
+Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri,
+Shrimai Prabhumoye, Yiming Yang, Shashank Gupta, Bodhisattwa Prasad Majumder, Katherine Hermann, Sean
+Welleck, Amir Yazdanbakhsh, and Peter Clark. 2023. Self-Refine: Iterative Refinement with Self-Feedback. In
+Advances in Neural Information Processing Systems, volume 36, pages 46534–46594. Curran Associates, Inc.
+Zehan Qi, Xiao Liu, Iat Long Iong, Hanyu Lai, Xueqiao Sun, Jiadai Sun, Xinyue Yang, Yu Yang, Shuntian Yao, Wei
+Xu, Jie Tang, and Yuxiao Dong. 2025. WebRL: Training LLM Web Agents via Self-Evolving Online Curriculum
+Reinforcement Learning. In International Conference on Learning Representations, volume 2025, pages 79791–79821.
+Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill
+Qian, Sihan Zhao, Lauren Hong, Runchu Tian, Ruobing Xie, Jie Zhou, Mark Gerstein, Dahai Li, Zhiyuan Liu,
+and Maosong Sun. 2024. ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs. In
+International Conference on Learning Representations, volume 2024, pages 9695–9717.
+Stephane Ross, Geoffrey Gordon, and Drew Bagnell. 2011. A Reduction of Imitation Learning and Structured
+Prediction to No-Regret Online Learning. In Proceedings of the Fourteenth International Conference on Artificial
+Intelligence and Statistics, volume 15 of Proceedings of Machine Learning Research, pages 627–635, Fort Lauderdale,
+FL, USA. PMLR.
+Andrei A. Rusu, Sergio Gomez Colmenarejo, Caglar Gulcehre, Guillaume Desjardins, James Kirkpatrick, Razvan Pascanu, Volodymyr Mnih, Koray Kavukcuoglu, and Raia Hadsell. 2016. Policy Distillation. Preprint, arXiv:1511.06295.
+
+10
+
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer,
+Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language Models Can Teach Themselves to Use Tools.
+In Advances in Neural Information Processing Systems, volume 36, pages 68539–68551. Curran Associates, Inc.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K.
+Li, Y. Wu, and Daya Guo. 2024. DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language
+Models. Preprint, arXiv:2402.03300.
+Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Reflexion: language
+agents with verbal reinforcement learning. In Advances in Neural Information Processing Systems, volume 36, pages
+8634–8652. Curran Associates, Inc.
+Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2021.
+ALFWorld: Aligning Text and Embodied Environments for Interactive Learning. Preprint, arXiv:2010.03768.
+Hao Wang, Guozhi Wang, Han Xiao, Yufeng Zhou, Yue Pan, Jichao Wang, Ke Xu, Yafei Wen, Xiaohu Ruan, Xiaoxin
+Chen, and Honggang Qi. 2026a. Skill-SD: Skill-Conditioned Self-Distillation for Multi-turn LLM Agents. Preprint,
+arXiv:2604.10674.
+Ruoyao Wang, Peter Jansen, Marc-Alexandre Côté, and Prithviraj Ammanabrolu. 2022. ScienceWorld: Is your agent
+smarter than a 5th grader? In Proceedings of the 2022 Conference on Empirical Methods in Natural Language
+Processing, pages 11279–11298, Abu Dhabi, United Arab Emirates. Association for Computational Linguistics.
+Zi-Han Wang, Zhengxi Lu, Zhiyuan Yao, Jinyang Wu, Jie Wu, Zhengzhou Cai, Yueqing Sun, Ziang Ye, Linji Hao,
+Qi Gu, Xunliang Cai, Yongliang Shen, and Yujiu Yang. 2026b. AgentOPSD: Recursive Self-Distillation for Agentic
+Reinforcement Learning. Preprint, arXiv:2608.05987.
+Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue Zhang, Linjie Li, Zhengyuan Yang, Xing Jin, Kefan Yu, Minh Nhat
+Nguyen, Licheng Liu, Eli Gottlieb, Yiping Lu, Kyunghyun Cho, Jiajun Wu, Li Fei-Fei, Lijuan Wang, Yejin Choi, and
+Manling Li. 2025. RAGEN: Understanding Self-Evolution in LLM Agents via Multi-Turn Reinforcement Learning.
+Preprint, arXiv:2504.20073.
+Zhiheng Xi, Yiwen Ding, Wenxiang Chen, Boyang Hong, Honglin Guo, Junzhe Wang, Xin Guo, Dingwen Yang,
+Chenyang Liao, Wei He, Songyang Gao, Lu Chen, Rui Zheng, Yicheng Zou, Tao Gui, Qi Zhang, Xipeng Qiu,
+Xuanjing Huang, Zuxuan Wu, and Yu-Gang Jiang. 2025. AgentGym: Evaluating and Training Large Language
+Model-based Agents across Diverse Environments. In Proceedings of the 63rd Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers), pages 27914–27961, Vienna, Austria. Association for
+Computational Linguistics.
+Xu Xia, Jinghua Piao, Min Yang, Xiaochong Lan, Jiaju Chen, and Yong Li. 2026. From Scoring to Acting: OutcomeVerified Comparative Self-Distillation for LLM Agents. Preprint, arXiv:2607.27937.
+Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weiping Wang, Jiaqi
+Wang, and Nan Duan. 2026a. Self-Distilled RLVR. Preprint, arXiv:2604.03128.
+Fan Yang, Rui Meng, and Yuxin Wen. 2026b. Why Does Feedback-Augmented Self-Distillation Fail to Improve
+Retrieval-Interleaved Search Agents? Preprint, arXiv:2607.17558.
+Yi Yang, Cong Qin, Xiaodan Liu, Chishui Chen, Qing Dong, Yan Zhang, Cao Liu, Zhao Yang, Lu Pan, Jiaye Lin,
+and Yi Feng. 2026c. Agentic Reinforcement Learning with Observation-Calibrated Self-Distillation. Preprint,
+arXiv:2608.04788.
+Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2022. WebShop: Towards Scalable Real-World Web
+Interaction with Grounded Language Agents. In Advances in Neural Information Processing Systems, volume 35,
+pages 20744–20757. Curran Associates, Inc.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2023. ReAct:
+Synergizing Reasoning and Acting in Language Models. Preprint, arXiv:2210.03629.
+Eric Zelikman, Yuhuai Wu, Jesse Mu, and Noah Goodman. 2022. STaR: Bootstrapping Reasoning With Reasoning. In
+Advances in Neural Information Processing Systems, volume 35, pages 15476–15488. Curran Associates, Inc.
+Aohan Zeng, Mingdao Liu, Rui Lu, Bowen Wang, Xiao Liu, Yuxiao Dong, and Jie Tang. 2024. AgentTuning: Enabling
+Generalized Agent Abilities for LLMs. In Findings of the Association for Computational Linguistics: ACL 2024,
+pages 3053–3077, Bangkok, Thailand. Association for Computational Linguistics.
+
+11
+
+Ranxu Zhang, Guinan Chen, Chenshaodong, Jinghao Lin, Xiaozhou Xu, Sunzhe, Yanyong Zhang, and Chao Wang.
+2026. Agentic Reinforcement Learning with Self-Distilled Reward Shaping. Preprint, arXiv:2608.03223.
+
+12
+
+A
+
+Appendix Overview
+• Appendix B: Method Descriptions and Adaptations
+• Appendix C: Experimental Details
+– Appendix C.1: Training Configuration
+– Appendix C.2: Teacher Models and Contexts
+– Appendix C.3: Numerical Precision and Stability
+– Appendix C.4: Validation and Repeated Evaluation
+– Appendix C.5: Experimental Records
+• Appendix D: Training Objectives and Algorithms
+– Appendix D.1: Shared Training Procedure
+– Appendix D.2: Auxiliary Distillation Objectives
+– Appendix D.3: Advantage Reweighting
+– Appendix D.4: Verified Teacher Continuations
+– Appendix D.5: Teacher-Based Reward Shaping
+• Appendix E: Cross-Setting Gains and Regressions
+– Appendix E.1: All Twelve Settings
+– Appendix E.2: Low-Performance Outcomes
+• Appendix F: Training Dynamics and Stability
+– Appendix F.1: Aggregate Progress and Method Rankings
+– Appendix F.2: Intermediate Instability and Late Regression
+– Appendix F.3: Early Stagnation on ScienceWorld
+– Appendix F.4: Per-Run Training Profiles
+– Appendix F.5: Task Failure and Numerical Diagnostics
+• Appendix G: Computational Cost Analysis
+– Appendix G.1: Performance and Time Budgets
+– Appendix G.2: Total Compute and Stage-Level Costs
+• Appendix H: Literature Survey
+– Appendix H.1: Search Strategy and Selection Criteria
+– Appendix H.2: Publication Statistics
+
+B
+
+Method Descriptions and Adaptations
+
+The eleven methods span outcome-based policy optimization, auxiliary distillation, token- or turn-level
+advantage reweighting, reward shaping, and verified teacher continuations. Teachers use the same model
+backbone as the student, with privileged information available only during training. Table S1 summarizes
+these mechanisms.
+We implement the methods in a shared text-agent framework. For Skill-SD and RLSD, we follow the
+SDAR repository’s skill-bank adaptations, using the pre-update actor to score student responses under
+skill-conditioned prompts (Lu et al., 2026). GRPO+OPSD uses SDAR’s constant-gate auxiliary objective,
+
+13
+
+whose gradient is independent of teacher scores. OVCSD collects additional, environment-verified teacher
+continuations.
+For AgentOPSD and ADRS, we follow their released implementations of return-based statistics (Wang et al.,
+2026b; Zhang et al., 2026). AgentOPSD initializes its belief from the clipped mean of trajectory-deduplicated
+training returns. ADRS computes L2 teacher utility over interaction rows grouped by task.
+Our ICSD implementation uses an additional gradient-free student-scoring pass to calibrate weights within
+each local actor minibatch; this computation is included in the reported training cost. Following Lv et al.
+(2026), PCSD uses a frozen, skill-conditioned teacher initialized from the pretrained backbone; we reuse the
+fixed reference model’s weights for this branch. The complete objectives and update procedures appear in
+Appendix D.
+
+C
+
+Experimental Details
+
+C.1
+
+Training Configuration
+
+We train each of the eleven methods on ALFWorld, ScienceWorld, Search-QA, and WebShop with Qwen3.5-2B,
+4B, and 9B, for 132 runs of 100 global steps each. We combine shared optimization defaults with benchmarkand method-specific configurations drawn from the source papers and released code. The sources of these
+configurations and the settings for our benchmark extensions are described below; method-specific algorithm
+hyperparameters remain fixed across the three model sizes within each benchmark. Tables S2, S3, and S4
+summarize common settings, benchmark-specific settings and overrides, and algorithm hyperparameters,
+respectively, across all four benchmarks.
+Configuration sources. The base learning rate, rollout group size, and default reference KL coefficient follow
+Appendix C of SDAR (Lu et al., 2026). For ALFWorld, WebShop, and Search-QA, prompt and response
+limits, interaction horizons, history windows, PPO minibatch sizes, and invalid-action penalties follow its
+released task-specific configurations. ALFWorld and WebShop retain outcome rewards of 10 for success and 0
+otherwise; Search-QA uses 1 for a correct answer and 0 otherwise, together with SDAR’s top-three-passage
+retrieval configuration. ScienceWorld uses the AgentGym task split (Xi et al., 2025), with 200 evaluation
+tasks and 2,059 training instances after removing 61 overlapping task IDs; its episode reward is the simulator’s
+final task score divided by 100. These rewards are assigned to interaction rows, with the invalid-action
+penalty applied to the corresponding row. Table S3 summarizes these benchmark configurations and their
+method-specific overrides.
+Baseline adaptations. SDAR and GRPO+OPSD retain SDAR’s reported auxiliary coefficients and gate
+
+settings. For Skill-SD and RLSD, we use the skill-bank adaptations in the SDAR repository: Skill-SD keeps a
+constant auxiliary weight of 0.001, while RLSD follows the released Qwen3 scripts’ 100-step linear decay with
+initial scale λ0 = 0.5 and multiplier clipping of 0.2.
+
+Method-specific settings from the source papers. AgentOPSD’s algorithm hyperparameters follow Appendix F
+
+of Wang et al. (2026b), including its upper PPO clipping bound of 0.24. OCSD’s selection ratio and reweighting
+coefficient follow Table 4 of Yang et al. (2026c); ICSD’s calibration parameters follow Appendix C.1 of Lan
+et al. (2026); PCSD’s window and gating parameters follow Table 5 of Lv et al. (2026). OCSD’s Search-QA
+warmup ratio of 0.1 and reference KL coefficient of 0.001 follow its released training configuration. The
+algorithm-specific values are summarized in Table S4.
+Benchmark-specific ADRS settings. We follow the primary GRPO/L2 configurations in Appendix A.5 of
+
+Zhang et al. (2026): ALFWorld uses η = 0.1, batch-wide score normalization, and gate-input normalization;
+WebShop uses η = 0.02, per-response score normalization, and no gate-input normalization. The same source
+specifies ALFWorld’s entropy coefficient of 0.01 and upper PPO clipping bound of 0.28. For Search-QA, the
+teacher-reward scale η = 0.05, batch-wide score normalization, and reference KL coefficient of 0.001 likewise
+follow the reported Search-QA configuration. These task-dependent choices preserve the source configurations;
+the paper’s normalization ablation supports batch-wide scaling on ALFWorld and Search-QA, and per-response
+scaling on WebShop. For the ScienceWorld extension, we adopt the Search-QA teacher-reward scale and
+normalization settings, including gate-input normalization, while retaining the common optimization defaults.
+
+14
+
+Method
+
+Supervision source
+
+Use in optimization
+
+GRPO (Shao et al.,
+2024)
+GRPO+OPSD (Lu
+et al., 2026)
+
+Task rewards only.
+
+Policy advantage: group-normalized returns drive the
+
+SDAR (Lu et al.,
+2026)
+Skill-SD
+(Wang
+et al., 2026a)
+RLSD (Yang et al.,
+2026a)
+OCSD (Yang et al.,
+2026c)
+OVCSD (Xia et al.,
+2026)
+
+Skill-conditioned teacher scores.
+
+Skill-conditioned teacher scores.
+
+Skill-conditioned teacher scores.
+Skill-conditioned teacher scores.
+
+AgentOPSD (Wang
+et al., 2026b)
+
+Paired scores with and without future
+observations.
+Skill-conditioned,
+environmentverified continuations and teacher
+token distributions.
+Skill-conditioned teacher scores and
+group task returns.
+
+ADRS (Zhang et al.,
+2026)
+
+Skill-conditioned teacher scores and
+task returns.
+
+ICSD (Lan et al.,
+2026)
+
+Skill-conditioned teacher scores.
+
+PCSD (Lv et al.,
+2026)
+
+Skill-conditioned scores from a frozen
+reference model.
+
+clipped policy-gradient objective.
+Auxiliary loss: constant-weight reinforcement of sampled student tokens; teacher scores do not affect its
+gradient.
+Auxiliary loss: a detached teacher–student score-gap
+gate weights sampled-token supervision.
+Auxiliary loss: policy-ratio-weighted K3 distillation on
+sampled tokens.
+Token advantages: clipped, sign-aware weighting from
+teacher–student log-probability gaps.
+Token advantages: reweight selected turns using the
+score difference induced by future observations.
+Comparative advantages and suffix loss: contrast statealigned student/teacher actions and distill verified suffixes with top-K-plus-tail KL.
+Turn advantages: recursive success-belief increments
+yield bounded, sign-aware reweighting across a trajectory.
+Reward and advantage shaping: gate teacher rewards
+by return-based utility, then recompute advantages and
+add a token-level correction.
+Auxiliary loss: calibrate teacher trust and advantagedependent influence; redistribute token weights while
+preserving their per-response total.
+Auxiliary loss: gate supervision using variance-adaptive
+window averages and declining trends in the teacher–
+student score gap.
+
+Table S1 Supervision sources and their use in the evaluated implementations. All methods use task rewards; teacher
+
+scores denote log-probabilities of student-generated tokens.
+
+The benchmark-specific settings are listed in Table S3.
+Study-specific choices. The Qwen3.5 backbones, 100-step training horizon, eight-H800 execution, and fixed
+
+evaluation sets are specified by our benchmark. Task batches retain SDAR’s size of 16 for ALFWorld
+and WebShop; we use 16 for ScienceWorld and 64 for Search-QA. Within each benchmark, task batches,
+environment settings, and evaluation sets are shared by all methods and model sizes (Table S3). We
+follow OVCSD’s outcome-verified intervention and suffix-distillation framework (Xia et al., 2026). For our
+implementation, we fix the continuation budget at two attempts per eligible group, the teacher-distribution
+approximation at top-32 plus tail, and the suffix-distillation weight at 0.1 across all twelve settings.
+Trajectory collection and updates. Each ALFWorld/WebShop/ScienceWorld global step samples 16 task
+
+instances and eight student trajectories per instance, giving 128 student episodes. Search-QA instead samples
+64 questions and eight trajectories each, giving 512 nominal student episodes per step; equal step counts
+therefore do not imply equal episode budgets across benchmarks. Trajectories use separate environment
+replicas and are split into interaction turns for policy optimization. The actor minibatch sizes are 256 turns
+for ALFWorld and Search-QA, and 64 for WebShop and ScienceWorld; one PPO epoch may therefore contain
+several optimizer updates. OVCSD additionally allows up to two teacher continuation attempts per eligible
+task group, including prefix replay.
+
+C.2
+
+Teacher Models and Contexts
+
+SDAR, GRPO+OPSD, Skill-SD, RLSD, AgentOPSD, ADRS, and ICSD score student responses with the
+pre-update actor conditioned on skills. PCSD uses the fixed reference model as its teacher. Following
+SDAR’s skill-conditioning procedure (Lu et al., 2026), we use benchmark-specific skill banks that combine
+15
+
+Parameter
+
+Configuration
+
+Optimization
+
+Trainable parameters
+Optimizer
+Learning rate
+Warmup ratio
+Gradient norm cap cgrad
+PPO epochs and update microbatch
+Log-probability microbatch
+Lower PPO clipping and dual clipping
+Upper PPO clipping ϵh
+Reference policy
+Reference KL regularization
+Reference KL coefficient cKL
+Entropy coefficient cH
+
+Full-parameter training
+AdamW; (β1 , β2 ) = (0.9, 0.999); weight decay 0.01
+10−6 ; constant after any warmup
+0, except as listed in Table S3
+1.0
+Nep = 1; 1 interaction turn per GPU; fixed-size microbatches
+1 interaction turn per GPU for both actor and reference
+ϵl = 0.2; cdual = 3.0
+0.2, except as listed in Table S3
+Frozen at the pretrained initialization
+Sampled-token K3 penalty added to the policy loss
+0.01, except as listed in Table S3
+0.001, except as listed in Table S3
+
+Trajectory Collection and Evaluation
+
+Student trajectories per task
+Training sampling
+Sampling cutoffs
+Repeated final evaluation
+Response length limit
+Training steps S
+Validation schedule
+
+G=8
+Stochastic; temperature τgen = 1.0
+Top-p = 1.0; no top-k restriction when sampling
+Temperature 0.4; eight rollout seeds (0–7)
+512 tokens per interaction turn
+100
+Before training and every 5 steps
+
+Hardware and Execution
+
+Training hardware
+CPU allocation (Ray)
+Rollout tensor parallelism
+Distributed training
+CPU offloading
+Rollout inference
+Rollout execution
+Thinking-mode chat formatting
+
+1 node with 8 NVIDIA H800 GPUs
+64 logical CPUs per run
+1
+FSDP; activation checkpointing enabled
+Reference parameters only; actor parameters and optimizer
+states remain on GPU
+BF16; chunked prefill; Triton Gated DeltaNet prefill
+CUDA graphs with eager fallback
+Disabled
+
+Table S2 Common training and evaluation settings for the eleven methods across all four benchmarks. Benchmark-
+
+specific settings and overrides appear in Table S3; algorithm hyperparameters appear in Table S4.
+
+general guidance with task-specific instructions selected from ALFWorld game identifiers or matching prompt
+keywords. We prepend this context to the student prompt, retokenize, and apply left truncation at the task’s
+prompt-length limit while keeping the student response unchanged. OVCSD uses the same skill-conditioned
+input for continuations; OCSD instead compares replay contexts with and without future observations.
+
+C.3
+
+Numerical Precision and Stability
+
+Training uses FP32 actor weights with BF16 mixed-precision computation and FP32 reductions and buffers;
+reference and rollout weights use BF16. Final-model evaluation uses BF16 weights for both the actor and
+inference engine.
+Numerical stability. We use ϵnum = 10−8 for masked means and ADRS statistics, and ϵnorm = 10−6 for GRPO
+
+and AgentOPSD standardization. AgentOPSD clips prior and updated belief probabilities with ϵprior = 10−4
+and ϵbel = 10−6 , respectively. OCSD selects turns with absolute advantage above ϵA = 10−6 . OVCSD uses
+ϵR = 10−6 as the upper threshold on raw episode-return standard deviation for intervention; ADRS uses
+the same value as the lower threshold on shaped row-return standard deviation for its additional advantage
+correction. ICSD uses a calibration scale floor of ϵcal = 10−4 ; PCSD uses ϵpc = 10−8 for window statistics and
+slope normalization. The reference K3 estimator is clipped to [−cref , cref ], with cref = 10.
+
+16
+
+Parameter
+
+ALFWorld
+
+ScienceWorld
+
+Search-QA
+
+WebShop
+
+16
+2048
+50
+2
+256
+Success: 10;
+otherwise: 0
+0.1
+N/A
+N/A
+All 140
+valid_seen
+games
+140
+Sampling,
+T = 0.4
+
+16
+4096
+20
+2
+64
+Final task score
+/ 100
+0.1
+N/A
+N/A
+200 fixed tasks
+
+64
+4096
+4
+4
+256
+Correct: 1;
+otherwise: 0
+0.01
+3
+60
+3125 fixed
+questions
+
+16
+4096
+15
+2
+64
+Success: 10;
+otherwise: 0
+0.1
+N/A
+N/A
+128 fixed goals
+
+32
+Sampling,
+T = 0.4
+
+512
+Greedy, T = 0
+
+128
+Sampling,
+T = 0.4
+
+0.24
+0.28
+0.01
+0
+0.01
+0.01
+
+0.24
+0.2
+0.001
+0
+0.01
+0.01
+
+0.24
+0.2
+0.001
+0.1
+0.001
+0.001
+
+0.24
+0.2
+0.001
+0
+0.01
+0.01
+
+0.1
+Batch-wide SD
+Enabled
+
+0.05
+Batch-wide SD
+Enabled
+
+0.05
+Batch-wide SD
+Enabled
+
+0.02
+Per-response SD
+Disabled
+
+Benchmark Settings
+
+Task batch size B
+Prompt limit (tokens per turn)
+Maximum interaction turns H
+Retained history (turns)
+PPO minibatch (turns, all GPUs)
+Episode reward
+Invalid-action penalty cinv
+Retrieved passages per query
+Retrieval timeout (s)
+Validation set
+Validation batch size (tasks)
+Validation decoding
+Method-Specific Optimization Overrides
+
+AgentOPSD: upper PPO clipping ϵh
+ADRS: upper PPO clipping ϵh
+ADRS: entropy coefficient cH
+OCSD: warmup ratio
+OCSD: reference KL cKL
+ADRS: reference KL cKL
+Benchmark-Specific ADRS Parameters
+
+Teacher-reward scale η
+Teacher-signal normalization
+Scale gate input by its SD
+
+Table S3 Benchmark-specific settings and method-specific overrides across four benchmarks, shared across the three
+
+model sizes. Configuration sources and benchmark extensions are described in Appendix C.1. Unlisted optimization
+settings retain the defaults in Table S2. SD denotes standard deviation.
+
+C.4
+
+Validation and Repeated Evaluation
+
+Training validation on ALFWorld, WebShop, and Search-QA follows SDAR’s released settings (Lu et al., 2026);
+ScienceWorld uses the same stochastic decoding rule as ALFWorld and WebShop. Within each benchmark, all
+eleven methods use the validation configuration in Table S3. Repeated final evaluation uses the same T = 0.4
+sampling protocol on all four benchmarks, with eight rollout seeds (0–7) indexed by task and interaction turn.
+The 1,056 evaluations of 132 trained models and 96 evaluations of pretrained backbones total 1,152 evaluation
+sweeps over twelve settings. Across all four benchmarks, validation and final evaluation use fixed task sets
+shared across methods, model sizes, and evaluation sweeps, retaining every instance, including incomplete
+final batches. Overall performance averages the per-instance metric over the full evaluation set; task-category
+and source-specific results use the corresponding subsets. This aggregation gives equal weight to instances
+rather than to batches or categories.
+
+C.5
+
+Experimental Records
+
+For all four benchmarks, we retain training configurations, per-step metrics, and repeated-evaluation summaries
+for the trained and pretrained models. The training records cover 132 runs and 2,772 validation sweeps, with
+each validation result linked to its original log. Learning curves and computational costs are derived from these
+logs; final-evaluation means and sample standard deviations are taken from the repeated-evaluation summaries.
+The analysis scripts generate the tables and figures from these records and verify metric aggregation against
+the source data.
+
+17
+
+Method
+
+Parameter group
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+
+No additional hyperparameters
+Auxiliary weight and gate
+λsd = 0.01; β = 0 (constant gate 1/2)
+Auxiliary weight and gate
+λsd = 0.01; sigmoid slope β = 5; detached gate
+Auxiliary weight
+λdist = 0.001, constant throughout training
+Exponent caps
+cK3 = 20; cIS = 10
+Mixing schedule
+λs = λ0 (1 − s/S); λ0 = 0.5, S = 100
+Multiplier clipping
+δr = 0.2
+Future context
+Lf = 2 future interaction turns
+Turn selection
+Highest old-policy mean NLL among eligible turns within each
+trajectory; fraction αsel = 0.2
+Reweighting
+Residual scale λoc = 0.5; advantage threshold ϵA = 10−6
+Eligibility and budget
+Reward standard deviation threshold ϵR = 10−6 ; Amax = 2
+attempts per eligible group
+Suffix distillation
+Top-K plus tail with K = 32; KL weight λsuf = 0.1
+Advantage multiplier
+Signed, turn-level; mixing λag = 0.5; band δag = 0.2; no
+coefficient decay
+Belief update
+Decay γ = 0.95; prior from the clipped mean of
+trajectory-deduplicated training returns; fallback 0.5
+Teacher-utility gate
+L2 teacher value advantage (TVA) over task-grouped interaction
+rows; alignment temperature τalign = 1; sigmoid slope βTVA = 2
+Reward and advantage
+Per-turn centering; additive correction clipped at δad = 0.2, sign
+shaping
++1
+Schedule
+Active throughout training, without warmup
+Auxiliary weight
+λic = 0.01
+Calibration
+CDF splits ξtrust = 0.4, ξinf = 0.5; scale floor ϵcal = 10−4 ;
+minimum pool ncal = 8 tokens
+Auxiliary weight
+λpc = 0.01
+Token windows
+Nmin = 1, Nmax = 8; decay ρpc = 0.8
+Variance and trend gate
+Variance bounds vl = 0.05, vh = 0.5; trend strength γpc = 0.3;
+slope βpc = 5
+
+RLSD
+OCSD
+
+OVCSD
+
+AgentOPSD
+
+ADRS
+
+ICSD
+
+PCSD
+
+Configuration
+
+Table S4 Algorithm-specific hyperparameters shared across all four benchmarks and three model sizes. Sources and
+
+implementation choices are described in Appendix C.1; benchmark-dependent values appear in Table S3. Symbols
+follow Appendix D; s denotes the global training step.
+
+D
+
+Training Objectives and Algorithms
+
+Algorithms S1–S12 specify the eleven methods as evaluated in this study. The ten methods beyond GRPO
+modify its auxiliary objective, advantage weights, collected trajectories, or reward signal. We define the shared
+operations once and expose the method-specific changes below. For more detailed method descriptions and
+derivations, we refer readers to the original papers cited in Table S1.
+Data and indices. A trajectory is one task attempt, comprising multiple model–environment interactions. The
+
+training batch D contains one row b per active interaction turn; t indexes tokens in that turn’s response. The
+binary mask Mbt is one for valid response tokens and zero otherwise. The maps i(b) and g(b) identify the
+trajectory and task group of row b; a task group contains all sampled attempts at the same task. Bi and Bg
+denote their respective row sets, and g(i) identifies the task group of trajectory i.
+Models and token scores. θ0 denotes the initial model parameters, θ the trainable student, and πθ its token
+
+distribution. The old policy θold is refreshed at each training step and held fixed during the ensuing actor
+updates; the reference ϕ stays at θ0 throughout training. For each sampled response token, pbt , obt , and fbt
+are its log-probabilities under the current student, old policy, and reference, respectively. The teacher score
+qbt is the log-probability of that same token given additional training-time context, such as skills or future
+observations. These are sampled-token scores, not full-vocabulary distributions, unless stated otherwise.
+
+18
+
+Operations and gradients. sg(x) keeps the value of x but blocks its gradient. Teacher, old-policy, and
+
+reference scores, rewards, selection decisions, and constructed advantages are detached; gradients flow through
+the current student scores p. Products and divisions of token arrays are elementwise, and row quantities
+broadcast over tokens. We use the sigmoid σ(x) = (1 + e−x )−1 , log-odds logit(x) = log[x/(1 − x)], and
+ReLU(x) = max(x, 0). clip(x, a, b) restricts x to [a, b]; Cϵ (x) = clip(x, ϵ, 1 − ϵ) keeps beliefs away from zero
+and one. Other intermediate quantities are local to each method. Subscripted ϵ terms denote numerical
+stabilizers, clipping widths, or thresholds, as specified below; hyperparameter values are listed in Appendix C.
+
+D.1
+
+Shared Training Procedure
+
+The shared loop in Algorithm S1 selects a task batch X of size B and collects G trajectories per task, forming
+T . It runs for S training steps, indexed by s, with at most H interaction turns per trajectory and sampling
+temperature τgen . M denotes the selected method, not a token mask.
+Rewards and advantages. We assign the complete episode return to the final response token of each interaction
+turn. The P
+invalid-action penalty subtracts cinv at that token for an invalid turn. Let rbt be this sparse reward
+and Rb = t rbt . Ab is the scalar GRPO advantage of row b, broadcast over its valid tokens as Abt = Ab Mbt .
+Group normalization pools the row returns within each task group:
+
+Abt =
+
+Rb − µg(b)
+Mbt .
+sg(b) + ϵnorm
+
+(1)
+
+Here µg and sg are the mean and sample standard deviation (SD) of {Rb : b ∈ Bg }; each trajectory contributes
+one observation per turn. For a singleton group, we set µg = 0, sg = 1. We denote this operation by G(r) and
+b denotes any method-specific replacement for A.
+retain groups with constant rewards; A
+Trajectory collection. SampleTasks draws training tasks, Rollout generates skill-free trajectories, and
+TurnRows unfolds them into D, retaining prompts, responses, masks, and task, trajectory, and turn IDs.
+Reward assigns the rewards defined above. Score(θ, D) returns detached log-probabilities for the responses
+already in D; it does not generate new responses. The batch D carries the rewards r, row returns R, and
+scores o, f computed in the shared loop. MethodStep applies the selected algorithm to these quantities,
+updating θ while keeping θold and ϕ fixed. For OVCSD it calls OVCSDUpdate with both the eligible groups
+F and verified pairs V returned during collection.
+Common objective. The policy-gradient mask M PG selects tokens for the policy loss; the regularization
+
+mask M reg selects tokens for reference-KL and entropy terms. Both are binary: one includes a token
+and zero excludes it from the corresponding term.
+OVCSD, whose masks are specified below,
+P Except for P
+M PG = M reg = M . For any such mask, ⟨X⟩M = b,t Mbt Xbt /( b,t Mbt + ϵnum ) denotes its token average
+within a microbatch.
+The current-to-old probability ratio is ρ = exp(p − o). Let u be the usual clipped surrogate, with lower and
+upper clipping widths ϵl , ϵh . Dual clipping additionally bounds its negative-advantage branch using cdual > 1:
+u = max{−Aρ, −A clip(ρ, 1 − ϵl , 1 + ϵh )},
+(
+min(u, −cdual A), A < 0,
+ℓPG =
+u,
+A ≥ 0.
+
+(2)
+
+The common loss combines this policy-gradient term ℓPG , a reference penalty kref weighted by cKL , and
+token-distribution entropy H(πθ ) weighted by cH . The constant cref caps the sampled-token KL penalty:
+L0 (A) = ⟨ℓPG ⟩M PG + cKL ⟨kref ⟩M reg
+− cH ⟨H(πθ )⟩M reg ,
+kref = clip e
+
+f −p
+
+(3)
+
+− (f − p) − 1, −cref , cref .
+
+
+Here kref is the clipped sampled-token K3 estimator of reference KL; H denotes entropy, whereas H is the
+interaction horizon. The actor accumulates microbatch losses, clips the gradient norm at cgrad , and skips an
+optimizer update if the norm is nonfinite. UpdateD (A, Laux ) minimizes L0 (A) + Laux on D using AdamW
+19
+
+over Nep PPO epochs. The auxiliary loss Laux is recomputed from the current student at each forward pass.
+GRPO (Algorithm S2) sets this term to zero, retaining the reference-KL and entropy terms. The update
+changes θ in place; minibatching and gradient accumulation follow the common settings.
+Skill-conditioned scoring. SkillReplay(D, ψ) returns teacher scores q: it augments prompts with retrieved
+
+skills, keeps the sampled student responses, and scores them without gradients under model parameters
+ψ. Its outputs remain fixed throughout the subsequent actor update. Most skill-replay methods use the
+pre-update actor, ψ = θold ; PCSD instead uses the fixed reference, ψ = ϕ. Teacher prompts are left-truncated
+as described in Appendix C.
+
+D.2
+
+Auxiliary Distillation Objectives
+
+GRPO+OPSD’s constant-gate objective. GRPO+OPSD and SDAR weight their auxiliary loss by λsd and
+
+control the sigmoid gate’s slope with β. In our comparison, GRPO+OPSD (Algorithm S3) sets β = 0,
+yielding a detached gate of 1/2. For finite log-probabilities its auxiliary gradient is therefore exactly that of
+−(λsd /2)⟨p⟩M ; teacher values affect the loss value but not this gradient. The common reference penalty in
+Eq. 3 is present in both GRPO and GRPO+OPSD and is separate from this auxiliary term.
+SDAR and Skill-SD supervision. In SDAR (Algorithm S4), the gate g(p) weights each valid response token
+
+according to the teacher–current-student log-probability gap, including tokens in unsuccessful trajectories; the
+gate is detached. Skill-SD (Algorithm S5) instead uses the log-probability difference d(p) = p − q to construct
+a K3 term k(p), weighted by the importance ratio w(p) and auxiliary coefficient λdist . The constants cK3 and
+cIS cap the two exponent inputs. Gradients pass through both k(p) and w(p), but not through teacher or
+old-policy scores. Both objectives supervise the sampled response tokens.
+ICSD calibration and gradient boundaries. ICSD (Algorithm S6) first scores the current student on a local actor
+
+minibatch D′ to obtain detached scores p⋆ . Its teacher gap ∆ = q − p⋆ and influence score u = A exp(p⋆ − o)∆
+are calibrated into trust weights g and influence weights h. CalCDFξ performs this calibration using a
+Algorithm S1 Shared training loop
+Require: θ0 , M; B, G, S, H, τgen
+Ensure: Trained student parameters θ
+1: θ, ϕ ← θ0 , θ0
+2: for s = 1, . . . , S do
+3:
+θold ← θ; F, V ← ∅, ∅
+4:
+X ← SampleTasks(B)
+5:
+T ← Rollout(θold , X; G, H, τgen )
+6:
+if M = OVCSD then
+7:
+(F , V) ← VerifyCont(T )
+8:
+end if
+9:
+D ← TurnRows(T ); r ← Reward(D)
+10:
+o ← Score(θold , D)
+11:
+f ← Score(ϕ, D); A ← G(r)
+12:
+MethodStepM (D, A, s, F, V)
+13: end for
+14: return θ
+
+Algorithm S2 GRPO
+Require: D, A
+1: UpdateD (A, 0)
+
+Algorithm S3 GRPO+OPSD: constant gate
+Require: D, A; λsd
+1: q ← SkillReplay(D, θold )
+λ
+2: Laux (p) ← 2sd ⟨q − p⟩M
+3: UpdateD (A, Laux )
+
+20
+
+Algorithm S4 SDAR: detached confidence gate
+Require: D, A; λsd , β
+1: q ← SkillReplay(D, θold )
+2: g(p) ← sg{σ[β(q − p)]}
+3: Laux (p) ← λsd ⟨g(p)(q − p)⟩M
+4: UpdateD (A, Laux )
+
+Algorithm S5 Skill-SD: importance-weighted K3
+Require: D, A; λdist , cK3 , cIS
+1: q ← SkillReplay(D, θold )
+2: d(p) ← p − q
+3: k(p) ← exp(min(−d(p), cK3 )) − 1 + d(p)
+4: w(p) ← exp(min(p − o, cIS ))
+5: Laux (p) ← λdist ⟨w(p)k(p)⟩M
+6: UpdateD (A, Laux )
+
+cumulative distribution function (CDF), pooling valid tokens with the same interaction-turn index within D′ .
+For each pool it fits location m and scales a− , a+ , then applies
+(
+ξe(x−m)/a− ,
+x < m,
+Fξ (x) =
+−(x−m)/a+
+1 − (1 − ξ)e
+, x ≥ m.
+The split ξ ∈ (0, 1) sets Fξ (m) = ξ; ξtrust and ξinf specify the trust and influence calibrations. The location
+is the lower sample median; the scales are mean absolute deviations below and at or above m, floored at
+ϵcal (also used for an empty side). Pools with fewer than ncal tokens or nonfinite values fall back to all valid
+minibatch tokens, then to location zero and unit scales if still invalid. The final token weights c combine g
+and h within the eligible-token set Cb , preserving each response’s total trust weight; other tokens retain g.
+The normalizer zb is the sum of gh over Cb . The coefficient λic scales the auxiliary loss, and c remains fixed
+during that minibatch’s gradient computation. UpdateMiniBatchD′ applies one accumulated-gradient update
+on D′ ; it does not repeat the outer PPO epochs.
+PCSD windows and teacher. PCSD (Algorithm S7) smooths the detached teacher gap ∆ = q − p over short
+
+and long forward windows of lengths Nmin and Nmax . All windows start at the current token and stay
+within its response row, excluding padding via M . DecayMean weights offset j by ρjpc , yielding means ms , ml .
+Algorithm S6 ICSD: calibrated token weights
+Require: D, A; λic , ξtrust , ξinf , ϵcal , ncal
+1: q ← SkillReplay(D, θold )
+2: for each local actor minibatch D ′ in the PPO epochs do
+3:
+Use the q, o, A, M slices for D′
+4:
+p⋆ ← Score(θ, D′ )
+5:
+∆ ← q − p⋆ ; u ← A exp(p⋆ − o)∆
+6:
+g ← CalCDFξtrust (∆)
+7:
+h ← CalCDFξinf (u)
+8:
+c ← gM
+9:
+for each response row b do
+10:
+Cb ← P
+{t : Mbt = 1, ¬(Abt < 0 ∧ ∆bt < 0)}
+11:
+zb ← t∈C gbt hbt
+b
+12:
+if zb > ϵcal then P
+13:
+cbt ← gbt hbt j∈C gbj /zb , t ∈ Cb
+b
+14:
+end if
+15:
+end for
+16:
+Laux (p) ← λic ⟨sg(c)(q − p)⟩M
+17:
+UpdateMiniBatchD′ (A, Laux )
+18: end for
+
+21
+
+The long-window population variance v, computed by WindowVar, sets the interpolation weight a between
+¯ is the resulting smoothed gap. WindowSlope fits an unweighted least-squares slope
+variance bounds vl , vh ; ∆
+against token offsets, adds ϵpc to its denominator, and returns zero for fewer than two valid tokens. Its slope
+ℓ is scaled by the row’s mean absolute gap db ; the factor h suppresses declining support with strength γpc .
+The final detached weight w combines h with a sigmoid of slope βpc , and λpc scales the auxiliary loss. The
+skill-conditioned teacher uses fixed reference weights throughout training; only the current student receives
+gradients.
+
+D.3
+
+Advantage Reweighting
+
+b before the common update. Their
+RLSD, OCSD, and AgentOPSD replace A by detached advantages A
+multipliers preserve advantage signs and leave zero advantages unchanged under the evaluated coefficient
+ranges.
+RLSD mixing. RLSD (Algorithm S8) mixes the original advantage with a teacher-reweighted version using λs ;
+
+λ0 sets the schedule’s initial scale and δr bounds the token multiplier w around one. For the one-based step
+s, λs = λ0 max(1 − s/S, 0), so it is λ0 (1 − 1/S) at the first step and zero at the last; teacher scores are still
+computed at that endpoint.
+
+OCSD evidence selection. In OCSD (Algorithm S9), Fb counts the future observations available to row b, and
+Topk (E; n) selects the k rows in E with the largest mean negative log-likelihood (NLL) n. For trajectory i, Ei
+contains eligible turns with future observations and |Ab | > ϵA ; Ji contains the highest-NLL fraction αsel , with
+at least one turn if Ei is nonempty. EvidencePair keeps the sampled response and constructs full/ablated
+prompts from up to Lf future observations: intermediate action schemas are identical, but observations are
+withheld in the ablated prompt; both prompts are left-truncated. q full and q abl score these two contexts; their
+bounded contrast z modulates advantages with strength λoc .
+AgentOPSD belief updates. In AgentOPSD (Algorithm S10), V0,g is a task group’s prior belief, obtained by
+
+averaging trajectory-deduplicated returns and clipping to (0, 1). FirstRows supplies one representative row per
+trajectory by retaining its first occurrence in the batch. The accumulator c sums turn-level teacher–old-policy
+
+Algorithm S7 PCSD: persistent teacher-support weighting
+Require: D, A; λpc , Nmin , Nmax , ρpc , vl , vh , γpc , βpc
+1: q ← SkillReplay(D, ϕ)
+2: function Laux (p)
+3:
+∆ ← sg(q − p)M
+4:
+ms ← DecayMean(∆, M ; Nmin , ρpc )
+5:
+ml ← DecayMean(∆, M ; Nmax , ρpc )
+6:
+v ← WindowVar(∆, M ; Nmax )
+7:
+a ← clip((v − vl )/(vh − vl ), 0, 1)
+¯ ← (1 − a)ms + aml
+8:
+∆
+9:
+ℓ ← WindowSlope(∆,
+M ; NP
+max )
+P
+10:
+db ← t Mbt |∆bt |/ max(1, t Mbt ) + ϵpc
+11:
+h ← clip(1 − γpc ReLU(−ℓ/d), 0, 1)
+12:
+w ← sg{σ(βpc ¯
+∆)hM }
+13:
+return λpc ⟨w(q − p)⟩M
+14: end function
+15: UpdateD (A, Laux )
+
+Algorithm S8 RLSD: sign-aware advantage reweighting
+Require: D, A, s; λ0 , S, δr
+1: q ← SkillReplay(D, θold )
+2: λs ← λ0 max(1 − s/S, 0)
+3: w ← clip(esign(A)(q−o) , 1 − δr , 1 + δr )
+b ← sg{A[(1 − λs ) + λs w]}
+4: A
+b 0)
+5: UpdateD (A,
+
+22
+
+Algorithm S9 OCSD: full/ablated future-evidence replay
+Require: D, A, o, Fb ; αsel , Lf , λoc
+1: z ← 0
+2: for trajectory i do
+3:
+Ei ← {b ∈ Bi : Fb > 0, |Ab | > ϵA }
+4:
+if Ei = ∅ then
+5:
+continue
+6:
+end if
+P
+7:
+
+Mbt obt
+P
+for b ∈ Ei
+max(1, t Mbt )
+ki ← min(|Ei |, max(1, ⌈αsel |Ei |⌉))
+Ji ← Topki (Ei ; n)
+for b ∈ Ji do
+(Db+ , Db− ) ← EvidencePair(Db , Lf )
+qbfull ← Score(θold , Db+ )
+qbabl ← Score(θold , Db− )
+full
+abl
+zbt ← tanh[(qbt
+− qbt
+)/2]
+nb ← −
+
+t
+
+8:
+9:
+10:
+11:
+12:
+13:
+14:
+15:
+end for
+16: end for
+b ← sg{A[1 + λoc sign(A)z]}
+17: A
+
+b 0)
+18: UpdateD (A,
+
+log-ratios with decay γ; it updates the success belief Vb , whose increment is vb = Vb − Vprev . The mean v̄i and
+population SD over Bi standardize these increments into zb ; a one-turn trajectory has zero SD. The bounded
+multiplier mb uses band δag , and λag mixes it with the original advantage. The prior deduplicates trajectories,
+while the base GRPO advantage still uses turn-row statistics.
+
+D.4
+
+Verified Teacher Continuations
+
+Teacher continuations. OVCSD (Algorithm S11) makes at most Amax teacher-continuation attempts per
+
+eligible group; F collects these groups and V stores the verified comparison pairs. EligibleGroups selects
+groups with no successful trajectory, raw episode-return population SD at most ϵR , and at least one candidate
+prefix. Prefixes builds a candidate set C by grouping trajectories with the same action prefix and current
+
+Algorithm S10 AgentOPSD: signed turn credit
+Require: D, A, R; γ, λag , δag
+1: q ← SkillReplay(D, θold )
+2: for task group g do
+3:
+Ig ← FirstRows(Bg , i)
+4:
+V0,g ← Cϵprior (meanb∈Ig Rb )
+5: end for
+6: for trajectory i do
+7:
+c ← 0; Vprev ← V0,g(i)
+8:
+for b ∈ Bi in P
+turn order do
+9:
+c ← γc + t Mbt (qbt − obt )
+10:
+Vb ← Cϵbel (σ[logit(V0,g(i) ) + c])
+11:
+vb ← Vb − Vprev ; Vprev ← Vb
+12:
+end for
+13:
+for b ∈ Bi do
+14:
+zb ← (vb − v̄i )/(SDpop (vBi ) + ϵnorm )
+15:
+mb ← 1 + δag clip(sign(Ab )zb , −1, 1)
+bbt ← Ab [(1 − λag ) + λag mb ]Mbt
+16:
+A
+17:
+end for
+18: end for
+b 0)
+19: UpdateD (sg(A),
+
+23
+
+Algorithm S11 OVCSD: verified continuations
+Require: Amax , ϵR , K, λsuf
+1: function VerifyCont(T )
+2:
+F ← EligibleGroups(T ; ϵR )
+3:
+V←∅
+4:
+for g ∈ F do
+5:
+U ← Members(Tg )
+6:
+C ← Prefixes(Tg ); W ← ∅
+7:
+c ← Deepest(C, U, W )
+8:
+for a = 1, . . . , Amax do
+9:
+if c = ∅ or U = ∅ then
+10:
+break
+11:
+end if
+12:
+(τ + , v) ← ReplayContinue(θold , c, H)
+13:
+if v = 1 then
+14:
+P ← AlignPairs(Tg , τ + , c)
+√
+√
+−
+15:
+(a+
+j , aj ) ← ( mj , −1/ mj ), j ∈ P
+16:
+V ← V ∪ P; U ← U \ Members(c)
+17:
+end if
+18:
+W ← W ∪ {key(c)}
+19:
+c ← Next(C, U, W, c, v)
+20:
+end for
+21:
+end for
+22:
+return (F, V)
+23: end function
+24: procedure OVCSDUpdate(D, A, F, V)
+25:
+(b
+D, b
+A) ← VerifiedBatch(D, A, F, V)
+b +)
+26:
+(I, Q) ← TopTailK (θold , D
+27:
+J ← {j ∈ V : |Sj | > 0}
+28:
+
+Lsuf (θ) ← λsuf
+
+X 1
+
+j∈J
+
+|Sj |
+
+X
+
+I
+KL(Qbt ∥Pθ,bt
+)
+
+(b,t)∈Sj
+
+b
+29:
+UpdateD
+b (A, Lsuf )
+30: end procedure
+observation, retaining states with a subsequent student action; c denotes the selected candidate. U contains
+uncovered trajectories; W records attempted candidate keys, distinguishing shared candidates from individual
+fallbacks. Members returns the trajectory IDs represented by a group or candidate. Deepest prefers an
+untried shared non-root prefix, then the deepest individual prefix. ReplayContinue restores the candidate
+state and verifies its observation before sampling a skill-conditioned continuation τ + within the remaining
+horizon; its indicator v is one only if replay and task completion both succeed. AlignPairs returns pairs P
+at the first action divergence while observations remain aligned. Each pair j matches one teacher turn to
+−
+mj ≥ 1 failed student turns, receiving comparative advantages a+
+j and aj , respectively. After success, Next
+selects the deepest uncovered candidate; after failure it prefers the nearest untried ancestor, falling back to
+the deepest candidate. Candidate members are removed from U on success even if no aligned pair survives.
+OVCSD optimization masks. VerifiedBatch augments the original batch with verified teacher responses,
+
+b Non-intervened groups keep their ordinary GRPO update.
+producing b
+D, masks M PG , M reg , and advantages A.
+For intervened failed groups, the original policy-gradient mask is cleared except at accepted divergent student
+turns; the original reference-KL and entropy masks remain active. Appended skill-free teacher divergence
+rows receive the positive comparative advantage and both policy-gradient and regularization masks. Later
+verified teacher rows receive only the suffix distillation loss, not policy-gradient, reference-KL, or entropy
+terms. Old-policy and reference probabilities on appended rows are recomputed using their skill-free prompts.
+Suffix distillation. The suffix consists of teacher turns strictly after the divergence; Sj is pair j’s set of valid
+
+b + contains their privileged teacher prompts,
+suffix tokens, and J indexes pairs with nonempty suffixes. D
+b
+whereas D uses skill-free student prompts for the same responses. TopTailK retains the teacher’s K most
+24
+
+probable token IDs I at each position and combines the remaining vocabulary into one tail bin, yielding a fixed
+I
+(K + 1)-category distribution Q. Pθ,bt
+is the current student’s distribution on that same partition under the
+skill-free prompt, recomputed at every actor forward pass. The suffix objective sums per-pair token-averaged
+KL(Q∥PθI ), weighted by λsuf ; its denominators |Sj | are fixed over the complete pairs when accumulating
+microbatch contributions. Empty suffixes contribute zero; their divergence updates remain active.
+
+D.5
+
+Teacher-Based Reward Shaping
+
+Teacher signals and gating. ADRS (Algorithm S12) turns teacher scores into token rewards h and an
+
+additional advantage correction w. The row mean q̄b measures teacher alignment with the sampled response;
+αb ∈ (0, 1) expresses this alignment relative to the batch, using temperature τalign . The group-level teacher
+value advantage (TVA), Tg , contrasts returns weighted by α and 1 − α using
+P
+WMg (R; ω) = P
+
+b∈Bg ωb Rb
+
+b∈Bg ωb + ϵnum
+
+.
+
+Here ω denotes the chosen weights for the task-group mean. The coefficient η sets the teacher-signal strength,
+and βTVA controls the sigmoid gate’s slope.
+Normalization and advantage correction. The centered teacher scores are normalized into u = Ntask ((q − q̄)M ).
+
+Ntask uses valid tokens to compute the batch-wide sample SD on ALFWorld, ScienceWorld, and Search-QA,
+or per-row population SD on WebShop, then divides by that SD plus ϵnum . TVA is broadcast to rows as
+Teb = Tg(b) and rescaled by Γtask : on ALFWorld, ScienceWorld, and Search-QA, divide by its sample SD plus
+ϵnum when that SD exceeds ϵnum ; otherwise, and on WebShop, leave it unchanged.
+ADRS first adds the gated reward h to r and recomputes GRPO advantages, then adds the within-group
+correction w, clipped to [−δad , δad ]. Moments returns the masked mean h̄g and unbiased variance vg of the
+teacher rewards; sg (r + h) is the sample SD of the shaped row returns and determines whether the correction
+is applied. All reward, TVA, and advantage calculations are detached. The benchmark-specific normalization
+choices are listed in Table S3.
+
+Algorithm S12 ADRS: teacher-gated reward and advantage shaping
+Require: D, r; η, τalign , βTVA , δad
+1: q ← SkillReplay(D, θold )
+2: q̄b ← meant:Mbt =1 qbt
+3: u ← Ntask ((q − q̄)M ); Tg ← 0 for all g
+4: αb ← σ[(q̄b − meanb q̄b )/(τalign + ϵnum )]
+5: for g : |Bg | > 1 do
+6:
+Tg ← WMg (R; α) − WMg (R; 1 − α)
+7: end for
+eb ← Tg(b) ; Te ← Γtask (Te)
+8: T
+
+eb )ubt
+9: hbt ← η σ(βTVA T
+
+b ← G(r + h)
+10: A
+11: for g : |Bg | > 1, sg (r + h) ≥ ϵR do
+12:
+(h̄g , vg ) ← Moments(hBg ; MBg )
+
+
+13:
+
+hbt − h̄g
+wbt ← clip η √
+, −δad , δad
+vg + ϵnum
+
+
+, b ∈ Bg
+
+bbt ← Abbt + wbt Mbt
+14:
+A
+15: end for
+16: UpdateD (sg( b
+A), 0)
+25
+
+Method
+
+Mean
+
+∆
+
+W/L/T
+
+Worst
+
+PCSD
+AgentOPSD
+GRPO
+OCSD
+RLSD
+SDAR
+OVCSD
+ICSD
+ADRS
+GRPO+OPSD
+Skill-SD
+
+54.26
+51.34
+49.68
+49.50
+46.54
+46.33
+46.17
+44.75
+44.61
+43.05
+39.45
+
++4.58
++1.66
++0.00
+-0.18
+-3.14
+-3.35
+-3.51
+-4.93
+-5.07
+-6.63
+-10.23
+
+6/5/1
+6/5/1
+0/0/12
+6/6/0
+6/6/0
+3/8/1
+5/7/0
+7/4/1
+3/8/1
+6/5/1
+5/6/1
+
+-8.31
+-16.51
++0.00
+-29.73
+-70.02
+-18.30
+-69.73
+-66.02
+-23.36
+-80.53
+-70.02
+
+Table S5 Equal-weight means across all twelve model–benchmark settings, using ALFWorld/WebShop success (%),
+
+Search-QA exact-match accuracy (%), and ScienceWorld task score. ∆ and Worst are the mean and worst paired
+differences from GRPO; W/L/T counts wins/losses/ties of reported means.
+
+Final performance
+
+OCSD 39.88
+
+1
+
+1
+
+54.26 PCSD
+
+PCSD 38.45
+
+2
+
+2
+
+51.34 AgentOPSD
+
+RLSD 38.20
+
+3
+
+3
+
+49.68 GRPO
+
+SDAR 37.54
+
+4
+
+4
+
+49.50 OCSD
+
+GRPO 36.89
+
+5
+
+5
+
+46.54 RLSD
+
+OVCSD 36.73
+
+6
+
+6
+
+46.33 SDAR
+
+ADRS 35.64
+
+7
+
+7
+
+46.17 OVCSD
+
+ICSD 35.60
+
+8
+
+8
+
+44.75 ICSD
+
+AgentOPSD 34.41
+
+9
+
+9
+
+44.61 ADRS
+
+GRPO+OPSD 33.80
+
+10
+
+10
+
+43.05 GRPO+OPSD
+
+Skill-SD 30.35
+
+11
+
+11
+
+39.45 Skill-SD
+
+(b) Macro trajectories
+GRPO
+
+60
+
+OCSD
+
+Mean performance
+
+(a) Learning-curve AUC
+
+PCSD
+
+40
+
+20
+
+0
+
+0
+
+50
+
+100
+
+Training step
+
+Figure S1 (a) Rankings across all twelve settings by mean training-curve AUC and eight-seed final performance from
+Tables 2 and 3. AUC integrates each benchmark’s validation metric and normalizes by the training horizon. (b)
+Equally weighted mean validation trajectories, highlighting GRPO and the AUC and final-performance leaders, OCSD
+and PCSD; the other eight methods are shown in gray.
+
+E
+
+Cross-Setting Gains and Regressions
+
+E.1
+
+All Twelve Settings
+
+Table S5 combines the sampled final evaluations on all four benchmarks, assigning equal weight to each
+model–benchmark setting. It uses success for ALFWorld/WebShop, exact-match accuracy for Search-QA,
+and task score for ScienceWorld. Only PCSD and AgentOPSD improve the twelve-setting mean over GRPO,
+by 4.58 and 1.66 points, respectively. ICSD wins seven settings, including all three Search-QA scales, but its
+66.02-point deficit on 4B WebShop and 40.73-point deficit on 9B ScienceWorld leave its overall mean 4.93
+points below GRPO. OCSD likewise illustrates scale-dependent gains: it improves on GRPO in 2B and 4B
+ScienceWorld but trails it by 14.69 points at 9B, and its twelve-setting mean remains 0.18 points below GRPO.
+Win counts and gaps are descriptive comparisons of means; rollout-seed SDs do not support conclusions about
+variability across independent training runs.
+26
+
+GRPO
+
+GRPO+OPSD
+
+AgentOPSD
+
+OCSD
+
+Validation success (%)
+
+(a) Intermediate instability
+
+(b) Late regression
+
+100
+
+100
+
+75
+
+75
+
+50
+
+50
+
+25
+
+25
+
+0
+
+0
+0
+
+25
+
+50
+
+75
+
+100
+
+0
+
+25
+
+Training step
+
+50
+
+75
+
+100
+
+Training step
+
+Figure S2 Training instability on 4B ALFWorld. (a) AgentOPSD recovers from a prolonged near-zero phase, whereas
+
+GRPO+OPSD finishes near zero after losing its early gains. (b) OCSD declines from a later peak. Both panels retain
+GRPO as a reference and show raw validation success every five steps. These curves are selected from Figure 2.
+
+Method
+
+AUC
+Final Low Drop
+AUC rank Final rank /12 /12
+
+GRPO
+36.89
+GRPO+OPSD 33.80
+SDAR
+37.54
+Skill-SD
+30.35
+RLSD
+38.20
+OCSD
+39.88
+OVCSD
+36.73
+AgentOPSD
+34.41
+ADRS
+35.64
+ICSD
+35.60
+PCSD
+38.45
+
+5 49.68
+10 43.05
+4 46.33
+11 39.45
+3 46.54
+1 49.50
+6 46.17
+9 51.34
+7 44.61
+8 44.75
+2 54.26
+
+3
+10
+6
+11
+5
+4
+7
+2
+9
+8
+1
+
+1
+2
+1
+3
+2
+0
+2
+1
+1
+2
+1
+
+0
+2
+0
+0
+2
+1
+2
+0
+1
+1
+0
+
+Table S6 Training progress and stability across all twelve equally weighted model–benchmark settings. AUC is the area
+
+under the raw validation curve divided by 100 training steps; Final is the repeated final-evaluation mean. Low counts
+final validation scores below 5; Drop counts peak-to-final declines of at least 20 points. These thresholds describe
+observed performance, not failure probabilities.
+
+E.2
+
+Low-Performance Outcomes
+
+Across the twelve settings, 15 trained models have a repeated final-evaluation mean below 5 on their
+benchmark’s reported metric. One ALFWorld model and five WebShop models also underperform their
+pretrained backbones; nine 2B ScienceWorld models have task scores below 2 despite improving over their
+initially negative scores. No Search-QA model falls below this threshold in repeated final evaluation. The
+same low endpoint can therefore reflect either lost pretrained capability or limited task progress. Reporting
+these outcomes alongside aggregate gains distinguishes severe regressions from settings where the training
+methods have largely failed to learn useful behavior. Tables 2 and 3 provide the model-specific comparisons;
+Appendix F.5 relates low validation scores to training trajectories and numerical diagnostics.
+
+F
+
+Training Dynamics and Stability
+
+We apply the same trajectory summaries and diagnostic criteria to all 132 runs across four benchmarks.
+ALFWorld and WebShop use success (%), Search-QA uses exact-match accuracy (%), and ScienceWorld uses
+task score, retaining negative values. Each model–benchmark setting receives equal weight in aggregate AUC,
+stage-wise performance, and final-score comparisons. These aggregate values summarize the reported metrics
+27
+
+Method
+
+Step
+20
+
+Step
+40
+
+Step
+60
+
+Step
+80
+
+Step
+100
+
+GRPO
+25.65 39.34 44.22 47.68 49.47
+GRPO+OPSD 27.17 35.02 38.31 42.38 43.19
+SDAR
+30.63 40.81 42.50 45.52 46.15
+Skill-SD
+21.64 30.40 33.99 38.19 39.36
+RLSD
+30.37 37.29 43.80 48.65 46.10
+OCSD
+30.39 40.61 50.00 48.85 49.15
+OVCSD
+28.38 36.53 42.13 47.44 43.89
+AgentOPSD
+24.41 31.95 35.80 46.27 51.88
+ADRS
+26.16 35.84 42.75 44.03 45.38
+ICSD
+26.09 35.42 43.50 45.66 44.39
+PCSD
+26.82 38.16 43.82 50.03 53.73
+Table S7 Mean validation performance at successive training stages, with equal weight on all twelve settings. ALFWorld/WebShop use success (%), Search-QA uses exact-match accuracy (%), and ScienceWorld uses task score. Bold
+marks the highest mean at each stage.
+
+of the four benchmarks rather than a pooled task-success probability. The analyses below connect these
+summaries to intermediate instability, late regression, and prolonged low-score plateaus.
+
+F.1
+
+Aggregate Progress and Method Rankings
+
+Method rankings depend on whether performance is assessed throughout training or only at its endpoint.
+Figure S1 contrasts training-curve AUC with repeated final evaluation and shows the twelve-setting mean
+validation trajectories. OCSD leads by AUC, whereas PCSD leads at the endpoint; the latter’s advantage
+emerges later in training. The stage-wise comparison makes this change explicit: SDAR leads at steps 20
+and 40, OCSD at step 60, and PCSD at steps 80 and 100. An endpoint advantage therefore need not reflect
+superior performance sustained throughout optimization. Tables S6 and S7 report the aggregate rankings,
+low-performance counts, and stage-wise means for all eleven methods.
+
+F.2
+
+Intermediate Instability and Late Regression
+
+The 4B ALFWorld trajectories illustrate why instability cannot be reduced to a low final score. AgentOPSD
+recovers after six consecutive validations at or below 4.3%, whereas GRPO+OPSD loses its early gains
+and finishes near zero. OCSD reaches 85.0% before declining to 51.4%, with its final three validations
+averaging 50.5%. A criterion based only on near-zero final success would identify GRPO+OPSD but miss
+both AgentOPSD’s temporary collapse and OCSD’s sustained late regression. Assessing stability therefore
+requires examining the depth and persistence of intermediate declines, even when the final model remains
+capable. Figure S2 isolates these histories from Figure 2, retaining GRPO as a common reference.
+Decoding-specific collapse. Search-QA reveals that training instability can also depend on the decoding
+
+strategy: a model may retain effective sampled performance despite a collapse under greedy decoding.
+Training-time validation uses greedy decoding (T = 0), whereas final evaluation samples at T = 0.4 over
+eight rollout seeds; both report exact-match accuracy on the same 3,125 questions. The Search-QA panels in
+Figure 2 show these training trajectories; Tables S10 and 3 report their trajectory summaries and sampled
+final results, respectively.
+For 2B OVCSD, greedy accuracy reaches 38.02% at step 70 and remains at 37.09% at step 80, before falling to
+4.77%, 0.22%, 12.86%, and 1.34% at steps 85, 90, 95, and 100. The final-three-validation mean is only 4.81%,
+with a 36.67-point peak-to-final drop under the unchanged greedy protocol. Yet the same final checkpoint
+scores 33.21 ± 0.33% with sampling, compared with GRPO’s 32.38 ± 0.28%. This is a decoding-specific
+collapse: previously acquired greedy performance is lost even though sampling at T = 0.4 still produces
+effective task behavior. A sampled endpoint alone would leave this failure mode unobserved.
+ICSD shows a milder greedy regression rather than near-zero collapse. Its 2B greedy accuracy peaks at 39.52%
+at step 65, falls to 21.73% at step 90, and partially recovers to 31.49% at step 100; the final-three mean is 26.31%.
+28
+
+Method
+
+Peak Step Final Tail-3 Drop AUC Train h Total h
+
+Qwen3.5-2B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+31.40
+44.30
+16.40
+75.00
+75.00
+56.40
+60.00
+49.30
+15.70
+67.90
+69.30
+
+75
+95
+40
+100
+95
+75
+75
+95
+55
+75
+100
+
+27.10
+21.40
+16.40
+75.00
+46.40
+42.90
+57.10
+48.60
+11.40
+55.00
+69.30
+
+24.03
+35.47
+10.00
+71.67
+62.37
+39.77
+46.63
+46.67
+12.83
+53.33
+63.33
+
+4.30
+22.90
+0.00
+0.00
+28.60
+13.50
+2.90
+0.70
+4.30
+12.90
+0.00
+
+19.25
+21.90
+7.58
+32.84
+27.52
+32.45
+28.14
+21.15
+12.56
+35.15
+31.33
+
+13.49
+15.68
+15.90
+14.18
+15.18
+13.28
+22.23
+15.73
+15.69
+15.26
+14.12
+
+14.37
+16.62
+16.71
+15.08
+16.11
+14.20
+23.26
+16.70
+16.38
+16.13
+15.03
+
+84.30
+39.30
+75.00
+70.70
+90.00
+85.00
+82.10
+79.30
+78.60
+83.60
+81.40
+
+85
+20
+95
+55
+55
+60
+95
+100
+45
+65
+95
+
+83.60
+2.10
+72.10
+55.70
+82.10
+51.40
+76.40
+79.30
+73.60
+81.40
+75.70
+
+81.20 0.70 59.78
+0.70 37.20 9.92
+72.60 2.90 61.18
+55.00 15.00 50.73
+83.53 7.90 76.14
+50.47 33.60 55.10
+78.80 5.70 61.57
+68.57 0.00 33.66
+73.10 5.00 66.25
+75.70 2.20 65.21
+78.07 5.70 55.76
+
+14.94
+24.14
+17.27
+18.61
+15.54
+17.75
+20.81
+22.62
+16.20
+19.57
+18.92
+
+16.22
+25.55
+18.71
+20.12
+17.15
+19.34
+22.40
+24.43
+17.68
+21.08
+20.62
+
+70.00
+72.90
+85.00
+77.10
+92.10
+87.10
+84.30
+77.10
+82.90
+93.60
+77.90
+
+80
+100
+85
+95
+85
+95
+100
+80
+90
+90
+100
+
+63.60
+72.90
+75.00
+72.10
+89.30
+81.40
+84.30
+76.40
+82.10
+92.10
+77.90
+
+67.17 6.40 55.55
+69.07 0.00 53.60
+77.87 10.00 64.78
+74.27 5.00 61.77
+88.80 2.80 71.56
+82.60 5.70 61.77
+79.03 0.00 64.03
+74.77 0.70 56.79
+80.23 0.80 70.08
+92.60 1.50 72.62
+72.87 0.00 55.50
+
+22.16
+24.16
+23.21
+24.65
+22.00
+21.19
+23.22
+23.94
+22.39
+24.13
+25.25
+
+24.51
+26.47
+25.48
+27.08
+24.48
+23.37
+25.63
+26.17
+24.83
+26.45
+27.62
+
+Qwen3.5-4B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+Qwen3.5-9B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+Table S8 ALFWorld training profiles for all 33 runs, using success (%). Peak includes initialization; Step gives its first
+
+occurrence; Final is step-100 validation; Tail-3 averages steps 90, 95, and 100; Drop is Peak minus Final. AUC is
+normalized by the training horizon. Train time excludes validation and saving; Total includes both.
+
+Nevertheless, its sampled final accuracy of 39.39 ± 0.19% leads the 2B Search-QA comparison. Together, these
+cases extend the collapse and regression analysis beyond failures visible under sampled evaluation: effective
+nonzero-temperature sampling does not rule out a collapse or substantial loss of performance under greedy
+decoding.
+
+F.3
+
+Early Stagnation on ScienceWorld
+
+Low-score plateaus are informative training outcomes. At 2B, eight methods including GRPO improve over
+
+their initially negative scores but remain at 0.83 in every validation from steps 10 to 100, with repeated final
+scores of 0.83 ± 0.00. Flat task scores need not imply inactive optimization: GRPO records finite, nonzero
+actor gradients throughout training. For an initially weak policy, updates may change action probabilities
+without improving measured task outcomes if more effective behavior is rarely discovered. This provides a
+plausible interpretation of the stagnation; matching aggregate scores do not require identical policies. Such
+settings are valuable because they test whether teacher guidance can help agents move beyond limited initial
+29
+
+Method
+
+Peak Step Final Tail-3 Drop AUC Train h Total h
+
+Qwen3.5-2B
+
+GRPO
+0.83
+GRPO+OPSD 0.83
+SDAR
+1.08
+Skill-SD
+0.83
+RLSD
+2.39
+OCSD
+13.86
+OVCSD
+15.77
+AgentOPSD
+0.83
+ADRS
+0.83
+ICSD
+0.83
+PCSD
+0.83
+
+5 0.83
+5 0.83
+5 0.83
+5 0.83
+95 1.89
+100 13.86
+90 13.71
+5 0.83
+5 0.83
+5 0.83
+5 0.83
+
+0.83
+0.83
+0.83
+0.83
+2.02
+13.60
+14.92
+0.83
+0.83
+0.83
+0.83
+
+0.00 0.74
+0.00 0.79
+0.25 0.75
+0.00 0.76
+0.51 1.35
+0.00 11.72
+2.05 8.90
+0.00 0.77
+0.00 0.80
+0.00 0.73
+0.00 0.75
+
+4.95
+5.62
+5.74
+5.53
+6.87
+6.04
+7.98
+5.48
+6.77
+6.11
+6.86
+
+6.34
+7.02
+7.24
+6.95
+8.09
+7.35
+9.36
+6.66
+8.01
+7.43
+8.16
+
+33.37
+13.86
+33.40
+44.73
+52.12
+48.02
+41.73
+36.20
+37.90
+16.27
+41.63
+
+60
+90
+25
+95
+65
+75
+85
+50
+70
+75
+65
+
+31.11
+13.66
+13.86
+42.15
+22.43
+41.67
+15.54
+35.01
+36.95
+15.86
+23.00
+
+22.59
+13.71
+13.79
+42.64
+20.56
+35.25
+32.36
+31.28
+31.97
+15.29
+29.79
+
+2.25
+0.20
+19.54
+2.59
+29.69
+6.34
+26.20
+1.20
+0.95
+0.41
+18.63
+
+21.07
+12.87
+16.55
+34.28
+35.43
+36.12
+31.54
+26.77
+27.12
+14.46
+28.74
+
+8.62
+9.02
+9.66
+8.25
+9.38
+9.04
+11.39
+9.84
+9.37
+10.72
+9.63
+
+11.24
+10.87
+12.14
+10.19
+11.34
+11.29
+14.04
+11.72
+11.21
+12.79
+11.55
+
+59.15
+54.91
+58.90
+38.34
+50.36
+55.11
+52.73
+50.61
+58.41
+55.23
+58.33
+
+100
+60
+80
+50
+100
+60
+95
+45
+65
+30
+100
+
+59.15
+52.11
+57.13
+28.84
+50.36
+45.36
+45.09
+42.58
+37.83
+18.77
+58.33
+
+53.03 0.00 38.90
+52.59 2.80 42.98
+55.90 1.77 46.40
+33.60 9.50 30.04
+46.48 0.00 38.30
+47.74 9.75 41.52
+45.82 7.63 32.70
+30.22 8.03 37.53
+46.33 20.58 44.49
+26.99 36.46 36.00
+55.95 0.00 44.33
+
+11.18
+12.65
+12.95
+13.19
+12.86
+11.39
+16.50
+12.44
+13.16
+14.07
+12.67
+
+14.44
+15.94
+16.94
+16.84
+16.52
+14.29
+20.26
+15.56
+16.44
+17.15
+15.99
+
+Qwen3.5-4B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+Qwen3.5-9B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+Table S9 ScienceWorld training profiles for all 33 runs, using task score. Peak includes initialization; Step gives its
+
+first occurrence; Final is step-100 validation; Tail-3 averages steps 90, 95, and 100; Drop is Peak minus Final. AUC is
+normalized by the training horizon. Train time excludes validation and saving; Total includes both.
+
+task competence, rather than only improve agents that already learn effectively. The overlapping traces in
+Figure 2 reflect these matching recorded scores, with colored markers distinguishing the methods.
+
+Escaping the plateau remains method- and scale-dependent. OCSD and OVCSD reach final 2B task scores of
+13.78 ± 0.03 and 13.85 ± 0.37, whereas RLSD reaches 1.89 ± 0.07. Their separation from the common plateau
+shows that this setting is not uniformly unlearnable under the available training budget. Yet the leading
+method changes with scale: OCSD reaches 41.77 at 4B, while GRPO leads at 9B with 58.99. These results
+motivate examining whether a method enables sustained task progress at a given backbone scale, rather than
+treating either a flat curve as stability or a small-model gain as a general advantage. Table S9 reports peak,
+late-training, and final task scores for all three scales.
+
+30
+
+Method
+
+Peak Step Final Tail-3 Drop AUC Train h Total h
+
+Qwen3.5-2B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+33.73
+35.01
+38.40
+38.08
+39.74
+15.58
+38.02
+37.92
+16.61
+39.52
+34.05
+
+50
+90
+75
+90
+75
+45
+70
+60
+25
+65
+85
+
+32.03
+34.24
+38.02
+37.57
+38.02
+13.31
+1.34
+34.43
+14.18
+31.49
+31.71
+
+32.17 1.70 29.56
+34.51 0.77 26.34
+37.46 0.38 32.49
+37.86 0.51 28.90
+38.50 1.73 35.58
+13.49 2.27 14.38
+4.81 36.67 27.84
+35.40 3.49 27.87
+14.18 2.43 14.55
+26.31 8.03 32.10
+32.92 2.34 30.17
+
+2.00
+2.03
+2.90
+2.56
+3.40
+0.97
+3.54
+2.58
+1.13
+3.47
+2.36
+
+2.64
+2.54
+3.77
+3.43
+4.48
+1.14
+4.60
+3.37
+1.34
+4.45
+2.99
+
+45.12
+44.42
+45.57
+43.74
+43.23
+44.35
+44.16
+44.42
+42.75
+46.14
+44.16
+
+100
+75
+100
+95
+100
+95
+80
+100
+100
+100
+65
+
+45.12
+43.81
+45.57
+43.30
+43.23
+44.19
+43.65
+44.42
+42.75
+46.14
+43.55
+
+44.11
+43.84
+44.05
+43.45
+42.46
+43.85
+43.52
+43.99
+41.97
+45.94
+43.73
+
+0.00
+0.61
+0.00
+0.45
+0.00
+0.16
+0.51
+0.00
+0.00
+0.00
+0.61
+
+40.86
+40.69
+40.14
+39.62
+39.35
+39.27
+40.44
+40.90
+38.96
+41.83
+39.28
+
+3.99
+4.67
+4.29
+4.76
+5.00
+4.08
+4.91
+4.82
+4.60
+5.02
+4.24
+
+5.41
+6.14
+5.45
+6.28
+6.56
+5.55
+6.46
+6.30
+6.06
+6.25
+5.57
+
+47.62
+47.55
+45.15
+46.50
+45.25
+47.78
+45.79
+45.98
+44.19
+46.59
+45.76
+
+95
+100
+95
+100
+80
+100
+100
+75
+100
+100
+80
+
+46.50
+47.55
+45.15
+46.50
+44.22
+47.78
+45.79
+45.41
+44.19
+46.59
+44.99
+
+46.46
+46.93
+44.64
+45.69
+44.04
+47.18
+45.00
+45.06
+43.61
+46.10
+44.92
+
+1.12
+0.00
+0.00
+0.00
+1.02
+0.00
+0.00
+0.58
+0.00
+0.00
+0.77
+
+41.28
+42.33
+41.11
+41.87
+40.60
+40.37
+41.40
+40.50
+38.85
+41.44
+40.57
+
+5.93
+7.05
+6.85
+6.39
+7.46
+6.04
+7.28
+6.18
+6.99
+7.70
+6.64
+
+8.22
+9.38
+9.06
+8.09
+9.83
+8.26
+9.75
+7.96
+9.27
+9.96
+8.60
+
+Qwen3.5-4B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+Qwen3.5-9B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+Table S10 Search-QA training profiles for all 33 runs, using exact-match accuracy (%). Peak includes initialization;
+
+Step gives its first occurrence; Final is step-100 validation; Tail-3 averages steps 90, 95, and 100; Drop is Peak minus
+Final. AUC is normalized by the training horizon. Train time excludes validation and saving; Total includes both.
+
+F.4
+
+Per-Run Training Profiles
+
+Aggregate curves can conceal instability confined to a particular task or model size. For every benchmark,
+we report each run’s peak, final, and late-training performance alongside its AUC and computational cost.
+Peak is the highest validation metric at steps 0, 5, . . . , 100; Step records its first occurrence, Tail-3 averages
+steps 90, 95, and 100, and Drop is Peak minus Final in the corresponding metric’s points. AUC integrates
+the raw validation curve by the trapezoidal rule and divides by the 100-step horizon; it is not ROC-AUC.
+These summaries capture different aspects of the trajectory: a low Tail-3 indicates that weak performance
+extends beyond the final measurement, whereas a small Drop does not exclude earlier instability. For example,
+AgentOPSD on 4B ALFWorld finishes at its own peak despite the prolonged near-zero phase described above.
+Tables S8–S11 report all 132 profiles with the same columns for each benchmark.
+Net time includes rollout generation, teacher computation, and policy updates; total time additionally includes
+in-loop validation and checkpoint saving. All runs use eight H800 GPUs, so the corresponding GPU-hours
+equal elapsed hours multiplied by eight. These per-run measurements support the paired cost comparisons in
+31
+
+Method
+
+Peak Step Final Tail-3 Drop AUC Train h Total h
+
+Qwen3.5-2B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+70.30
+77.30
+71.90
+75.80
+69.50
+75.00
+2.30
+71.90
+64.80
+71.10
+75.80
+
+100
+85
+85
+85
+85
+100
+0
+100
+100
+100
+100
+
+70.30
+75.80
+64.80
+70.30
+68.80
+75.00
+0.80
+71.90
+64.80
+71.10
+75.80
+
+67.17
+67.20
+63.53
+71.07
+68.53
+36.43
+0.53
+70.07
+63.53
+69.27
+71.10
+
+0.00
+1.50
+7.10
+5.50
+0.70
+0.00
+1.50
+0.00
+0.00
+0.00
+0.00
+
+41.19
+53.47
+46.06
+43.04
+37.68
+49.91
+0.86
+36.50
+30.63
+36.15
+40.34
+
+3.89
+3.87
+5.05
+4.22
+4.39
+3.73
+5.23
+4.70
+4.22
+4.38
+4.68
+
+4.23
+4.15
+5.36
+4.52
+4.69
+4.07
+5.62
+5.03
+4.55
+4.70
+5.01
+
+68.80
+79.70
+60.20
+5.50
+73.40
+68.00
+75.80
+74.20
+68.80
+3.90
+70.30
+
+80
+90
+95
+0
+70
+65
+90
+100
+95
+0
+100
+
+64.80
+77.30
+50.80
+0.00
+66.40
+64.10
+73.40
+74.20
+66.40
+0.00
+70.30
+
+64.07
+76.30
+52.10
+0.00
+67.20
+65.13
+74.73
+72.13
+67.47
+0.00
+69.00
+
+4.00
+2.40
+9.40
+5.50
+7.00
+3.90
+2.40
+0.00
+2.40
+3.90
+0.00
+
+45.70
+50.06
+39.55
+0.18
+54.71
+52.07
+50.76
+43.05
+37.03
+0.26
+37.05
+
+5.36
+6.48
+7.18
+7.03
+6.32
+5.41
+6.50
+6.45
+6.56
+8.63
+6.68
+
+5.88
+7.00
+7.76
+7.40
+6.87
+5.95
+7.09
+7.02
+7.11
+9.05
+7.17
+
+71.90
+76.60
+74.20
+7.80
+6.20
+74.20
+75.00
+75.00
+69.50
+73.40
+75.80
+
+80
+100
+100
+0
+0
+85
+85
+90
+100
+100
+95
+
+69.50
+76.60
+74.20
+0.00
+0.00
+68.80
+69.50
+69.50
+69.50
+73.40
+73.40
+
+68.73
+74.50
+71.87
+0.00
+0.00
+70.87
+72.63
+72.40
+67.70
+72.13
+74.47
+
+2.40
+0.00
+0.00
+7.80
+6.20
+5.40
+5.50
+5.50
+0.00
+0.00
+2.40
+
+48.77
+50.69
+53.89
+0.20
+0.15
+43.90
+52.61
+47.46
+46.36
+51.31
+57.55
+
+8.09
+9.13
+8.57
+9.87
+9.66
+8.75
+9.29
+9.45
+8.90
+9.84
+8.91
+
+8.89
+9.94
+9.38
+10.44
+10.25
+9.55
+10.14
+10.27
+9.63
+10.56
+9.74
+
+Qwen3.5-4B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+Qwen3.5-9B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+Table S11 WebShop training profiles for all 33 runs, using success (%). Peak includes initialization; Step gives its first
+
+occurrence; Final is step-100 validation; Tail-3 averages steps 90, 95, and 100; Drop is Peak minus Final. AUC is
+normalized by the training horizon. Train time excludes validation and saving; Total includes both.
+
+Appendix G.1.
+
+F.5
+
+Task Failure and Numerical Diagnostics
+
+We use a final validation metric below 5 as a descriptive low-performance criterion across all four benchmarks.
+It identifies 16 runs: one ALFWorld run, five WebShop runs, one Search-QA run, and nine ScienceWorld runs.
+The ALFWorld and WebShop runs also regress below their pretrained final-evaluation baselines, whereas
+the ScienceWorld cases largely reflect low-score stagnation rather than loss from a capable starting point.
+Search-QA OVCSD illustrates the decoding-dependent case discussed above: its low validation endpoint is not
+reproduced under sampled final evaluation. Thus, the common threshold identifies cases for analysis without
+treating every low score as a training collapse. Table S12 summarizes these sixteen runs, including their
+training trajectories, repeated final results, late-training interaction lengths, and nonfinite-gradient counts.
+Persistent failure near the action limit. In all five low-performing WebShop runs, student rollout success is
+
+32
+
+Model / method
+
+Initial
+
+Peak Step Val. Eval. Turns/limit NF
+
+ALFWorld
+
+4B GRPO+OPSD
+
+33.60 39.30
+
+20 2.10
+
+1.52
+
+49.01/50
+
+0
+
+-2.94
+-0.94
+-2.77
+-1.97
+-2.51
+-1.73
+-0.42
+-3.23
+-2.51
+
+5
+5
+5
+5
+95
+5
+5
+5
+5
+
+0.83
+0.83
+0.83
+0.83
+1.89
+0.83
+0.83
+0.83
+0.83
+
+17.38/20
+15.60/20
+16.71/20
+12.88/20
+20.00/20
+19.52/20
+19.99/20
+14.28/20
+20.00/20
+
+0
+0
+0
+39
+0
+0
+0
+0
+0
+
+13.95 38.02
+
+70 1.34 33.21
+
+2.48/4
+
+0
+
+2.30
+5.50
+3.90
+7.80
+6.20
+
+0
+0
+0
+0
+0
+
+14.99/15
+15.00/15
+15.00/15
+15.00/15
+15.00/15
+
+0
+1
+0
+68
+0
+
+ScienceWorld
+
+2B GRPO
+2B GRPO+OPSD
+2B SDAR
+2B Skill-SD
+2B RLSD
+2B AgentOPSD
+2B ADRS
+2B ICSD
+2B PCSD
+
+0.83
+0.83
+1.08
+0.83
+2.39
+0.83
+0.83
+0.83
+0.83
+
+0.83
+0.83
+0.83
+0.83
+1.89
+0.83
+0.83
+0.83
+0.83
+
+Search-QA
+
+2B OVCSD
+WebShop
+
+2B OVCSD
+4B Skill-SD
+4B ICSD
+9B Skill-SD
+9B RLSD
+
+2.30
+5.50
+3.90
+7.80
+6.20
+
+0.80
+0.00
+0.00
+0.00
+0.00
+
+1.07
+0.00
+0.00
+0.00
+0.00
+
+Table S12 All runs with final validation performance below 5 across the four benchmarks. Initial, Peak, and Val. use
+
+the training-validation metric; Eval. is the repeated final-evaluation mean. Turns/limit averages training steps 81–100
+relative to the interaction limit; NF counts steps with nonfinite actor gradients. Low scores include stagnation as well
+as lost performance.
+
+zero throughout the final 20 training steps, with mean episode lengths of 14.99–15.00 against the 15-action
+limit. Over the same interval, GRPO+OPSD on 4B ALFWorld averages 7.1% training success and 49.0 of
+the allowed 50 actions, compared with 81.5% success and 18.4 actions for GRPO. By contrast, low-performing
+ScienceWorld runs average 12.88–20.00 of the allowed 20 turns, and Search-QA OVCSD averages 2.48 of
+four turns. Near-limit interaction length therefore characterizes the persistent WebShop failures but is not a
+universal signature of low performance. Joint inspection of task progress and interaction length distinguishes
+wasted interaction budgets from other forms of ineffective learning.
+Gradient diagnostics alone do not identify task failure. Only 3 of the 16 low-performing runs record nonfinite
+
+actor gradients; the other 13 do not. Across all four benchmarks, 18 of the 21 runs with nonfinite gradients
+finish with validation performance at or above 5. All 9 runs with peak-to-final declines of at least 20 points
+also have finite recorded gradients throughout. Finite recorded gradients therefore do not establish successful
+learning, just as a nonfinite-gradient event does not by itself imply a near-zero endpoint. Numerical checks
+and behavioral evaluation are complementary requirements for assessing training stability.
+
+G
+
+Computational Cost Analysis
+
+This appendix analyzes computational cost for all 132 runs across four benchmarks, complementing the
+per-setting comparisons in Figure 3. Final-performance comparisons use the repeated evaluations; time-budget
+comparisons select observed points from each benchmark’s training-validation trajectories.
+
+G.1
+
+Performance and Time Budgets
+
+Computational cost changes the practical value of a performance gain. We assess both the resources used
+to obtain the final agent and the performance reached within a fixed training-time budget. For the former,
+we pair repeated-evaluation performance with net training time, average the within-setting time ratios to
+GRPO, and sum GPU-hours across each method’s twelve runs. Nine alternatives have higher mean paired
+33
+
+Rollout
+Advantages
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+2B / ALFWorld
+
+0
+
+110
+
+70
+
+220
+
+0
+
+40
+
+140
+
+0
+
+40
+
+220
+
+0
+
+70
+
+80
+
+0
+
+40
+
+140
+
+0
+
+0
+
+40
+
+Training GPU-hours
+
+220
+
+70
+
+140
+
+9B / Search-QA
+
+80
+
+0
+
+4B / WebShop
+
+80
+
+110
+
+9B / ScienceWorld
+
+4B / Search-QA
+
+2B / WebShop
+
+0
+
+110
+
+9B / ALFWorld
+
+4B / ScienceWorld
+
+2B / Search-QA
+
+0
+
+Teacher forward
+Other
+
+4B / ALFWorld
+
+2B / ScienceWorld
+
+0
+
+Policy/ref scoring
+Policy update
+
+40
+
+80
+
+9B / WebShop
+
+80
+
+0
+
+40
+
+80
+
+Figure S3 Training cost by stage across all eleven methods and twelve settings. Policy/ref scoring combines old-policy
+
+and reference log-probability computation; Other combines reward computation and the remaining training time.
+Teacher forward denotes separately timed teacher passes; teacher-related work may also occur in other stages. Axis
+ranges are shared within each benchmark. Validation and checkpoint saving are excluded.
+
+training time than GRPO; OCSD is approximately tied at 0.999×. Only PCSD and AgentOPSD improve
+mean final performance, with time ratios of 1.17 and 1.19. PCSD’s larger aggregate gain comes at a smaller
+average relative overhead, whereas OVCSD has the largest time ratio (1.37) without improving aggregate
+performance. Table S13 lists the performance and training-time values for every point in Figure 3, allowing
+direct comparisons where markers overlap; Table S14 summarizes these trade-offs across settings.
+Performance within GRPO’s training-time budget. We use the net training time of GRPO as the budget for
+
+each model–task setting. For every method, we select the latest evaluated checkpoint reached within this
+34
+
+Method
+
+ALFWorld
+
+ScienceWorld
+
+Search-QA
+
+WebShop
+
+Perf. Time (h)
+
+Perf. Time (h)
+
+Perf. Time (h)
+
+Perf. Time (h)
+
+Qwen3.5-2B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+28.48
+22.23
+14.46
+74.29
+46.61
+42.32
+56.96
+47.50
+13.04
+54.73
+72.32
+
+13.49 0.83
+15.68 0.83
+15.90 0.83
+14.18 0.83
+15.18 1.89
+13.28 13.78
+22.23 13.85
+15.73 0.83
+15.69 0.83
+15.26 0.83
+14.12 0.83
+
+4.95
+5.62
+5.74
+5.53
+6.87
+6.04
+7.98
+5.48
+6.77
+6.11
+6.86
+
+32.38
+34.22
+38.15
+37.56
+37.93
+12.96
+33.21
+34.49
+14.10
+39.39
+33.18
+
+2.00
+2.03
+2.90
+2.56
+3.40
+0.97
+3.54
+2.58
+1.13
+3.47
+2.36
+
+70.80
+77.05
+63.67
+71.19
+69.73
+75.59
+1.07
+70.51
+63.09
+70.51
+74.71
+
+3.89
+3.87
+5.05
+4.22
+4.39
+3.73
+5.23
+4.70
+4.22
+4.38
+4.68
+
+82.05
+1.52
+76.16
+55.27
+84.38
+52.32
+76.43
+75.00
+70.71
+82.50
+79.82
+
+14.94
+24.14
+17.27
+18.61
+15.54
+17.75
+20.81
+22.62
+16.20
+19.57
+18.92
+
+32.16
+13.65
+13.86
+41.67
+22.41
+41.77
+14.93
+32.80
+36.73
+15.99
+23.85
+
+8.62
+9.02
+9.66
+8.25
+9.38
+9.04
+11.39
+9.84
+9.37
+10.72
+9.63
+
+45.15
+44.16
+44.96
+42.81
+43.60
+44.73
+43.51
+44.25
+42.31
+45.87
+43.11
+
+3.99
+4.67
+4.29
+4.76
+5.00
+4.08
+4.91
+4.82
+4.60
+5.02
+4.24
+
+66.02
+77.15
+51.17
+0.00
+68.16
+64.16
+73.73
+72.07
+65.72
+0.00
+72.17
+
+5.36
+6.48
+7.18
+7.03
+6.32
+5.41
+6.50
+6.45
+6.56
+8.63
+6.68
+
+62.68
+71.79
+75.62
+74.55
+89.20
+86.16
+83.39
+78.04
+78.93
+89.64
+72.77
+
+22.16
+24.16
+23.21
+24.65
+22.00
+21.19
+23.22
+23.94
+22.39
+24.13
+25.25
+
+58.99
+51.98
+58.00
+29.08
+50.27
+44.30
+43.45
+42.48
+35.63
+18.26
+58.60
+
+11.18
+12.65
+12.95
+13.19
+12.86
+11.39
+16.50
+12.44
+13.16
+14.07
+12.67
+
+46.59
+47.08
+44.75
+46.19
+44.31
+48.16
+45.43
+45.81
+43.93
+46.84
+45.42
+
+5.93
+7.05
+6.85
+6.39
+7.46
+6.04
+7.28
+6.18
+6.99
+7.70
+6.64
+
+70.02
+74.90
+74.32
+0.00
+0.00
+67.77
+68.07
+72.27
+70.31
+72.46
+74.32
+
+8.09
+9.13
+8.57
+9.87
+9.66
+8.75
+9.29
+9.45
+8.90
+9.84
+8.91
+
+Qwen3.5-4B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+Qwen3.5-9B
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+Table S13 Numerical values for the points in Figure 3. Perf. is mean final performance over eight rollout seeds, using
+
+the benchmark metrics in Tables 2 and 3; Time is net training time in hours.
+
+budget; methods that finish earlier use their final checkpoint. The fixed-step and time-budget scores are
+drawn from the same validation trajectory. For each of the four benchmarks, we report the mean across the
+three model sizes using that benchmark’s performance metric. AgentOPSD loses its ALFWorld advantage
+and PCSD loses its WebShop advantage under this rule, while OCSD retains a much smaller ScienceWorld
+advantage. Earlier checkpoints can also outperform the endpoint: 2B OVCSD on Search-QA reaches step 55
+within budget, scoring 36.93% before its late greedy-decoding collapse. Time-budget assessment therefore
+reflects both the rate of acquiring performance and the ability to retain it. Table S15 reports both scores for
+every method and benchmark.
+
+G.2
+
+Total Compute and Stage-Level Costs
+
+GPU-hours and training workload. Across 132 runs, the study records 13,200 training steps and 2,772 validation
+
+sweeps, including initial validation. The training loops consume 12,124.4 H800 GPU-hours, computed as
+elapsed hours multiplied by the eight GPUs assigned to each run and summed across runs. Training accounts
+35
+
+Method
+
+Mean
+
+Time (×)
+
+GPU-h
+
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+49.68
+43.05
+46.33
+39.45
+46.54
+49.50
+46.17
+51.34
+44.61
+44.75
+54.26
+
+1.000
+1.158
+1.183
+1.153
+1.208
+0.999
+1.370
+1.187
+1.100
+1.293
+1.167
+
+836.7
+996.1
+956.5
+954.0
+944.5
+861.2
+1111.1
+993.9
+927.8
+1031.2
+967.6
+
+Table S14 Final performance and training cost across twelve settings. Mean uses the benchmark metrics in Tables 2
+
+and 3; Time averages paired training-time ratios to GRPO. GPU-h sums twelve training runs, excluding validation
+and saving.
+Method
+GRPO
+GRPO+OPSD
+SDAR
+Skill-SD
+RLSD
+OCSD
+OVCSD
+AgentOPSD
+ADRS
+ICSD
+PCSD
+
+ALFWorld
+
+ScienceWorld
+
+Search-QA
+
+WebShop
+
+Step 100
+
+Budget
+
+Step 100
+
+Budget
+
+Step 100
+
+Budget
+
+Step 100
+
+Budget
+
+58.10
+32.13
+54.50
+67.60
+72.60
+58.57
+72.60
+68.10
+55.70
+76.17
+74.30
+
+58.10
+31.67
+54.50
+66.70
+77.37
+54.07
+59.77
+37.63
+54.07
+77.37
+68.07
+
+30.36
+22.20
+23.94
+23.94
+24.89
+33.63
+24.78
+26.14
+25.20
+11.82
+27.39
+
+30.36
+21.74
+21.82
+27.00
+22.67
+30.71
+18.99
+24.87
+30.37
+19.51
+27.46
+
+41.22
+41.87
+42.91
+42.45
+41.82
+35.09
+30.26
+41.42
+33.71
+41.41
+40.09
+
+41.22
+41.85
+41.15
+41.61
+41.50
+34.91
+42.04
+41.83
+32.59
+43.07
+40.96
+
+68.20
+76.57
+63.27
+23.43
+45.07
+69.30
+47.90
+71.87
+66.90
+48.17
+73.17
+
+68.20
+72.13
+61.70
+23.17
+47.13
+71.63
+44.80
+70.83
+61.20
+42.97
+63.83
+
+Table S15 Validation performance at step 100 and within the matched GRPO training-time budget, averaged over
+
+the three model sizes separately for each benchmark. Budget selects the latest logged validation reached within each
+setting's budget. ScienceWorld reports task score; the other benchmarks report success or exact-match accuracy (%).
+Each comparison retains its benchmark's validation decoder.
+Group
+
+Runs
+
+Training
+
+Validation
+
+Saving
+
+Total
+
+All runs
+
+132
+
+10580.7
+
+1515.3
+
+28.4
+
+12124.4
+
+Qwen3.5-2B
+Qwen3.5-4B
+Qwen3.5-9B
+
+44
+44
+44
+
+2511.6
+3474.4
+4594.6
+
+282.0
+484.7
+748.6
+
+5.3
+9.2
+13.8
+
+2798.9
+3968.4
+5357.1
+
+ALFWorld
+ScienceWorld
+Search-QA
+WebShop
+
+33
+33
+33
+33
+
+5067.3
+2527.5
+1214.8
+1771.2
+
+408.3
+602.6
+377.5
+126.9
+
+12.2
+1.0
+1.4
+13.8
+
+5487.8
+3131.1
+1593.6
+1911.9
+
+Table S16 Recorded H800 GPU-hours for all 132 training runs across four benchmarks. Model-size and benchmark
+
+blocks separately partition the same total. Training includes rollout and teacher computation; Total additionally
+includes in-loop validation and saving.
+
+for 10,580.7 GPU-hours, in-loop validation for 1,515.3, and checkpoint saving for 28.4. This total separates
+training, in-loop validation, and checkpoint saving; it excludes initialization, initial validation, and subsequent
+repeated evaluation. Table S16 reports the breakdown by model size and benchmark, distinguishing the
+experimental expenditure from the net training cost used in method comparisons.
+36
+
+Distillation overhead extends beyond teacher forward passes. Teacher supervision introduces work at different
+
+stages of training, depending on how each method uses it. Across all twelve settings, OVCSD’s verified
+continuations contribute to rollout generation, whose mean time is 218.0 seconds per step versus GRPO’s
+124.9; OCSD’s paired teacher replay contributes to advantage computation, averaging 10.6 seconds versus 0.2
+for GRPO. These measurements show why separately timed teacher passes cannot represent the full cost of
+incorporating teacher information. Efficiency should be judged using end-to-end training time, with stage-level
+measurements used to locate the additional work. Figure S3 decomposes the absolute GPU-hours into rollout
+generation, policy/reference scoring, teacher forward passes, advantage computation, policy updates, and
+other processing.
+
+H
+
+Literature Survey
+
+H.1
+
+Search Strategy and Selection Criteria
+
+Scope. Our survey characterizes recent research on distillation for training multi-turn language-model agents
+
+that interact through tools or environments. It covers text and GUI agents trained with privileged-context
+supervision, other on-policy teacher distillation, or offline and iterative trajectory distillation, together with
+empirical analyses of these approaches. The common focus is the use of distillation to update the agent’s action
+policy. Within this broader landscape, our benchmark compares GRPO with ten representative methods
+whose main contributions target specific components of text-agent training, including auxiliary objectives,
+credit assignment, reward shaping, and verified teacher continuations (Appendix B).
+Search and coverage. We examine first submissions from 25 June to 22 September 2026 (UTC), a 90-day
+
+period, using arXiv metadata retrieved on 23 September. Two title-and-abstract searches pair agent-related
+terms with distillation, and self-distillation with reinforcement learning. Deduplication and date filtering yield
+635 records, from which the agent–distillation query and interactive-agent keywords identify 84 candidates.
+Reviewing these 84 candidates’ titles and abstracts, with full-text inspection where needed, yields 47 papers
+that meet the survey scope and form the final inventory. As a coverage check, we verify that it includes every
+source paper of the evaluated methods first submitted within this period.
+
+H.2
+
+Publication Statistics
+
+Counting each unique arXiv paper once by its first-submission date gives 47 papers over 90 days, or
+approximately one paper every two days (0.5222 per day). The inventory includes 32 papers on privilegedcontext policy supervision (P), 10 on other on-policy distillation and related empirical frameworks (O), and 5
+on trajectory-based policy distillation (T). The full inventory, with titles, first-submission dates, supervision
+categories, and arXiv links, appears in Tables S17–S20.
+
+37
+
+Submitted
+
+arXiv ID
+
+Title
+
+Route
+
+2026-06-25
+2026-06-26
+
+2606.26790
+2606.27814
+
+P
+O
+
+2026-06-28
+
+2606.29476
+
+2026-06-28
+
+2606.29502
+
+2026-06-29
+
+2606.29863
+
+2026-06-29
+
+2606.29961
+
+2026-06-29
+2026-07-05
+2026-07-07
+
+2606.30044
+2607.04425
+2607.05804
+
+2026-07-08
+
+2607.07820
+
+2026-07-13
+
+2607.11012
+
+2026-07-16
+
+2607.14777
+
+OPID: On-Policy Skill Distillation for Agentic Reinforcement Learning
+ATOD: Annealed Turn-Aware On-Policy Distillation for Multi-Turn Agentic
+Tasks
+CRAFT: Counterfactual Credit Assignment from Free Sibling Rollouts for
+Self-Distilled Agentic Reinforcement Learning
+UCOB: Learning to Utilize and Evolve Agentic Skills via Credit-Aware
+On-Policy Bidirectional Self-Distillation
+KbSD: Knowledge Boundary aware Self-Distillation for Behavioral Calibration in Agentic Search
+DuoMem: Towards Capable On-Device Memory Agents via Dual-Space
+Distillation
+Building Multi-Task Agentic LLMs via Two-Phase Distillation
+UI-MOPD: Multi-Platform On-Policy Distillation for Unified GUI Agents
+TurnOPD: Making On-Policy Distillation Turn-Aware for Efficient LongHorizon Agent Training
+DeepSearch-World: Self-Distillation for Deep Search Agents in a Verifiable
+Environment
+EasyOPD: An Easy-to-use On-Policy Distillation Framework for Large
+Language Models
+SEED: Self-Evolving On-Policy Distillation for Agentic Reinforcement Learning
+
+P
+P
+P
+T
+O
+O
+O
+T
+O
+P
+
+Table S17 Papers included in the literature survey (1/4). Dates indicate first submissions (UTC). P: privileged-context
+
+supervision; O: other on-policy distillation; T: trajectory distillation.
+
+Submitted
+
+arXiv ID
+
+Title
+
+Route
+
+2026-07-20
+
+2607.17558
+
+P
+
+2026-07-27
+
+2607.24280
+
+2026-07-27
+
+2607.24720
+
+2026-07-30
+
+2607.27937
+
+2026-07-30
+2026-07-30
+2026-07-31
+
+2607.28026
+2607.28076
+2607.29320
+
+2026-08-01
+
+2608.00485
+
+2026-08-02
+2026-08-03
+
+2608.01359
+2608.01597
+
+2026-08-03
+
+2608.01837
+
+2026-08-03
+
+2608.01953
+
+Why Does Feedback-Augmented Self-Distillation Fail to Improve RetrievalInterleaved Search Agents?
+From Proprietary to Open-Source: Bridging the Distribution Gap via MultiAgent Protocol Distillation in Agentic Search
+The Physics of Multi-Turn Long-Horizon Planning: From Pre-training to
+Post-training via Single- and Multi-Teacher On-Policy Agentic Distillation
+From Scoring to Acting: Outcome-Verified Comparative Self-Distillation for
+LLM Agents
+Contrastive Reinforced Policy Optimization via Privileged Self-Distillation
+Group-Reflective Self-Distillation for Agentic Reinforcement Learning
+MAGA: Multi-Platform Self-Fusion of GUI Agents via Structured Action
+Distillation
+SERL-SQL: Selective Hindsight Distillation for Text-to-SQL Reinforcement
+Agentic Learning
+EviSD: Evidence-Conditioned Self-Distillation for Search-Augmented Agents
+HindSearch: Trajectory-Level Hindsight Critique for Search-Augmented
+Reinforcement Learning
+PCSD: Persistent Consistency for Self-Distillation in Agentic Reinforcement
+Learning
+Look Ahead Before You Distill: Future Trajectory Validation of Teacher
+Guidance for Agentic On-Policy Distillation
+
+P
+O
+P
+P
+P
+O
+P
+P
+P
+P
+O
+
+Table S18 Papers included in the literature survey (2/4). Dates indicate first submissions (UTC). P: privileged-context
+
+supervision; O: other on-policy distillation; T: trajectory distillation.
+
+38
+
+Submitted
+
+arXiv ID
+
+Title
+
+Route
+
+2026-08-04
+2026-08-04
+
+2608.03223
+2608.04007
+
+P
+P
+
+2026-08-05
+
+2608.05219
+
+2026-08-05
+
+2608.04788
+
+2026-08-05
+2026-08-06
+2026-08-06
+
+2608.04794
+2608.05987
+2608.06065
+
+2026-08-07
+
+2608.07068
+
+2026-08-07
+
+2608.07371
+
+2026-08-09
+
+2608.08570
+
+2026-08-09
+
+2608.08960
+
+2026-08-10
+
+2608.09555
+
+Agentic Reinforcement Learning with Self-Distilled Reward Shaping
+TurnSight: Turn-Level Hindsight Self-Distillation for Tool-Integrated Reasoning
+When Privileged Guidance Misaligns: State-Matched Routing and Contextualized Self-Distillation for Multi-Turn Agents
+Agentic Reinforcement Learning with Observation-Calibrated SelfDistillation
+Privileged, but Biased: How PI-Conditioned Teachers Break Self-Distillation
+AgentOPSD: Recursive Self-Distillation for Agentic Reinforcement Learning
+The Next Screenshot Knows: Gated Hindsight Distillation for Mobile GUI
+Agents
+MemOPD: On-Policy Distillation through Memory State Alignment for
+Long-Horizon Agents
+Trajectory-Relative Hindsight Distillation for Agentic Reinforcement Learning
+FailForge: Distilling Procedural Competence from Persistent Failures into
+Code Agents
+Reading is not Reasoning: Bridging the Agentic Policy Gap in Vision-Text
+Compression
+Bidirectional Context Self-Distillation for Reinforcement Learning of SkillBased LLM Agents
+
+P
+P
+P
+P
+P
+O
+P
+T
+P
+P
+
+Table S19 Papers included in the literature survey (3/4). Dates indicate first submissions (UTC). P: privileged-context
+
+supervision; O: other on-policy distillation; T: trajectory distillation.
+
+Submitted
+
+arXiv ID
+
+Title
+
+Route
+
+2026-08-12
+
+2608.11967
+
+P
+
+2026-08-13
+
+2608.12764
+
+2026-08-14
+
+2608.14945
+
+2026-08-19
+
+2608.18524
+
+2026-08-22
+
+2608.21946
+
+2026-08-25
+
+2608.24114
+
+2026-08-29
+
+2608.29357
+
+2026-08-31
+
+2608.31077
+
+2026-09-13
+
+2609.14636
+
+2026-09-17
+
+2609.20784
+
+2026-09-21
+
+2609.24974
+
+LoongReflect: Boosting Long-Horizon Reflection in Search Agents via Global
+Perspective Distillation
+Beyond Outcome Rewards: Step-Level Self-Distilled Policy Optimization
+for Deep Search Agents
+Trust Is Not Enough: Influence Calibration for On-Policy Self-Distillation
+in Agentic RL
+DART-SD: Diamond-topology Aware Retrieval and Tuning for SelfDistillation of Multi-Turn Tool-Calling Agents
+EDGE: Experience-Distillation for Guided Exploration in Agentic Reinforcement Learning
+AHEAD: Adaptive Hindsight with Environment-Augmented Distillation for
+Agentic RL
+LiteSearch-VL: Small Multimodal Search Agents via Trajectory Distillation
+and Synthetic Step-DPO
+Reconciling Process Supervision with Outcome-Based Credit in Agentic
+Policy Optimization
+Know When to Stop, Where to Restart: Accelerating Multi-Turn Agentic
+On-Policy Distillation
+RetireOPD: Self-Retiring On-Policy Distillation for Agentic Reinforcement
+Learning
+Harness-Zero: Harness Distillation via Agent-as-Harness
+
+P
+P
+P
+P
+P
+T
+P
+O
+P
+T
+
+Table S20 Papers included in the literature survey (4/4). Dates indicate first submissions (UTC). P: privileged-context
+
+supervision; O: other on-policy distillation; T: trajectory distillation.
+
+39
+
+

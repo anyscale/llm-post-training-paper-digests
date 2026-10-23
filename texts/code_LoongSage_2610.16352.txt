@@ -1,0 +1,1846 @@
+LoongSage Technical Report
+
+L OONG S AGE : A P RODUCTION -G RADE , H IGH -E FFICIENCY
+AGENTIC RL F RAMEWORK FOR F RONTIER LLM S WITH
+VALIDATED R ECIPES
+Team
+
+arXiv:2610.16352v2 [cs.LG] 16 Oct 2026
+
+https://github.com/baidu-baige/LoongSage
+
+A BSTRACT
+Reinforcement learning (RL) has emerged as a critical phase in the post-training
+pipeline of large language models (LLMs). As the frontier of LLM capabilities shifts from static reasoning to agentic tasks—characterized by external tool
+invocation, multi-turn interactions, and long-horizon decision-making—existing
+mainstream RL frameworks have grown increasingly unwieldy, raising the overhead of adoption, usage, and debugging. To address these challenges, we present
+LoongSage, an agent-native, fully asynchronous RL framework with a lightweight
+core of roughly 14K lines of code. Built upon Megatron for distributed training
+and SGLang for high-throughput inference, LoongSage centralizes orchestration
+within a single controller process and encapsulates all GPU-resident components
+as Ray actors. It introduces AgentFlow, a unified execution paradigm that orchestrates both white-box and black-box agents. For asynchronous execution, it
+integrates sliding-window strategies that bound trajectory staleness, and employs
+TransferMesh, a topology-aware synchronization mechanism that routes weights
+after each step over the fastest transport available to each receiver. Beyond agentic
+RL, LoongSage incorporates a memory-efficient Teacher Manager that decouples
+the scaling of teacher models from GPU memory constraints, natively supporting
+Multi-Teacher On-Policy Distillation. Extensive evaluations across four complete
+training runs, spanning complex reinforcement learning and multi-teacher distillation, demonstrate that task rewards improve steadily while the train–inference gap
+is kept under continuous control, and the fully asynchronous pipeline removes
+synchronous idle bubbles, sustaining hardware utilization.
+
+1
+
+I NTRODUCTION
+
+Reinforcement learning (RL) has emerged as a pivotal post-training mechanism driving recent capability gains in large language models (LLMs). Historically, the GPT series leveraged Reinforcement
+Learning from Human Feedback (RLHF) to translate human preferences into optimizable objectives,
+establishing the viability of instruction-following assistants (Ouyang et al., 2022). More recently,
+models like DeepSeek-R1 have demonstrated that, given verifiable rewards, complex behaviors such
+as extended chain-of-thought reasoning, self-correction, and backtracking can emerge through RL
+optimization (Guo et al., 2025; Wei et al., 2022). As the focus transitions from instruction following to complex reasoning, RL has shifted from a secondary fine-tuning step to a central phase for
+instilling core model capabilities.
+Despite these reasoning advancements, text generation alone is insufficient for executing complex,
+real-world projects. This limitation has catalyzed exploration into tool-calling capabilities (Yao
+et al., 2023; Schick et al., 2023), driving the paradigm shift towards agentic RL. In this context,
+reward signals are no longer confined to the correctness of single-turn responses. Instead, they evaluate an agent’s holistic ability to complete tasks by invoking tools, manipulating files, executing
+tests, and refining actions iteratively based on environmental feedback. Consequently, coding, research, and computer-use agents have established end-to-end task completion as a new capability
+frontier (Yang et al., 2024; Zhou et al., 2024; Xie et al., 2024). Compared to single-turn tasks,
+agentic RL unfolds over extended horizons with persistent multi-turn states, necessitates sandboxed
+1
+
+LoongSage Technical Report
+
+execution for external side effects, and produces heavy-tailed episode distributions (Fu et al., 2026;
+Luo et al., 2025). This fundamental shift redefines the role of an RL framework from merely generating and scoring text to continuously driving and recording a system operating within dynamic
+environments.
+However, many existing RL frameworks are rooted in assumptions inherited from single-turn RLHF
+or verifiable-reward workloads (Hu et al., 2025), rendering them suboptimal for agentic training.
+While some systems introduce controller-centered abstractions (Sheng et al., 2025) or deliberately
+narrow the pairing of backend engines (Zhu et al., 2025), none are architected natively for the complexities of agentic training, which directly translate into production overheads. For instance, memory constraints typically bottleneck the number of teachers in multi-teacher distillation, and synchronous train-inference loops suffer severe utilization drops due to long-tailed trajectory rollouts.
+Furthermore, several systemic discrepancies manifest as implicit off-policy drift: mismatches in tokenization, numerical precision, and Mixture-of-Experts (MoE) routing between the training and
+inference engines. These are compounded by loose trajectory reconstruction—a subtle but accumulating divergence between the inference-generated sequences and the training-consumed data.
+Because algorithmic hyperparameters cannot tune away these systemic issues, a modern framework
+must elevate resource management, train-inference decoupling, numerical consistency, and trajectory fidelity to first-class design primitives.
+To address these critical gaps, we present LoongSage, a lightweight agentic RL training framework
+engineered for production-grade workloads. Built specifically upon Megatron (Shoeybi et al., 2019)
+for distributed training and SGLang (Zheng et al., 2024) for high-throughput inference, LoongSage
+encapsulates the most demanding and error-prone complexities of agentic RL within its architecture
+while maintaining a lightweight, extensible, and user-friendly core. Notably, we open-source not
+only the framework but also the validated training recipes, enabling researchers to initialize runs
+from configurations proven on frontier models rather than starting from scratch. Its key features
+include:
+• Seamless Integration of Any Agent: LoongSage accommodates any white-box or blackbox agent via a standard chat-completions interface with zero intrusion into agent logic. Its
+AgentFlow paradigm maintains strict token-level alignment (Token-In, Token-Out; TITO),
+feeding the training engine the exact token streams generated during inference, thereby
+decoupling the framework core from domain-specific agent implementations.
+• Staleness-Bounded Fully Asynchronous Training: By decoupling the sampling and optimization phases via a train-rollout buffer, the fully asynchronous pipeline substantially
+improves hardware utilization. To strictly bound the resulting trajectory staleness, it employs sliding-window strategies, bringing off-policy drift under explicit control.
+• Topology-Aware Weight Synchronization: Through TransferMesh, LoongSage transfers
+weights from training to inference as a continuous named tensor stream. The system automatically selects the optimal transport layer—such as a CUDA IPC handle for colocated
+GPUs or an NCCL broadcast for distributed nodes—based on the physical device topology,
+keeping the synchronization process completely transparent to both backend engines.
+• Full-Vocabulary Multi-Teacher On-Policy Distillation: An independent Teacher Manager treats teacher models as dynamically managed compute resources, decoupling the
+permissible number of teachers from the student model’s GPU memory constraints to
+enable scalable multi-teacher distillation. Furthermore, it natively supports a composable, multi-paradigm objective function—spanning PG-style, GKD-style, and hybrid distillation modes—equipped with built-in estimators including sampled-token, Top-K, fullvocabulary, and Jensen–Shannon Divergence (JSD) KL strategies.
+• Systemic Train–Inference Consistency: To prevent off-policy drift, LoongSage treats
+train–inference consistency as a systematically enforced property. It deploys a defense-indepth architecture combining Deterministic Source Alignment (e.g., MoE routing replay),
+selective precision pinning for critical layers, and algorithmic residual corrections (including TIS, M2PO, and OPSM; detailed in Section 4.5) to guarantee the optimization plane
+reliably tracks the sampling distribution.
+• Lightweight, Usable, and Highly Extensible: By maintaining a strict zero-fork dependency on its backend engines, the lightweight core transparently inherits upstream opti2
+
+LoongSage Technical Report
+
+mizations and auto-expands its model library without tedious framework adaptations. Additionally, a highly extensible plugin system exposes ten core extension points—spanning
+agents, reward models, and scheduling strategies. This enables configuration-driven hotplugging of new algorithms, allowing rapid iteration without modifying the framework’s
+main trunk.
+
+2
+
+R ELATED W ORK
+
+2.1
+
+T HE E VOLUTION OF LLM P OST-T RAINING
+
+Compositional Paradigms. Modern LLM post-training is converging toward a compositional
+pipeline rather than a single optimization objective. Supervised fine-tuning establishes base capabilities and response formats, after which reinforcement learning optimizes the policy against a
+reward signal. Building on knowledge distillation (Hinton et al., 2015), on-policy distillation then
+adds a denser supervision channel, transferring the output distributions of one or more teachers onto
+the student’s own rollouts (Gu et al., 2024; Agarwal et al., 2024). These stages differ in where
+supervision originates and in whether generation happens inside the training loop, yet they increasingly share the same training and inference infrastructure. Frameworks therefore need to compose
+objectives and data flows without forcing every new method into a separate execution stack.
+From RLHF to RLVR. Reinforcement learning entered LLM post-training as RLHF, which fits
+a reward model to preference comparisons and optimizes the policy with PPO (Schulman et al.,
+2017; Ouyang et al., 2022). Later work then moved in two directions, one of which removes online
+RL altogether by reparameterizing the preference objective, as DPO does (Rafailov et al., 2023).
+The other retains online RL but replaces the learned reward model with a programmatic checker,
+which in turn simplifies the algorithms themselves. GRPO drops the value network in favor of
+group-relative advantages (Shao et al., 2024), and DAPO combines decoupled clipping, dynamic
+sampling, and token-level loss aggregation for large-scale RLVR (Yu et al., 2026). The transition
+also moves the systems cost from reward-model and reference-policy management toward rollout
+generation, program execution, sample filtering, and reliable aggregation of completed outcomes.
+Agentic RL. As models are deployed in more complex settings, RL is shifting toward agentic tasks
+with multi-turn interaction and external environments, building on early evidence that LLMs can be
+taught to invoke tools and APIs, whether by in-context prompting or by fine-tuning (Yao et al., 2023;
+Schick et al., 2023; Qin et al., 2024). An agentic reward evaluates whether a task was completed
+rather than whether a single response was correct, so producing it depends on tool use and sandboxed
+execution against a live environment (Yang et al., 2024; Jimenez et al., 2024; Xie et al., 2024). Unlike
+single-turn generation, the resulting trajectory contains intermediate observations, actions, and tool
+results whose contribution to the final outcome may be delayed. A practical training system must
+therefore preserve the generated sequence and its metadata across multiple turns, tolerate heavytailed episode lengths and external-environment failures, and manage the sandbox lifecycle (Luo
+et al., 2025).
+2.2
+
+D ISTRIBUTED T RAINING AND I NFERENCE S YSTEMS
+
+Parallelism and Distributed Training. Large-model training combines data, tensor, pipeline, and
+expert parallelism to overcome single-GPU limits, and Megatron-LM provides optimized implementations of these strategies (Shoeybi et al., 2019). DeepSpeed and ZeRO instead reduce memory use
+by partitioning optimizer states, gradients, and parameters (Rasley et al., 2020; Rajbhandari et al.,
+2020). On top of these placement decisions, RL post-training adds a further requirement, because
+the inference side must generate rollouts concurrently or alternately with the distributed training
+side. Resource placement and the synchronization relation between the two sides therefore become
+part of the framework design.
+Orchestration and Inference Engines. Ray manages heterogeneous pipeline components across
+a cluster (Moritz et al., 2018), while rollout generation relies on dedicated serving engines. vLLM
+improves throughput through continuous batching and PagedAttention (Kwon et al., 2023), and
+SGLang targets multi-turn and structured LLM programs (Zheng et al., 2024). Because rollout
+3
+
+LoongSage Technical Report
+
+requests have variable lengths and may invoke tools whereas training requires tightly synchronized
+collective computation, orchestration must coordinate two distinct lifecycles and resource layouts
+rather than treating inference as a simple preprocessing step.
+2.3
+
+RL F RAMEWORKS
+
+Foundational RL Frameworks. OpenRLHF (Hu et al., 2025) established an accessible combination of distributed training and high-throughput inference. NeMo-Aligner (Shen et al., 2024) targets
+Megatron-based scale, TRL (von Werra et al., 2020) emphasizes Hugging Face usability, verl (Sheng
+et al., 2025) uses a controller-centered HybridFlow model, and slime (Zhu et al., 2025) narrows the
+dependency surface by pairing Megatron-LM with SGLang. Together these systems span accessibility, ecosystem integration, large-scale backend support, expressive control flow, and a deliberately
+small dependency surface. Agentic workloads, however, further require explicit support for trajectory structure, resource sharing, and the boundary between rollout and optimization.
+Asynchronous Execution and Rollout Management. AReaL (Fu et al., 2026) makes asynchronous generation and training the default and mitigates long-tail latency by buffering unfinished
+trajectories for later continuation, which improves utilization at the cost of trajectory staleness.
+Agent-Lightning (Luo et al., 2025) instead disaggregates the agent from the trainer, while agent
+frameworks and benchmarks such as SWE-agent (Yang et al., 2024), OpenHands (Wang et al.,
+2025), WebArena (Zhou et al., 2024), and OSWorld (Xie et al., 2024) motivate support for longhorizon interaction and persistent state. These directions expose a central trade-off in which decoupling improves utilization and accommodates long-running interactions while also increasing
+coordination complexity and the possibility that training consumes data produced by older policy
+versions. A framework should therefore expose this trade-off as a configurable policy rather than a
+fixed behavior, and keep one interface for trajectories, weight transfer, and training regardless of the
+execution mode.
+
+3
+
+T HE L OONG S AGE F RAMEWORK
+
+This section describes the system architecture of LoongSage and the orchestration of its principal components within an agentic RL training pipeline. By establishing strict boundaries across
+orchestration, data representation, and backend integration, the framework accommodates both
+synchronous and fully asynchronous execution within a unified architecture. Figure 1 situates
+LoongSage against the most closely related systems across four structural axes: training and inference backends, agent integration methodology, support for multi-teacher distillation, and execution asynchrony. Rather than pursuing broad backend agnosticism or unrestricted scheduling,
+LoongSage commits to an optimized pairing of specific engines and bounded asynchronous execution. This focus lets the framework address the central challenges of agentic workloads: ensuring
+the fidelity of trajectories fed to the optimizer, orchestrating multi-teacher distillation at scale, and
+maintaining observability over the train–inference gap (detailed in Section 4.5).
+3.1
+
+D ESIGN T RADE - OFFS
+
+The architectural design of LoongSage is guided by three core principles, aimed at ensuring that
+long-running agentic RL training remains transparent, deterministic, and diagnosable in the event of
+systemic failures.
+One controller, many workers. All system orchestration is centralized within a single controller
+process, where the Trainer acts as the sole state machine dictating every phase transition. GPUresident components operate as Ray actors, exposing coarse-grained control methods and returning
+ObjectRefs. Crucially, the controller executes no forward passes and holds no model parameters,
+guaranteeing that the global state of a long-running distributed job can be fully inspected from
+this single process. Control signals are kept intentionally coarse to amortize the overhead of Ray
+serialization and remote procedure calls (RPCs).
+Token-level internal boundaries. The internal interface between the sampling and optimization
+planes operates strictly at the token level—exchanging token sequences coupled with their respective
+log-probabilities, loss masks, and weight versions. Human-readable text exists only at the outermost
+4
+
+LoongSage Technical Report
+
+Backends
+
+Agent integration
+
+Asynchrony
+
+Distillation
+
+verl
+
+Multiple training and
+inference backends
+
+Tool and agent-loop
+APIs in the trainer
+
+One-step-off and
+async rollout
+
+Multi-teacher OPD,
+log-prob or top-k
+
+slime
+
+Megatron-LM
++ SGLang
+
+User-supplied
+rollout function
+
+Async rollout
+
+Single-teacher OPD,
+log-prob, on advantage
+
+AReaL
+
+Megatron / FSDP
++ SGLang / vLLM
+
+Workflow API
++ OpenAI proxy
+
+Fully async,
+interruptible rollout
+
+Multi-teacher OPD,
+log-prob, KL loss
+
+Agent-Lightning
+
+Delegated to an
+external trainer
+
+OpenAI sidecar, agent
+stays external
+
+Collocated async,
+staleness via trainer
+
+LoongSage
+
+Megatron-Core
++ SGLang only
+
+OpenAI protocol, whiteand black-box, TITO
+
+Fully async, three
+window policies
+
+Multi-teacher OPD,
+full-vocabulary
+
+Figure 1: Positioning of LoongSage relative to closely related systems. Each entry is compiled
+from the publicly available documentation of the corresponding project at the time of writing. A
+dash indicates a capability that is not documented, rather than one that cannot be realized within the
+system.
+
+protocol edge where the agent interacts. This abstraction eliminates re-tokenization discrepancies, a
+major source of implicit train–inference divergence (Section 4.1).
+Thin trunk with named seams. LoongSage builds natively upon Megatron-Core, MegatronBridge, and SGLang without introducing cumbersome abstraction layers for alternative backends.
+To maximize extensibility, algorithmic components—such as agents, reward models, policy losses,
+and asynchronous scheduling strategies—are exposed via named registry entries (seams) rather than
+through rigid subclassing of a monolithic framework class. This approach yields a modular architecture, enabling researchers to substitute custom logic through configuration files alone without
+altering the framework’s core.
+3.2
+
+S YSTEM O RGANIZATION
+
+LoongSage structurally decomposes the RL pipeline into seven interacting planes: control, sampling, training, algorithm, data, transfer, and resource. These planes communicate exclusively via
+well-defined data objects and control interfaces, preserving the readability of the core logic while
+allowing targeted functionality to be added through configuration.
+The control plane is anchored by the Trainer, which orchestrates the state transitions for each
+algorithmic step. Dedicated lifecycle managers—TrainManager, RolloutManager, and
+TeacherManager—oversee the training, inference, and teacher worker pools, respectively. The
+RolloutSampler maps step-level data requirements into batched sampling tasks. To prevent
+tangled dependencies, these managers never invoke one another directly. Instead, the Trainer
+sequences them according to the current training phase, cleanly isolating orchestration logic from
+the compute backends and enabling independent backend evolution.
+As illustrated in Figure 2, the sampling plane is governed by AgentFlow, which translates unstructured multi-turn agent interactions into trainable trajectories. By operating the agent externally,
+LoongSage embraces the disaggregated design philosophy advocated by Agent-Lightning. AgentFlow’s token-level alignment and multi-agent support are detailed in Section 4.1. The training
+plane wraps the Megatron-based worker pool that executes the forward, backward, and optimizer
+passes over admitted trajectories. The algorithm plane exposes registries for advantage estimation (Schulman et al., 2015), policy losses, and KL divergence constraints, and additionally provides configurable importance-sampling corrections (Zheng et al., 2025) and off-policy sequence
+masking (DeepSeek-AI, 2025).
+The data plane governs Multi-Data-Source Mixed Training, managing stateful data loading, admission filtering, and data-parallel partitioning. It enables the independent configuration of agents,
+rewards, and sampling parameters per source, while strictly maintaining global data mixture propor5
+
+LoongSage Technical Report
+
+Figure 2: Overall system architecture of LoongSage.
+tions invariant across all ranks and mini-batches. The transfer plane, instantiated as TransferMesh
+(Section 4.3), manages topology-aware weight synchronization. Finally, the resource plane orchestrates cluster allocations via Ray placement groups and GPU bundles.
+3.3
+
+T RAINING F LOW AND P LACEMENT
+
+Under the default synchronous execution mode, a training step proceeds through four distinct
+stages. During the sampling stage, the RolloutSampler fetches prompt groups from various
+data sources and dispatches sampling tasks. In the admission stage, completed trajectories are
+grouped and evaluated by a data filter. Because rejections occur post-generation, the sampler proactively over-samples a configurable buffer per data source, refilling rejected slots within a bounded
+budget and enforcing step-level timeouts for stalled requests. During the aggregation stage, the
+controller aligns admitted trajectories with the active policy version and data-parallel layout, while
+teacher workers compute necessary distillation signals. Finally, in the update stage, training workers execute the forward, backward, and optimizer passes, concluding with the transfer of updated
+parameters back to the inference engine for the subsequent rollout.
+The fully asynchronous mode eliminates this strict synchronization barrier, enabling the sampling
+and optimization engines to make concurrent progress via a decoupled train–rollout buffer. The
+buffering, freshness constraints, and recovery mechanics of this mode are detailed in Section 4.2.
+Execution coupling and resource placement are treated as orthogonal architectural axes (Figure 3).
+Colocated placement time-multiplexes device memory so that both engines and the weight-update
+phase fit on the same GPUs, whereas disaggregated placement dedicates disjoint hardware pools to
+each engine. Both placement strategies share an identical underlying scheduler, controller, AgentFlow paradigm, and weight-transfer interface, allowing deployments to scale flexibly based on
+model size and cluster topology. Among the four possible combinations of these two axes, three
+are structurally supported. Fully asynchronous execution inherently conflicts with colocation, as
+overlapping rollout and training mandates simultaneous memory residency for both engines.
+
+4
+
+K EY F EATURES
+
+This section details the principal mechanisms underpinning LoongSage’s agentic RL pipeline. We
+focus on how the framework guarantees trajectory fidelity across diverse agent topologies, orchestrates multi-teacher supervision, seamlessly overlaps rollout with optimization, executes topologyaware weight transfers, and exposes highly extensible API boundaries.
+6
+
+LoongSage Technical Report
+
+colocated
+
+one step boundary
+
+overlapped pipeline
+
+Default, colocated
+
+not available
+
+one GPU pool; training occupies the rollout lanes
+rollout
+
+train
+step 1
+
+disaggregated
+
+resource placement
+
+execution coupling
+
+train
+
+overlapping the two requires both engines
+resident at once, so they are exclusive
+
+step 2
+
+Default, disaggregated
+
+Fully asynchronous
+
+two GPU pools; training still waits for the slowest rollout
+
+two GPU pools; a buffer lets both run at once
+neither band ever idles
+
+rollout
+
+rollout
+
+train
+
+train
+step 1
+
+step 2
+
+rollout
+
+step 1
+
+training
+
+weight sync
+
+step 2
+
+step 3
+
+idle
+
+Figure 3: The two orthogonal configuration axes behind LoongSage’s operational modes, their tradeoffs, and the combination that the framework does not support.
+4.1
+
+S EAMLESS I NTEGRATION OF A NY AGENT
+
+LoongSage integrates arbitrary agents with zero intrusion into their internal logic. Agents interact
+with the framework exclusively via a router URL exposing the standard OpenAI Chat Completions
+API, remaining entirely agnostic to the underlying tokenization, trajectory storage, and sandbox
+lifecycles. AgentFlow operates as the sampling plane enabling this abstraction—mediating among
+agents, the inference engine, and the training data pipeline to deterministically convert multi-turn
+interactions into replayable RL trajectories, as illustrated in Figure 4.
+
+Router
+reverse proxy, sticky + least-loaded routing
+
+Agent
+white-box / black-box
+
+plaintext request
+
+OpenAI SDK
+
+/v1/chat/completions
+messages (plaintext)
+
+chat.completion
+
+SGLang Inference Engine
+
+ParserMiddleware
+intercepts /v1/chat/completions
+request: messages input_ids
+response: token_ids/logprobs chat.completion
+
+TrajectoryParser
+TokenizerManager: messages input_ids
+ReasoningParser / ToolCallParser on the reply
+align token / logprob / loss_mask per turn
+persist input_ids + output_ids to store
+
+token in
+POST /generate
+
+/generate
+
+in: input_ids + sampling_params
+out: token_ids / logprobs
+return_routed_experts (R3)
+
+token out
+token_ids / logprobs
+
+write input_ids /
+output_ids per turn
+
+TrajectoryStore
+per-turn token_ids / logprobs / loss_mask,
+read by training
+
+training reads
+
+Training
+replays the exact token
+sequence that was sampled
+
+Figure 4: The AgentFlow request path. The Router intercepts each Chat Completions request,
+tokenizes the turn, dispatches it to SGLang’s /generate, and records the returned tokens per turn
+in the TrajectoryStore.
+Supported agents fall into two structurally distinct categories. A white-box agent implements its
+interaction loop internally within LoongSage, directly controlling tool invocations and LLM requests. Consequently, its trajectory forms a linear, append-only sequence of prompts, responses,
+tool execution results, and termination signals. Conversely, a black-box agent executes as an opaque
+binary or script within an isolated sandbox. Here, the framework manages the entry point and intercepts outgoing requests, yielding complex, non-linear trajectories that require a tree-structured
+storage backend. The current repository natively supports white-box GSM8K (Cobbe et al., 2021),
+7
+
+LoongSage Technical Report
+
+BrowseComp-Plus (Chen et al., 2025), and Mini-SWE agents, alongside a black-box OpenCode
+agent (OpenCode Contributors, 2025).
+As depicted in Figure 5, AgentFlow represents each trajectory as a flattened, contiguous token array,
+tightly coupled with position-aligned arrays for loss masks, rollout log-probabilities, weight versions, routed experts, and token-level rewards. To minimize memory overhead, a Segment struct
+tracks token and response spans, while a Triplet struct records individual model interactions using index ranges rather than duplicating token data. Tool observations are injected into the response
+space with a zeroed loss mask, placeholder log-probabilities, and an invalid (−1) weight version.
+A mutated weight version explicitly flags a turn interrupted by an asynchronous model update. Finally, only the terminal position encodes the scalar task reward R, ensuring all sampling statistics
+for generated tokens remain intact throughout the pipeline.
+Segment / Triplet hierarchy
+
+Full token space (tokens) and position-aligned response-space arrays
+
+index ranges into the arrays (no token copies)
+
+response space Nresp (|L| = |M| = |V|), position-aligned
+
+initial prompt (no loss)
+
+x0
+
+x1
+
+x2
+
+x3
+
+x4
+
+x5
+
+x6
+
+x7
+
+x8
+
+x9
+
+rollout_log_probs lt
+
+-0.2
+
+-1.1
+
+-0.5
+
+plc
+
+plc
+
+-0.3
+
+-0.9
+
+-0.4
+
+-0.7
+
+-0.6
+
+loss_masks mt
+
+1
+
+1
+
+1
+
+0
+
+0
+
+1
+
+1
+
+1
+
+1
+
+1
+
+weight_versions vt
+
+v1
+
+v1
+
+v1
+
+-1
+
+-1
+
+v2
+
+v2
+
+v2
+
+v2
+
+v2
+
+routed_experts Et
+
+E0
+
+E1
+
+E2
+
+-
+
+-
+
+E5
+
+E6
+
+E7
+
+E8
+
+E9
+
+Segment
+
+shares the incremental context
+
+holds token_start/end, logprob_start/end
+
+Triplet 1 (turn 1)
+tokens: prompt .. x2
+logprob[0:3), mask / version aligned
+
+Triplet 2 (turn 2)
+tokens: x3 .. x9 (leading tool tokens)
+
+token_rewards rt
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+R
+
+logprob[5:10), tool positions mask 0
+
+Figure 5: Data representation under TITO: a single flattened token array with its position-aligned
+response-space arrays, referenced by Segment and Triplet indices rather than copied.
+Token-In, Token-Out (TITO). A core mechanism of AgentFlow is storing the exact tokens consumed and generated by the inference engine, deliberately avoiding the practice of re-tokenizing
+textual messages prior to training. Such re-tokenization often introduces compounding discrepancies between the sampled and trained sequences due to whitespace handling, special tokens, reasoning markers, or tool-call serialization. Under TITO, high-level textual requests and responses are
+mapped transparently to their internal token representations at the framework’s outermost boundary,
+ensuring the sampled and trained sequences remain identical. Consequently, completed trajectories can be annotated with validity, scalar, or fine-grained rewards without corrupting the original
+sampling record.
+For white-box agents, AgentFlow reuses established token prefixes as conversational histories expand. For black-box agents, it dynamically reconstructs mutated context segments while preserving
+their topological relationships. Should a long-horizon trajectory be interrupted, its sandbox state
+can also be preserved and reused, preventing the loss of intermediate file edits or process states.
+The framework’s sandbox interface provides native Kubernetes and Docker backends. Thus, agents
+requiring shell execution are securely isolated within ephemeral pods or containers whose lifecycles
+are strictly bound to the trajectory.
+Compaction and Multi-Agent Control. State-of-the-art black-box agents (e.g., OpenCode, Claude
+Code, and Codex) natively embed automatic context compaction and multi-agent collaboration
+mechanisms. These behaviors inherently rewrite or fork the conversation history, violating the standard linear Markov Decision Process (MDP) assumption. Consequently, a naive linear trajectory
+store would immediately fail prefix matching upon context compaction or subtask delegation. To
+overcome this, AgentFlow records every trajectory as a directed tree of segments (Figure 6). Tree
+edges are defined by segment id and parent segment id pointers, while an origin tag
+explicitly categorizes each node as a mainline start (root), a compaction-induced continuation
+(compact), or a spawned subtask (subagent).
+Crucially, only mainline segments are designated as trainable, earning the right to populate the flat
+token, loss-mask, and log-probability arrays depicted in Figure 5. If a prefix mismatch occurs and
+the request is not explicitly a collab spawn, the trajectory opens a new mainline branch to retokenize the compacted context. Conversely, a collab spawn request forks a subagent segment
+8
+
+LoongSage Technical Report
+
+one level deeper in the hierarchy. Because multi-agent credit assignment remains an open research
+problem, LoongSage currently treats subagent segments as non-trainable placeholders that merely
+track their tree position (token start = token end). This architectural decision prevents
+premature commitment to a flawed reward decomposition while preserving a robust extension point
+for future multi-agent RL capabilities.
+Trajectory as a tree of Segments (subagent segments are non-trainable placeholders)
+segment_id / parent_segment_id form a tree; origin ∈ {root, compact = mainline continuation, subagent = branch placeholder}; only mainline segments write the flat token arrays.
+active_segment_id = 0 (unchanged during branch)
+
+active_segment_id = 3 (current tail)
+
+Segment 0
+
+prefix mismatch +
+request_kind ≠ collab_spawn
+
+id=0 parent=None origin=root depth=0 trainable=True
+
+Mainline
+
+Segment 3
+id=3 parent=0 origin=compact depth=0 trainable=True
+
+turns 1–2: explore code, spawn subtask
+turn 3: mainline resumes, active_segment_id stays 0
+writes the flat token / loss / logprob arrays
+
+turn 4: compacted summary + recent turns,
+independently re-tokenized
+turn 5: finish task (mainline, no new segment)
+
+request_kind = collab_spawn
+→ fork: origin=subagent (placeholder)
+
+branch ends: only summary text
+folded back to Segment 0 (not trained)
+
+Segment 1 (placeholder, not trained)
+Subagent · level 1
+
+id=1 parent=0 origin=subagent depth=1 trainable=False
+
+no tokenize · no flat tokens / loss · token_start = token_end
+nested fork (depth+1, placeholder)
+
+Segment 2 (placeholder, not trained)
+Subagent · level 2
+
+id=2 parent=1 origin=subagent depth=2 trainable=False
+
+token_start = token_end
+
+T1 · turn 1 start
+
+T2 · subagent fork
+
+T3 · nested fork
+
+T4 · context compaction
+
+t
+
+Figure 6: AgentFlow stores a black-box trajectory as a tree of segments: trainable mainline segments
+(origin=root or compact) own the flat token arrays, while a collab spawn request forks a
+non-trainable subagent placeholder (origin=subagent).
+Stateful Routing and Protocol Isolation. This abstraction is enforced via a strict protocol boundary. Upstream parser middleware translates incoming JSON messages into raw token IDs, and
+symmetrically converts generated token distributions back into standard chat completions. To maximize inference throughput, the routing layer utilizes session affinity, pinning all requests from a
+single trajectory to a specific inference worker. This guarantees KV-cache and prefix reuse across
+multiple turns, falling back to the least-loaded worker only if the pinned node becomes unresponsive
+or reaches capacity.
+Black-box
+agents
+utilizing
+proprietary
+APIs
+(i.e.,
+those
+deviating
+from
+/v1/chat/completions) are bridged into the unified tree store via protocol adapters
+(Figure 7). For instance, Codex (/v1/responses) and Claude Code (/v1/messages) each
+map to a dedicated adapter that normalizes their wire formats into LoongSage’s internal message
+and tool schemas, keeping the downstream parser, tokenizer, and trajectory storage decoupled
+from upstream API idiosyncrasies. Support for these proprietary APIs is under active development
+(Appendix B). Recent iterations of Claude Code expose explicit metadata fields for subagent
+requests, enabling the adapter to flag subagent spawns within the tree structure.
+4.2
+
+S TALENESS -B OUNDED F ULLY A SYNCHRONOUS T RAINING
+
+In fully asynchronous mode, rollout freshness is no longer implicitly guaranteed by a synchronized
+schedule. Explicit staleness control thus becomes mandatory when overlapping the training and
+inference engines to eliminate idle time and repeated initialization overhead. Figure 8 illustrates the
+resulting decoupled pipeline.
+This producer-consumer architecture aligns with contemporary asynchronous RL systems (Fu et al.,
+2026; Sheng et al., 2025; Zhu et al., 2025; MiniMax, 2026). The rollout engine generates trajectories, a collector aggregates the completed ones into training groups, and the training engine consumes them from a shared buffer. Conceptually, this decoupling introduces only two degrees of freedom for data ingestion: determining how many new rollouts to dispatch, and deciding which completed groups are eligible for training. All underlying logic transparently reuses the synchronousmode implementation. The agents, trajectory representations, and topology-aware weight transfers
+9
+
+LoongSage Technical Report
+
+OpenCode
+
+Codex CLI
+
+Claude Code
+
+Chat Completions
+
+OpenAI Responses
+
+Anthropic Messages
+
+JSON / SSE
+messages
+
+JSON / SSE
+
+JSON / SSE
+
+typed items
+
+content blocks
+
+ProtocolAdapter
+wire <-> messages / tools
+internal request
+
+assistant_message
+
+ParserMiddleware + TrajectoryParser
+tokenize / constrain / segment / logprobs
+generate
+
+tokens + logprobs
+
+SGLang /generate
+input_ids + sampling_params
+
+Figure 7: The protocol adapter normalizes each agent’s wire format into one internal request: OpenCode over Chat Completions, Codex over OpenAI Responses, and Claude Code over Anthropic
+Messages. A single parser, tokenizer, and SGLang path then serve all of them.
+dispatch gate
+
+collection gate
+
+Rollout
+Sampler
+how many to start
+
+completed
+groups
+in-flight rollouts
+
+PipelineBuffer
+priority queue,
+dataset order
+
+Training
+Workers
+
+which may be trained
+
+weight sync at step boundaries
+
+Figure 8: The fully asynchronous pipeline’s control points reduce to two gates—a dispatch gate and
+a collection gate. Table 1 lists the mathematical bounds each registered policy places on them.
+
+remain completely unchanged, ensuring the two engines only synchronize at deterministic weightupdate boundaries.
+Bounding Staleness. In a fully asynchronous pipeline, maximizing hardware utilization inherently
+trades off data freshness. If the inference engine significantly outpaces the trainer, the buffer accumulates trajectories generated by outdated policy weights, severely exacerbating off-policy drift.
+Conversely, if the framework enforces excessively tight synchronization to prevent this drift, the
+trainer inevitably starves while waiting for new rollouts, negating the throughput benefits of asynchrony. To systematically navigate this throughput–staleness Pareto frontier, LoongSage introduces
+three sliding-window scheduling policies. These policies act as dynamic constraints on the dispatch
+and collection gates, strictly bounding the maximum allowable version gap between the generation
+policy and the optimization policy. Furthermore, because LoongSage attributes metrics exclusively
+to the data actually consumed during an optimization step, the systemic impact of each policy on
+off-policy divergence remains fully transparent and directly observable in the training logs.
+Sliding-window policies. Because a scheduling strategy is entirely defined by the bounds it places
+on the two control gates (Figure 8), the surrounding controller logic remains invariant. Consequently,
+scheduling is abstracted as a configuration-driven registry seam rather than deeply nested branching
+logic. Table 1 formalizes the bounds of the three registered policies, visually mapped onto a shared
+timeline in Figure 9.
+Throughout this analysis,
+B
+denotes num prompts per step,
+S
+denotes
+fully async.stale steps, and the global window size is W = B(1 + S). In the ta10
+
+LoongSage Technical Report
+
+Table 1: The bounds imposed by each sliding-window strategy at the two control points of the
+asynchronous runtime, and the guarantees they provide. window-gated inherits the capacity
+bound of no-window in addition to the sequence-number bound listed here.
+Bound at the control point
+
+Resulting guarantee
+
+Strategy
+
+Dispatch
+
+Collection
+
+Staleness
+
+Training order
+
+no-window
+window-gated
+windowed-fifo
+
+F +Q≤W
+s ≤ smin + W
+F +Q≤W
+
+unconstrained
+unconstrained
+s − smin < B
+
+unbounded
+≤ S steps
+indirect
+
+unconstrained
+unconstrained
+FIFO within B
+
+ble, F and Q represent the number of groups currently in-flight and buffered, respectively. Variables
+s and smin denote the monotonically increasing sequence number of the group in question and
+that of the oldest group still in-flight. Notably, in the staleness column, some guarantees hold by
+strict mathematical construction, whereas others materialize implicitly once uncollected groups
+accumulate at the collection gate.
+no-window (Figure 9a) dispatches a new group the moment an active slot frees up. Its only capacity limit exists to prevent host memory exhaustion rather than to bound off-policy drift. Because
+a completed group immediately yields its slot, short requests finish and enter the training phase in
+rapid succession. Meanwhile, a computationally heavy, long-horizon request may be interrupted by
+multiple asynchronous weight updates without bound. This inherently introduces a severe lengthbiased sampling pathology, skewing the training distribution toward shorter trajectories.
+window-gated (Figure 9b) imposes a hard gate, refusing to dispatch any task whose sequence
+number exceeds the oldest in-flight one by more than the window W = B(1 + S). The window
+advances only when the oldest group completes. While this strictly bounds staleness to ≤ S steps,
+it risks severe pipeline under-utilization due to head-of-line blocking from long-tail requests. The
+worst-case scenario occurs when the entire training pipeline stalls, waiting idly for a single straggler
+to clear the window. In practice, however, the window typically advances fluidly as subsequent
+requests finish ahead of the straggler.
+windowed-fifo (Figure 9c) adopts its nomenclature and collection heuristic from Forge. It retains the aggressive capacity-based dispatch rule without generation bounds but restricts collection:
+a completed group is only ingested if it falls within one batch of the oldest in-flight sequence number. Groups completing too far ahead are discarded and never trained. This bounds off-policy drift
+once uncollected groups accumulate and critically enforces an ordering constraint that mitigates the
+aforementioned short-trajectory bias (quantified against no-window in Section 5.3). The collection window is fixed at one batch. A smaller window would artificially constrain ordering within
+a single step, while a significantly larger one would simply degenerate into no-window. The underlying buffer operates as a priority queue keyed by dataset order, ensuring the training sequence
+mirrors synchronous mode as closely as physical completion times permit.
+The net benefit of asynchronous execution hinges on the relative durations of the rollout and training
+phases, and the ratio by which the GPU cluster is partitioned between them. Let x > 1 denote the
+reciprocal of the cluster fraction dedicated to inference. Here R0 and T0 are the colocated wholecluster baseline times for rollout and training, E0 is the constant per-step overhead, and f captures
+the super-linear efficiency of higher per-replica concurrency in a smaller inference pool. Under this
+parameterization, training time scales as T0 x/(x − 1) and rollout time as R0 f (x). Because the two
+phases overlap, a step’s latency is bounded by the slower of the two, yielding the analytical allocation
+objective: minx>1 max(R0 f (x), T0 x/(x − 1) + E0 ). The exact scaling behavior of f is highly
+workload-dependent. Section 5.3 empirically maps this function for a target workload, identifying
+the inflection point beyond which scaling inference concurrency yields diminishing returns.
+4.3
+
+T OPOLOGY-AWARE W EIGHT S YNCHRONIZATION
+
+TransferMesh provides a high-throughput, engine-agnostic communication fabric for propagating
+updated parameters from the optimization plane to the inference engine. As training and inference
+pipelines are increasingly decoupled, weight synchronization emerges as the primary coordination
+11
+
+LoongSage Technical Report
+
+completed (in buffer)
+
+(a) no-window
+
+in-flight
+
+not dispatched
+
+completed, outside window
+
+about to dispatch
+
+no sliding window: right edge does not exist (window = ∞)
+
+dispatch span = 16 tasks, no upper bound
+#1
+
+#2
+
+#3
+
+#4
+
+#5
+
+#6
+
+#7
+
+#8
+
+#9
+
+#10
+
+#11
+
+#12
+
+#13
+
+#14
+
+oldest unfinished task
+interrupted at every weight sync (count unbounded)
+
+#15
+
+#16
+
+#17
+
+#18
+
+⋯
+
+about to dispatch #16
+(dispatched though few are in flight)
+
+(b) window-gated (limits generation)
+
+sliding sliding
+window =
+B(1+S)
+staleness
+window
+= 1 batch
+= 6 tasksS
+#1
+
+#2
+
+#3
+
+#4
+
+window left = oldest unfinished
+will not advance until it finishes
+
+#5
+
+generation gated: no dispatch from #7 while #1 is unfinished
+
+gate
+
+#6
+
+generation gated: no dispatch from #7 while #1 is unfinished
+
+#7
+
+#8
+
+#9
+
+#10
+
+#11
+
+#12
+
+#13
+
+#14
+
+#15
+
+#16
+
+#17
+
+#18
+
+⋯
+
+#11
+
+#12
+
+#13
+
+#14
+
+#15
+
+#16
+
+#17
+
+#18
+
+⋯
+
+about to dispatch #6
+(last undispatched task in window)
+
+(c) windowed-fifo (limits usage, Forge)
+dispatch span = 14 tasks, not limited by the window
+
+#1
+
+#2
+
+#3
+
+#4
+
+#5
+
+window left = oldest unfinished
+window right edge will not advance
+
+#6
+
+#7
+
+#8
+
+#9
+
+#10
+
+completed but outside window → shelved, never trained
+
+about to dispatch #14
+(outside window, still dispatched)
+
+Figure 9: The three registered sliding-window policies (a) no-window, (b) window-gated, and
+(c) windowed-fifo on a shared timeline of dispatched groups (bounds in Table 1, consequences
+discussed above).
+
+bottleneck, often dominating the per-step overhead for massive-scale models. TransferMesh mitigates this by dynamically discovering the physical placement of participating actors during channel
+initialization and routing traffic across the most efficient hardware-level topology. Figure 10 depicts
+this topology-aware routing architecture.
+same GPU: share the sender's buffer, no copy
+
+contiguous uint8 bucket
+Training
+Worker
+
+in export order
+
+q_proj.weight
+
+k_proj.weight
+
+mlp.gate
+
+[4096, 4096]
+
+[1024, 4096]
+
+[2048, 4096]
+
+offset 0
+
+offset o1
+
+Rollout Worker
+
+offset o2
+
+one MetaFrame carries name, shape,
+dtype and offset for every tensor
+
+Rollout Worker
+other GPU: collective broadcast
+
+Figure 10: TransferMesh packs the named tensor stream into one contiguous memory bucket described by a single metadata frame, then dynamically selects a transport protocol per receiver based
+on device topology: utilizing a zero-copy CUDA IPC handle for colocated engines and an NCCL
+broadcast for remote receivers.
+At its core, TransferMesh abstracts a global weight update as a named tensor stream. When the
+sender yields parameters, the transfer layer coalesces them into contiguous memory buckets, recording metadata—tensor name, shape, data type, and byte offsets—into a separate layout descriptor.
+Receivers fetch this lightweight descriptor first, allowing them to reconstruct the tensor stream for
+the inference engine. This decouples the two engines’ internal memory layouts and amortizes the
+high latency and kernel-launch overheads of point-to-point transfers of fragmented, fine-grained
+tensors.
+The underlying transport dynamically adapts to the discovered hardware topology. When training and inference processes are colocated on the same physical device, TransferMesh exchanges a
+CUDA Inter-Process Communication (IPC) handle pointing to the sender’s memory bucket. This
+achieves zero-copy parameter sharing, bypassing redundant VRAM allocations and PCIe/NVLink
+traversals. For remote receivers, the bulk payload is broadcast via an optimized NCCL collective.
+All metadata and IPC handles are transmitted out-of-band via a lightweight Gloo channel, letting re12
+
+LoongSage Technical Report
+
+ceivers pre-allocate the required device buffers and reconstruct parameters with their original shapes
+and precisions before the bulk transfer begins.
+To guarantee system stability, TransferMesh operates on an orthogonal communication context. This
+structural isolation ensures the weight-transfer fabric never collides or deadlocks with the backend
+engines’ internal data-parallel or tensor-parallel collective operations. While the transfer protocol itself is strictly backend-agnostic at the tensor-stream boundary, the currently shipped adapters
+natively interface with Megatron’s parameter export and SGLang’s weight-loading routines. Consequently, migrating to an alternative training or inference backend reduces entirely to implementing a
+localized memory-layout adapter, without modifying the underlying synchronization infrastructure.
+
+4.4
+
+F ULL -VOCABULARY M ULTI -T EACHER O N -P OLICY D ISTILLATION
+
+On-policy distillation trains a student model on its self-generated rollouts while leveraging one or
+more teacher models for dense, token-level distributional supervision. LoongSage abstracts this
+process as a highly composable, multi-paradigm objective deeply integrated into the primary training
+loop, allowing it to function standalone or seamlessly combined with algorithms like GRPO or
+GSPO.
+The teacher signal provides two distinct supervision pathways: a policy-gradient regularizer (via a
+KL penalty on the advantage) and a direct supervised loss interpolated with the RL objective:
+Ât = At − λpg DKL (πstudent ∥ πteacher )t ,
+L = (1 − λgkd )LRL + λgkd LGKD .
+By independently modulating these two pathways—the KL penalty (λpg ) and the supervised distillation loss (λgkd )—the unified loop natively supports PG-style regularization, GKD-style supervised
+distillation, and hybrid settings. The KL divergence estimator is equally flexible, accommodating
+sampled-token signals, Top-K truncation, full-vocabulary alignments, and Jensen–Shannon variants
+based on the available teacher metadata.
+Teacher Manager and Resource Multiplexing. Within the multi-teacher paradigm, the Teacher
+Manager treats teacher models as dynamically scheduled compute resources rather than black-box
+external API services. Under constrained device memory, multiple teachers are multiplexed onto a
+single worker group, and inactive teacher weights are offloaded to host CPU memory. Consequently,
+the permissible number of teachers is bounded by abundant host memory rather than scarce GPU
+VRAM. The scheduler further guarantees that each teacher is swapped into device memory at most
+once per forward pass, minimizing PCIe bandwidth thrashing.
+Building on the per-source data plane (Section 3), each data source additionally binds an assigned
+teacher. Because that plane holds the global data mixture invariant across ranks and mini-batches,
+the data-mixing ratio maps directly onto each teacher’s relative gradient contribution. This architectural choice lets operators steer teacher dominance through data-routing configurations rather
+than hand-tuned loss-weighting heuristics. Figure 11 illustrates this resource pooling arrangement.
+Finally, teacher forward passes execute on the same Megatron backend as the student; this structural symmetry prevents inference-engine numerical discrepancies from corrupting the reverse-KL
+objective.
+Memory-Efficient Full-Vocabulary Distillation. To avoid the activation-memory bottleneck typically associated with massive vocabularies, LoongSage eschews transferring full probability vectors
+across nodes. Instead, it transmits compact teacher hidden states—an optimization it shares with
+DeepSeek-V4 (DeepSeek-AI, 2026)—but diverges significantly in its logit materialization strategy.
+Rather than materializing the full-vocabulary logit tensor for the entire batch, LoongSage shards
+the teacher’s output head using the student’s tensor-parallel (TP) layout and reconstructs the required distribution strictly at micro-batch granularity. The reconstructed logits are consumed onthe-fly by the loss function and immediately freed before the next micro-batch begins. This microbatch-scoped lifecycle keeps the memory footprint bounded, delivering the dense supervision of
+full-vocabulary distillation without triggering OOM errors. In the reported single-node, eight-GPU
+Qwen3-30B-A3B run, full-vocabulary multi-teacher distillation increased peak device memory by
+only 17 GB relative to standard DAPO training. Figure 12 illustrates this reconstruction architecture.
+13
+
+LoongSage Technical Report
+
+Figure 11: The Teacher Manager schedules teacher groups that share a GPU-memory slot, offloading
+inactive teacher weights to host memory and swapping them back on demand.
+
+Figure 12: Full-vocabulary distillation via micro-batch logit reconstruction: within each micro-batch
+the teacher logits are rebuilt from hidden states, consumed by the loss, and released before the next
+micro-batch begins.
+
+4.5
+
+S YSTEMIC T RAIN –I NFERENCE C ONSISTENCY
+
+On-policy RL fundamentally dictates that the inference and training engines yield nearly identical
+probability distributions for a given policy state. Any systemic deviation skews the importancesampling ratio, silently degrading the optimization process into an unstable off-policy regime.
+LoongSage treats this consistency not merely as an algorithmic assumption, but as a continuously observable and localizable systemic property. Potential sources of divergence span multiple
+layers: textual re-tokenization mismatches, arithmetic precision truncation, non-equivalent fused
+kernels (Dao et al., 2022), mismatched quantization schemes between engines, non-deterministic
+discrete decisions (e.g., Mixture-of-Experts routing), and minor variances in parallel reduction or
+padding. To counteract this drift, the framework implements a defense-in-depth strategy categorized
+into source alignment, precision anchoring, and residual correction (summarized in Figure 13).
+Deterministic Source Alignment and Routing Replay. As established in Section 4.1, TITO removes re-tokenization discrepancies at the input boundary. For Mixture-of-Experts (MoE) architectures (Fedus et al., 2022; Jiang et al., 2024; Yang et al., 2025), LoongSage integrates Rollout
+Routing Replay (R3) (Ma et al., 2025). Rather than allowing microscopic logit perturbations to
+14
+
+LoongSage Technical Report
+
+Systemic Train Inference Consistency
+
+Token-in-token-out (TITO)
+
+SGLang
+
+MoE routing replay (R3)
+
+Trained Sequence =
+Sampled Sequence
+
+THD sequence packing
+Chunked context parallelism (CP)
+Selective FP32 pinning (LM head)
+Deterministic kernels
+
+Truncated importance sampling (TIS)
+M2PO / OPSM outlier masking
+Monitor: K3 KL, clip ratio, staleness
+
+Numerical Stability &
+Throughput Efficiency
+
+Bound and Observe
+the Residual Gap
+
+Megatron
+
+Figure 13: Train–inference consistency is handled in three groups: source alignment guarantees the
+trained sequence mathematically matches the sampled sequence, long-context and precision settings
+anchor numerical stability, and residual corrections continuously bound the remaining gap.
+
+randomly flip computation paths during training, R3 explicitly records the exact experts selected by
+the inference engine for every token across every MoE layer. The framework then deterministically
+replays this exact routing tensor during the training forward pass. While the router weights continue
+to receive gradients normally, the structural computation path remains rigidly locked to the sampled
+trajectory. This replay mechanism remains mathematically robust even under partial rollout, as a
+trajectory spanning multiple weight versions safely replays the historical routing context utilized
+during its original generation.
+Context Parallelism and Selective Precision Pinning. To support the extended trajectories inherent to agentic tasks without introducing padding artifacts or breaking numerical determinism,
+sequences are tightly packed into THD format, and contexts are partitioned via contiguous-chunk
+Context Parallelism (CP) (Liu et al., 2024)—under which MoE routing replay remains strictly valid.
+While the bulk of the model’s compute operates in BF16, LoongSage introduces Selective Precision Pinning, allowing developers to anchor highly sensitive parameters to FP32 in both memory
+storage and layer-wise computation. Production recipes specifically apply this to the output layer
+(LM Head). Because reduced-precision rounding at the output layer sharply distorts softmax logprobabilities—historically the dominant source of numerical drift in dense models—pinning it effectively neutralizes a primary train–inference gap, trading a marginal memory and compute overhead
+for critical numerical stability.
+Algorithmic Residual Correction and Monitoring. Because source alignment cannot fully eliminate hardware-level kernel discrepancies or the weight-version staleness inherent to asynchronous
+execution, the algorithm plane provisions a spectrum of residual defenses spanning both token and
+sequence granularities. At the fine-grained token level, LoongSage natively supports Truncated Importance Sampling (TIS) (Ionides, 2008; Yao et al., 2025) and Masked Importance Sampling (MIS).
+These methods reweight the step-wise loss using the ratio πtrain /πrollout —the discrepancy between
+the training engine’s recomputed probabilities and the inference engine’s sampling probabilities—
+while clipping or bounding out-of-range values.
+To mitigate compounded drift over long-horizon tasks, the framework elevates these defenses via explicit sequence-level corrections, which recalibrate the objective based on the cumulative trajectory
+ratio. Furthermore, it integrates advanced sequence-level filtering mechanisms like Second-Moment
+Trust Policy Optimization (M2PO) and Off-Policy Sequence Masking (OPSM), which discard or
+mask extreme trajectory outliers to prevent pathological samples from dominating a gradient update.
+An alternative execution mode treats πrollout as the definitive behavior policy, implicitly absorbing
+the gap and bypassing reference log-probability recomputation—an optimization that is structurally
+mutually exclusive with TIS, MIS, and M2PO.
+Regardless of the chosen configuration, the framework continuously monitors the K3 KL divergence
+estimate, the token-clipping ratio, and weight-version staleness spans. While algorithmic clipping
+and OPSM act as safeguards against off-policy drift, LoongSage treats aligning critical kernels,
+replaying discrete MoE decisions, and pinning precision on critical paths as the primary systemic
+remedies.
+15
+
+LoongSage Technical Report
+
+4.6
+
+L IGHTWEIGHT, U SABLE , AND H IGHLY E XTENSIBLE
+
+Beyond its distributed mechanics, LoongSage is engineered to minimize technical debt and cognitive
+load for researchers. After excluding blank lines, comments, and tests, the framework comprises a
+minimalist core of roughly 14,000 lines of Python.
+Minimalist Core and Zero-Fork Integration. The architectural boundaries within LoongSage are
+designed by applying strict interface segregation. A prime example is TransferMesh (Section 4.3):
+the controller issues a single channel descriptor to both sides, completely shielding the training
+and inference engines from the underlying transport and channel-rebuild complexities. This design
+philosophy extends directly to upstream dependencies. LoongSage enforces a strict zero-fork dependency model on Megatron-Core, Megatron-Bridge, and SGLang. Any transient backend fixes are
+maintained as isolated, hot-applied patches that can be cleanly deprecated once resolved upstream.
+By relying exclusively on these foundational libraries alongside Ray and Hydra, the framework
+transparently inherits all upstream distributed optimizations and automatically expands its supported
+model library in tandem with the Megatron-Bridge ecosystem.
+Declarative Execution and Validated Recipes. To maximize usability, LoongSage unifies synchronous, fully asynchronous, and multi-teacher distillation modes behind a single, declarative entry point. Researchers drive complex distributed jobs solely by specifying a configuration recipe.
+The repository ships with a suite of validated, production-ready recipes—spanning models such as
+Qwen3-4B, Qwen3-30B-A3B, Qwen3-Coder-30B-A3B, and DeepSeek-V4-Flash across heterogeneous hardware topologies (H20, H800, B200, and GB200 nodes), including the exact configurations used for the evaluations in Section 5.
+Configuration-Driven Hot-Plugging. To facilitate rapid algorithmic iteration without modifying
+the framework’s main trunk, LoongSage exposes a highly extensible plugin system. Table 2 enumerates the ten explicitly defined core registries. Rather than deeply coupling implementations via rigid
+subclassing or injecting raw import paths into configuration files, LoongSage utilizes decentralized
+decorator-based registrations. For instance, applying @register advantage("grpo") makes
+the function self-describing as an extension point, registers its configuration alias, and enforces the
+strict API signature contract the implementation must satisfy. Consequently, searching the codebase for a given decorator surfaces the complete registry of available implementations, substantially
+lowering the barrier for algorithmic experimentation.
+
+Table 2: The core registries exposed by LoongSage. Each is invoked via a @register <name>
+decorator at the definition site and bound to the corresponding configuration field. Fields
+lacking a top-level section (agent, reward, dataset.*) are resolved relative to the
+specific data source.
+The kl policy row abbreviates opd.pg kl method and
+opd.gkd kl method.
+Registry
+
+Configuration field
+
+Scope
+
+agent
+reward
+sandbox
+advantage
+policy loss
+kl policy
+data filter
+buffer replay strategy
+
+data source.agent.name
+data source.reward.name
+data source.sandbox.type
+algorithm.advantage estimator
+algorithm.policy loss
+opd.{pg,gkd} kl method
+rollout.filter
+data source.dataset.
+buffer replay strategy
+data source.dataset.
+data pre processor
+fully async.sliding window
+
+Agent loop
+Reward computation
+Execution environment
+Advantage estimation
+Policy loss
+KL constraint and estimator
+Trajectory admission
+Replay of unconsumed prompts
+
+data pre processor
+sliding window strategy
+
+16
+
+Dataset preprocessing
+Asynchronous scheduling
+
+LoongSage Technical Report
+
+5
+
+E XPERIMENTS
+
+5.1
+
+E XPERIMENTAL S ETUP
+
+To comprehensively evaluate LoongSage across diverse agentic RL tasks and training paradigms, we
+analyze metrics from four production-scale training runs, summarized in Table 3. The evaluations
+span mathematical reasoning (DAPO), long-horizon software engineering (SWE), black-box coding
+agents (OpenCode), and multi-teacher on-policy distillation (MOPD). The SWE and OpenCode configurations derive tasks from R2E-Gym (Jain et al., 2025), the DAPO run utilizes DAPO-Math-17k,
+and the MOPD setup mixes BrowseComp-Plus with DAPO-Math-17k. All runs use the Megatron
+and SGLang backends described in Section 3. Unless explicitly stated otherwise, each reported metric traces a single, continuous full-lifecycle run rather than an average across multiple short-lived
+trials.
+Our evaluation tracks three primary classes of metrics: training dynamics, train–inference consistency, and end-to-end efficiency. Training entropy reflects the concentration of the policy distribution. rollout/reward mean quantifies task performance on sampled trajectories, and
+train/is approx k3 kl measures the approximate probability divergence between the sampling and training phases using the K3 estimator (Schulman, 2020). timing/step captures the
+end-to-end latency of a training step. Because agentic trajectories exhibit extreme variance in horizon length and computational complexity, our analysis focuses on macro-level convergence trends
+and the absence of sustained systemic divergence, rather than localized micro-fluctuations.
+Table 3: The runs reported in this paper.
+Setting
+
+Model
+
+Hardware
+
+Focus
+
+Training runs, one complete run each
+SWE
+DAPO
+OpenCode
+MOPD
+
+DeepSeek-V4-Flash
+DeepSeek-V4-Flash
+Qwen3-Coder-30B-A3B
+Qwen3-30B-A3B
+
+8 H20 nodes
+6 H20 nodes
+4 H20 nodes
+1 H20 node
+
+Long-horizon software tasks
+Verifiable mathematical reasoning
+Black-box coding agent
+Multi-teacher distillation
+
+Controlled comparisons between configurations
+Async
+
+5.2
+
+Qwen3-30B-A3B
+
+2 H20 nodes
+
+Asynchronous throughput (Sec. 5.3)
+
+T RAINING R ESULTS
+
+SWE Tasks. Figure 14 tracks DeepSeek-V4-Flash trained on complex SWE tasks. The monotonic decrease in entropy (from approximately 0.24 to 0.21) confirms the gradual concentration of
+the policy distribution, coinciding with a robust climb in mean rollout reward, which stabilizes in
+the 0.75–0.80 range. Crucially, the train–inference probability gap remains tightly bounded at the
+10−4 scale without any compounding divergence. Step latency remains bounded between 4000 and
+5500 seconds, demonstrating the framework’s capability to continuously process long-horizon tool
+interactions without stalling.
+DAPO Mathematical Reasoning. Figure 15 details DeepSeek-V4-Flash executing DAPO mathematical reasoning. The mean rollout reward rises from roughly 0.45 to nearly 0.80. While entropy
+initially dips to 0.22, it recovers to 0.30 by the run’s conclusion. Despite initial fluctuations, the approximate K3 gap peaks at 5.3 × 10−4 before stabilizing near 4.5 × 10−4 , confirming the efficacy of
+LoongSage’s consistency mechanisms in preventing off-policy drift. Furthermore, end-to-end step
+latency decreases from 900 to 550 seconds, indicating progressively stable execution as the policy
+converges on consistent reasoning paths.
+Full-Vocabulary Multi-Teacher Distillation. Figure 16 showcases full-vocabulary multi-teacher
+MOPD training for Qwen3-30B-A3B. Entropy climbs from 0.31 to stabilize near 0.42, while the
+17
+
+LoongSage Technical Report
+
+Figure 14: Training curves for DeepSeek-V4-Flash on SWE tasks.
+
+Figure 15: Training curves for DeepSeek-V4-Flash on DAPO mathematical reasoning.
+student–teacher entropy gap narrows toward zero almost immediately. Rewards across the heterogeneous data sources rise synchronously and maintain stability, validating the Teacher Manager’s
+capacity to orchestrate multiple teachers without destabilizing the joint objective. Step latency decreases from 1100 to 700 seconds.
+Black-Box OpenCode Agent. Figure 17 plots the Qwen3-Coder-30B-A3B training utilizing the
+opaque OpenCode black-box agent, heavily reliant on real code operations and multi-turn environments. The mean rollout reward climbs steadily from 0.35 to 0.50, preserving a tight train–inference
+gap near 4×10−4 . Aside from occasional step-latency spikes inherent to heavy-tailed agentic trajectories, the end-to-end time remains between 1500 and 2000 seconds. This empirically demonstrates
+AgentFlow’s resilience in managing complete training loops without requiring internal intrusion into
+black-box agent lifecycles.
+
+Figure 16: Training curves for full-vocabulary multi-teacher MOPD on Qwen3-30B-A3B.
+5.3
+
+A SYNCHRONOUS T HROUGHPUT
+
+While the preceding evaluations validate end-to-end algorithmic convergence, they do not isolate
+the pure system-level throughput gains yielded by asynchronous execution. To quantify this, we
+execute a controlled ablation on a workload where the long-tail latency is severe enough for pipeline
+overlap to yield material benefits.
+We benchmark Qwen3-30B-A3B in BF16 with TP=4, PP=2, and EP=4 across two H20 nodes
+(16 GPUs). The algorithm configuration enforces GRPO with importance-sampling correction,
+M2PO (Zheng et al., 2026), and OPSM (DeepSeek-AI, 2025). Prompts are drawn from DAPOMath-17k, with responses hard-capped at 20K tokens. Each step samples B=64 prompts generating
+8 trajectories apiece. The benchmark executes for exactly 100 steps. The colocated baseline forces
+the trainer and rollout engines to time-multiplex all 16 GPUs. Conversely, the fully asynchronous
+configurations enforce an 8:8 spatial split, dedicating two 4-GPU SGLang replicas exclusively to
+inference. All asynchronous runs enable partial rollout and mask the resulting off-policy spans. Because the initial step (Step 0) inherently incurs the cold-start overheads of prefix-cache warm-up,
+KV-cache allocation, and initial buffer population, we report both the aggregate 100-step average
+and the steady-state average over the subsequent 99 steps.
+Table 4 summarizes the throughput gains. The optimal asynchronous configuration reduces the
+average step time from 580.79s to 428.76s over 100 steps (a 1.35× speedup); excluding the coldstart step, the steady-state average falls to 414.58s, a 1.40× speedup. Globally, the end-to-end
+18
+
+LoongSage Technical Report
+
+Figure 17: Training curves for Qwen3-Coder-30B-A3B with the OpenCode black-box agent.
+
+latency reduction across asynchronous configurations ranges from 21% to 26%. While partial rollout
+alone provides a 1.19× boost in colocated mode, the asynchronous windowed-fifo strategy
+compounds this advantage, accelerating the steady-state step by an additional 12%–15% over the
+optimized colocated baseline (whereas no-window yields only a 7% marginal gain).
+
+Table 4: Average step time under colocated and fully asynchronous execution. Speedups are relative
+to the colocated baseline in the same column.
+all 100 steps
+
+excluding step 0
+
+Configuration
+
+Split
+
+avg (s)
+
+speedup
+
+avg (s)
+
+speedup
+
+Colocated
+Colocated + partial rollout
+
+16
+16
+
+580.79
+489.63
+
+1.00×
+1.19×
+
+578.63
+486.34
+
+1.00×
+1.19×
+
+Async, no-window, S=1.0
+Async, windowed-fifo, S=1.0
+Async, windowed-fifo, S=2.0
+
+8:8
+8:8
+8:8
+
+454.50
+434.76
+428.76
+
+1.28×
+1.34×
+1.35×
+
+451.74
+424.30
+414.58
+
+1.28×
+1.36×
+1.40×
+
+Beyond aggregate latency reductions, this ablation reveals two critical systemic dynamics. First, the
+windowed-fifo strategy achieves a 4%–6% higher throughput than no-window despite maintaining a buffer less than half as deep. It achieves this by enforcing a strict pacing between producer
+and consumer, preventing the buffer from being flooded by fast, short-horizon trajectories. Consequently, this ordering constraint incurs zero throughput penalty for this workload while actively
+suppressing the system’s length-biased sampling pathology. Hence, it is adopted as the default for
+the production runs reported above. Second, relaxing the staleness bound S from 1.0 to 2.0 elevates
+the steady-state speedup from 1.36× to 1.40×. However, the deeper buffer requires a longer initialization phase. Thus, the 100-step aggregate speedup barely shifts, and the true end-to-end gain
+only converges to the steady-state asymptote as the total step count scales. Ultimately, once SGLang
+saturates its configured concurrency, tolerating further staleness yields strictly diminishing returns—
+empirically validating the Pareto frontier modeled by the allocation objective in Section 4.2.
+
+6
+
+C ONCLUSION
+
+In this paper, we introduced LoongSage, a lightweight, agent-native reinforcement learning framework engineered specifically for the systemic complexities of LLM post-training. Under its singlecontroller orchestration model, LoongSage unifies arbitrary agent interactions, multi-turn trajectory
+materialization, multi-teacher distillation, and distributed policy optimization into a cohesive, modular architecture.
+Built upon this foundation, the framework delivers six architectural contributions: (1) zero-intrusion
+TITO integration for diverse white- and black-box agent topologies; (2) staleness-bounded, fully
+asynchronous pipeline execution; (3) topology-aware TransferMesh weight synchronization; (4)
+memory-multiplexed, full-vocabulary multi-teacher distillation; (5) systemic train–inference consistency maintained by design; and (6) a lightweight, zero-fork core exposing a configuration-driven
+plugin system. Collectively, these mechanisms address the engineering bottlenecks imposed by
+long-horizon multi-turn rollouts, severe heavy-tail latency, and large-scale distributed resource coordination. Extensive empirical evaluations spanning mathematical reasoning, complex software
+engineering, black-box coding agents, and multi-teacher distillation validate that LoongSage drives
+19
+
+LoongSage Technical Report
+
+agentic training while strictly bounding train–inference divergence and minimizing systemic overhead.
+Looking ahead, our roadmap focuses on evolving LoongSage into a comprehensive post-training
+ecosystem. To further optimize memory utilization at scale, we will introduce cross-node distributed
+storage for multi-teacher weights and native low-precision training primitives. Algorithmically, we
+intend to broaden the framework’s unified pipeline to encompass Proximal Policy Optimization
+(PPO), Supervised Fine-Tuning (SFT), and Low-Rank Adaptation (LoRA), alongside native support
+for omni-modal architectures. We hope LoongSage provides the open-source and academic communities with a highly usable, extensible foundation, accelerating future breakthroughs in large-scale
+agentic AI systems.
+
+ACKNOWLEDGMENTS
+The birth of LoongSage is inseparable from a thriving open-source community, and we extend our
+special thanks to the excellent projects that made this possible: Megatron-LM and Megatron-Bridge
+for large-scale distributed training and weight bridging, SGLang for high-performance inference,
+and Ray for flexible distributed scheduling.
+In terms of architecture design and code implementation, LoongSage draws deep inspiration from
+and heavily references several outstanding works: slime, whose architecture and logic provided
+significant inspiration for our minimalist design; verl, which offered an excellent design paradigm
+for an extensible RL training and inference framework; and Agent-Lightning, which inspired our
+approach to decoupling Agent frameworks from RL post-training platforms.
+
+R EFERENCES
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu
+Geist, and Olivier Bachem. On-policy distillation of language models: Learning from selfgenerated mistakes. In International Conference on Learning Representations, volume 2024,
+pp. 21246–21263, 2024.
+Zijian Chen, Xueguang Ma, Shengyao Zhuang, Ping Nie, Kai Zou, Andrew Liu, Joshua Green,
+Kshama Patel, Ruoxi Meng, Mingyi Su, et al. Browsecomp-plus: A more fair and transparent
+evaluation benchmark of deep-research agent. arXiv preprint arXiv:2508.06600, 2025.
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser,
+Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al. Training verifiers to
+solve math word problems. arXiv preprint arXiv:2110.14168, 2021.
+Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. Flashattention: Fast and memoryefficient exact attention with io-awareness. In Advances in neural information processing systems,
+volume 35, pp. 16344–16359, 2022.
+DeepSeek-AI. Deepseek-v3.2: Pushing the frontier of open large language models. arXiv preprint
+arXiv:2512.02556, 2025.
+DeepSeek-AI. Deepseek-v4: Towards highly efficient million-token context intelligence. arXiv
+preprint arXiv:2606.19348, 2026.
+William Fedus, Barret Zoph, and Noam Shazeer. Switch transformers: Scaling to trillion parameter
+models with simple and efficient sparsity. Journal of Machine Learning Research, 23(120):1–39,
+2022.
+Wei Fu, Jiaxuan Gao, Xujie Shen, Chen Zhu, Zhiyu Mei, Chuyi He, Shusheng Xu, Guo Wei, Jun
+Mei, Jiashu Wang, et al. Areal: A large-scale asynchronous reinforcement learning system for
+language reasoning. In Advances in Neural Information Processing Systems, volume 38, pp.
+36256–36282, 2026.
+Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. Minillm: Knowledge distillation of large
+language models. In International Conference on Learning Representations, volume 2024, pp.
+32694–32717, 2024.
+20
+
+LoongSage Technical Report
+
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu
+Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1 incentivizes reasoning in llms through reinforcement learning. Nature, 645(8081):633–638, 2025.
+Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. arXiv
+preprint arXiv:1503.02531, 2015.
+Jian Hu, Xibin Wu, Wei Shen, Jason Klein Liu, Weixun Wang, Songlin Jiang, Haoran Wang, Hao
+Chen, Bin Chen, Wenkai Fang, et al. Openrlhf: A ray-based easy-to-use, scalable and highperformance rlhf framework. In Proceedings of the 2025 Conference on Empirical Methods in
+Natural Language Processing: System Demonstrations, pp. 656–666, 2025.
+Edward L Ionides. Truncated importance sampling. Journal of Computational and Graphical Statistics, 17(2):295–311, 2008.
+Naman Jain, Jaskirat Singh, Manish Shetty, Liang Zheng, Koushik Sen, and Ion Stoica. R2e-gym:
+Procedural environments and hybrid verifiers for scaling open-weights swe agents. arXiv preprint
+arXiv:2504.07164, 2025.
+Albert Q Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Emma Bou Hanna, Florian Bressand, et al.
+Mixtral of experts. arXiv preprint arXiv:2401.04088, 2024.
+Carlos E Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik
+Narasimhan. Swe-bench: Can language models resolve real-world github issues? In International
+Conference on Learning Representations, volume 2024, pp. 54107–54157, 2024.
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph
+Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model
+serving with pagedattention. In Proceedings of the 29th symposium on operating systems principles, pp. 611–626, 2023.
+Hao Liu, Matei Zaharia, and Pieter Abbeel. Ringattention with blockwise transformers for nearinfinite context. In International Conference on Learning Representations, volume 2024, pp.
+3992–4008, 2024.
+Xufang Luo, Yuge Zhang, Zhiyuan He, Zilong Wang, Siyun Zhao, Dongsheng Li, Luna K Qiu, and
+Yuqing Yang. Agent lightning: Train any ai agents with reinforcement learning. arXiv preprint
+arXiv:2508.03680, 2025.
+Wenhan Ma, Hailin Zhang, Liang Zhao, Yifan Song, Yudong Wang, Zhifang Sui, and Fuli Luo.
+Stabilizing moe reinforcement learning by aligning training and inference routers. arXiv preprint
+arXiv:2510.11370, 2025.
+MiniMax. Forge: Scalable agent rl framework and algorithm. https://www.minimax.io/
+news/forge-scalable-agent-rl-framework-and-algorithm, 2026.
+Philipp Moritz, Robert Nishihara, Stephanie Wang, Alexey Tumanov, Richard Liaw, Eric Liang,
+Melih Elibol, Zongheng Yang, William Paul, Michael I Jordan, et al. Ray: A distributed framework for emerging ai applications. In 13th USENIX symposium on operating systems design and
+implementation, pp. 561–577, 2018.
+OpenCode Contributors.
+opencode.ai, 2025.
+
+Opencode: Ai coding agent built for the terminal.
+
+https://
+
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong
+Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback. In Advances in neural information processing systems,
+volume 35, pp. 27730–27744, 2022.
+Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru
+Tang, Bill Qian, et al. Toolllm: Facilitating large language models to master 16000+ real-world
+apis. In International Conference on Learning Representations, volume 2024, pp. 9695–9717,
+2024.
+21
+
+LoongSage Technical Report
+
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea
+Finn. Direct preference optimization: Your language model is secretly a reward model. In Advances in neural information processing systems, volume 36, pp. 53728–53741, 2023.
+Samyam Rajbhandari, Jeff Rasley, Olatunji Ruwase, and Yuxiong He. Zero: Memory optimizations
+toward training trillion parameter models. In SC20: international conference for high performance computing, networking, storage and analysis, pp. 1–16, 2020.
+Jeff Rasley, Samyam Rajbhandari, Olatunji Ruwase, and Yuxiong He. Deepspeed: System optimizations enable training deep learning models with over 100 billion parameters. In Proceedings
+of the 26th ACM SIGKDD international conference on knowledge discovery & data mining, pp.
+3505–3506, 2020.
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessı̀, Roberta Raileanu, Maria Lomeli, Eric Hambro,
+Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can
+teach themselves to use tools. Advances in neural information processing systems, 36:68539–
+68551, 2023.
+John Schulman. Approximating kl divergence. http://joschu.net/blog/kl-approx.
+html, 2020.
+John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel. Highdimensional continuous control using generalized advantage estimation.
+arXiv preprint
+arXiv:1506.02438, 2015.
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms. arXiv preprint arXiv:1707.06347, 2017.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300, 2024.
+Gerald Shen, Zhilin Wang, Olivier Delalleau, Jiaqi Zeng, Yi Dong, Daniel Egert, Shengyang Sun,
+Jimmy Zhang, Sahil Jain, Ali Taghibakhshi, et al. Nemo-aligner: Scalable toolkit for efficient
+model alignment. arXiv preprint arXiv:2405.01481, 2024.
+Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng,
+Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework. In Proceedings
+of the Twentieth European Conference on Computer Systems, pp. 1279–1297, 2025.
+Mohammad Shoeybi, Mostofa Patwary, Raul Puri, Patrick LeGresley, Jared Casper, and Bryan
+Catanzaro. Megatron-lm: Training multi-billion parameter language models using model parallelism. arXiv preprint arXiv:1909.08053, 2019.
+Leandro von Werra, Younes Belkada, Lewis Tunstall, Edward Beeching, Tristan Thrush, Nathan
+Lambert, Shengyi Huang, Kashif Rasul, and Quentin Gallouédec. TRL: Transformers Reinforcement Learning. https://github.com/huggingface/trl, 2020.
+Xingyao Wang, Boxuan Li, Yufan Song, Frank F Xu, Xiangru Tang, Mingchen Zhuge, Jiayi Pan,
+Yueqi Song, Bowen Li, Jaskirat Singh, et al. Openhands: An open platform for ai software developers as generalist agents. In International Conference on Learning Representations, volume
+2025, pp. 65882–65919, 2025.
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny
+Zhou, et al. Chain-of-thought prompting elicits reasoning in large language models. In Advances
+in neural information processing systems, volume 35, pp. 24824–24837, 2022.
+Tianbao Xie, Danyang Zhang, Jixuan Chen, Xiaochuan Li, Siheng Zhao, Ruisheng Cao, Toh J
+Hua, Zhoujun Cheng, Dongchan Shin, Fangyu Lei, et al. Osworld: Benchmarking multimodal
+agents for open-ended tasks in real computer environments. In Advances in Neural Information
+Processing Systems, volume 37, pp. 52040–52094, 2024.
+22
+
+LoongSage Technical Report
+
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu,
+Chang Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint
+arXiv:2505.09388, 2025.
+John Yang, Carlos Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and
+Ofir Press. Swe-agent: Agent-computer interfaces enable automated software engineering. In
+Advances in Neural Information Processing Systems, volume 37, pp. 50528–50652, 2024.
+Feng Yao, Liyuan Liu, Dinghuai Zhang, Chengyu Dong, Jingbo Shang, and Jianfeng Gao. Your efficient rl framework secretly brings you off-policy rl training. https://fengyao.notion.
+site/off-policy-rl, 2025.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao.
+React: Synergizing reasoning and acting in language models. In International Conference on
+Learning Representations, 2023.
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian
+Fan, Gaohong Liu, Lingjun Liu, et al. Dapo: An open-source llm reinforcement learning system
+at scale. In Advances in Neural Information Processing Systems, volume 38, pp. 113222–113244,
+2026.
+Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang,
+Yuqiong Liu, Rui Men, An Yang, Jingren Zhou, and Junyang Lin. Group sequence policy optimization, 2025.
+Haizhong Zheng, Jiawei Zhao, and Beidi Chen. Prosperity before collapse: How far can off-policy rl
+reach with stale data on llms? In International Conference on Learning Representations, volume
+2026, pp. 82657–82679, 2026.
+Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody H Yu, Shiyi Cao,
+Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al. Sglang: Efficient execution of structured
+language model programs. In Advances in neural information processing systems, volume 37, pp.
+62557–62583, 2024.
+Shuyan Zhou, Frank F Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng,
+Tianyue Ou, Yonatan Bisk, Daniel Fried, et al. Webarena: A realistic web environment for building autonomous agents. In International Conference on Learning Representations, volume 2024,
+pp. 15585–15606, 2024.
+Zilin Zhu, Chengxing Xie, Xin Lv, and slime Contributors. slime: An llm post-training framework
+for rl scaling. https://github.com/THUDM/slime, 2025.
+
+23
+
+LoongSage Technical Report
+
+A
+
+AUTHORS
+
+Authors are listed alphabetically by their first name.
+Research & Engineering: Bowei Song, Caiwei Zhao, Chuwen Liu, Dechuang Gu, Dong Fang,
+Feiyu Xie, Huaiyu Li, Hui Zhang, Jian Tian, Jian Wang, Jie Zhao, Liguang Li, Maoyun Wang,
+Meiyan Yang, Minghan Zhu, Pai Liu, Pandeng Yao, Renbao Tian, Ru Yang, Shuai Jia, Shuai Tan,
+Shuailong Li, Shuliang Li, Teng Jin, Tianze Yang, Wenbo Cui, Wenjing Bai, Wenkang Wu, Xiaowei
+Jiang, Xiaoyi Dong, Yanpeng Wang, Yanwen Wang, Yaohui Ma, Yawen Wang, Yihang Zhang,
+Yingjie Yan, Zhanbiao Lian, Zhenyu Lu, Zhida Hu, Zhihui Hao, Zhihui Hu, Zhiwen Xiao, Zhiyi
+Gao, Zhongwei Qi, Zhuangzhuang Wu, Ziqian Liu, Ziyue Zheng.
+
+B
+
+O PERATIONAL N OTES AND L IMITATIONS
+
+Stabilizing the DeepSeek-V4-Flash SWE training recipe surfaced a range of systemic failures that
+are invisible at the algorithmic level, yet determine whether a large-scale distributed job can reach
+completion. We categorize these observations to aid future infrastructure developers:
+Hard Systemic Failures. These faults abruptly halt execution, manifesting through explicit crash
+signals or out-of-memory (OOM) triggers. Examples encountered during scale-up include: numerical instability (NaNs) in early Megatron-Core versions when shared-expert overlap was enabled;
+SGLang exhausting device VRAM specifically during topology weight updates; a cuDNN DSA
+kernel triggering illegal memory corruption; and a CuTe launch cache silently leaking after several
+hundred steps. Furthermore, an FP32 output-layer pinning unexpectedly broke Megatron’s checkpoint saver, while the CPU optimizer exhausted host memory and crashed. At the framework orchestration level, repeated JIT operator recompilation under dynamic batching induced steady host RAM
+bloating, and a memory-saver hook conflict between SGLang and Megatron-Core deterministically
+crashed the inference engine upon CUDA-graph capture.
+Silent Structural and Arithmetic Corruptions. More subtly, these anomalies yield no explicit
+crash signals, allowing training to proceed while corrupting the RL objective. For instance, a PDL
+dependency anomaly within a FlashInfer CuTe-DSL rmsnorm kernel introduced an asynchronous
+timing hazard, silently perturbing normalization statistics and inflating the measured train–inference
+gap. In another instance, a parameter had identical tensor shapes across both engines but used different memory layouts, causing weight updates to complete without error yet populate the tensor
+with corrupted data. Similarly, an incorrectly implemented clamp in the shared-expert activation
+quietly widened the distribution gap. Because such defects fail silently, the policy can degrade for
+extended periods while conventional metrics appear normal—underscoring the necessity of continuously monitoring the sampling–training gap rather than verifying it only at bring-up.
+These real-world challenges highlight a key realization for the agentic RL era: reinforcement learning acts as a strong amplifier for software and hardware coupling. Minute variances in operator
+implementations, non-deterministic CUDA rounding, reduction-order variance in collectives, and
+dynamic batch-size adjustments are fed back into the policy via the reward signal. Consequently,
+hyperparameters alone are insufficient to fully describe a reproducible RL recipe. The configurations shipped with LoongSage encode the resolutions to these systemic hazards, making them
+production-validated deployment blueprints rather than mere algorithmic settings.
+Current Architectural Boundaries and Roadmap. Several boundaries of the current implementation define our immediate developmental roadmap. First, the protocol adapters (Section 4.1) for
+black-box agents utilizing proprietary APIs (deviating from /v1/chat/completions) are actively being finalized. Second, for certain black-box agents, the framework’s parser cannot yet
+deterministically classify whether a new branch stems from context compaction or a spawned subtask, necessitating that subtask segments temporarily remain non-trainable placeholders. Third,
+cross-node memory pooling for teacher weights—designed to utilize idle host RAM on training and
+rollout nodes as a global distributed weight cache—currently exists as a defined interface awaiting
+backend implementation. Fourth, the fully asynchronous mode does not yet match the synchronous
+path’s generality regarding heterogeneous multi-data-source routing and multi-agent topologies, and
+its asynchronous metric aggregation requires finer precision tuning.
+24
+
+LoongSage Technical Report
+
+Taken together, these boundaries feed directly into the broader roadmap outlined in Section 6, which
+additionally targets prefill–decode disaggregation for inference to relieve the operational bottlenecks
+discussed above. Rather than isolated engineering caveats, we regard these limitations as concrete,
+prioritized extension points: each is scoped against a stable interface, so closing it broadens the
+framework’s coverage without perturbing the orchestration core. We further anticipate that the systemic hazards catalogued here will recur in new guises as models and backends evolve, and the
+corresponding resolutions will continue to be folded into the shipped recipes. By documenting both
+the failures and their fixes in the open, we aim to spare the community the recurring cost of rediscovering them and to invite contributions that harden agentic RL infrastructure at scale.
+
+25
+
+
